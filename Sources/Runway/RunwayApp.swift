@@ -232,8 +232,8 @@ private struct ResizableBox: View {
                 .background(RunwayTerminal.headerBar)   // slightly lighter header bar
             TerminalSurfaceView(boxID: id, config: config)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 5)
-                .padding(.bottom, 5)   // small inset keeps the terminal clear of the rounded corners
+                .padding(.horizontal, 10)   // + 2 window-padding ≈ 12, aligns with the header
+                .padding(.bottom, 2)        // tiny inset to clear the rounded corners
         }
         .frame(height: fixedHeight ?? height)
         .background(RunwayTerminal.body)                 // darker body fills the inset
@@ -255,7 +255,7 @@ private struct ResizableBox: View {
         HStack(spacing: 8) {
             Circle()
                 .fill(state.color)
-                .frame(width: 7, height: 7)
+                .frame(width: 6, height: 6)
                 .shadow(color: state.glows ? state.color.opacity(0.9) : .clear, radius: 4)
             nameField
                 .layoutPriority(1)
@@ -263,8 +263,8 @@ private struct ResizableBox: View {
             detailField
                 .layoutPriority(0)
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHoveringHeader = $0 }
@@ -277,14 +277,14 @@ private struct ResizableBox: View {
         if isEditingName {
             InlineField(
                 text: $name,
-                font: .monospacedSystemFont(ofSize: 13, weight: .medium),
+                font: .monospacedSystemFont(ofSize: 12, weight: .medium),
                 color: .white,
                 onEnd: { isEditingName = false }
             )
             .fixedSize()
         } else {
             Text(name)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.9))
                 .lineLimit(1)
                 .contentShape(Rectangle())
@@ -302,7 +302,7 @@ private struct ResizableBox: View {
         if isEditingDetail {
             InlineField(
                 text: $detail,
-                font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                font: .monospacedSystemFont(ofSize: 11, weight: .regular),
                 color: NSColor.white.withAlphaComponent(0.55),
                 alignment: .right,
                 placeholder: "Add a description",
@@ -321,7 +321,7 @@ private struct ResizableBox: View {
 
     private func detailLabel(_ text: String, opacity: Double) -> some View {
         Text(text)
-            .font(.system(size: 12, design: .monospaced))
+            .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(Color.white.opacity(opacity))
             .lineLimit(1)
             .truncationMode(.tail)
