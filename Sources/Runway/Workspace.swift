@@ -34,8 +34,16 @@ import AppKit
     /// don't clobber the user's UI edits with a stale file).
     private var lastControl: [UUID: String] = [:]
     private var lastSaved: Data?
+    /// False until the first control-file poll completes, so adopting agents'
+    /// pre-existing needs-action state on launch doesn't fire a burst of toasts.
+    private var watchReady = false
 
-    private init() { load() }
+    private init() {
+        load()
+        // Focus the first box on launch so the glow + accordion expansion match
+        // where the keyboard actually lands (the terminal that auto-focuses).
+        focusedID = boxes.first?.id
+    }
 
     // MARK: Persistence
 
@@ -80,6 +88,7 @@ import AppKit
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 pollControlFiles()
                 saveIfNeeded()
+                watchReady = true   // subsequent polls fire transition toasts
             }
         }
     }
@@ -111,7 +120,7 @@ import AppKit
             }
             if let state = json["state"] as? String {
                 let next = AgentState(control: state)
-                if next == .needsAction, boxes[i].state != .needsAction {
+                if watchReady, next == .needsAction, boxes[i].state != .needsAction {
                     ToastCenter.shared.show("\(boxes[i].name) needs your attention",
                                             icon: "exclamationmark.bubble.fill",
                                             tint: Color(red: 0.91, green: 0.62, blue: 0.20),
