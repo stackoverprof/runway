@@ -75,23 +75,14 @@ struct Presence: Identifiable {
         Task { await refresh() }
     }
 
-    /// Populate the repo switcher. With no repo chosen yet, fall back to the
-    /// authenticated user's own repos (via `gh`) — nothing org-specific is
-    /// hardcoded, so it works for whoever is logged in.
+    /// Populate the repo switcher with every repo the signed-in user can reach
+    /// (their own *and* their orgs'), most-recently-pushed first. Nothing
+    /// org-specific is hardcoded; the picker also accepts a free-form `owner/repo`.
     func fetchRepoList() {
         Task { @MainActor in
-            var owner = repo.split(separator: "/").first.map(String.init) ?? ""
-            if owner.isEmpty {
-                guard let data = await GH.run(["api", "user", "-q", ".login"]),
-                      let login = String(data: data, encoding: .utf8)?
-                          .trimmingCharacters(in: .whitespacesAndNewlines), !login.isEmpty else {
-                    if repo.isEmpty { lastError = Self.ghHint }   // no repo yet + gh failed
-                    return
-                }
-                owner = login
-            }
-            guard let data = await GH.run(["repo", "list", owner, "--limit", "50",
-                                           "--json", "nameWithOwner", "-q", ".[].nameWithOwner"]),
+            guard let data = await GH.run(["api",
+                "/user/repos?per_page=100&sort=pushed&affiliation=owner,organization_member,collaborator",
+                "-q", ".[].full_name"]),
                   let s = String(data: data, encoding: .utf8) else {
                 if repo.isEmpty { lastError = Self.ghHint }
                 return
@@ -101,9 +92,9 @@ struct Presence: Identifiable {
             for r in ([repo] + repos) where !r.isEmpty && seen.insert(r).inserted { ordered.append(r) }
             if !ordered.isEmpty {
                 availableRepos = ordered
-                if repo.isEmpty { setRepo(ordered[0]) }   // first run: show something
+                if repo.isEmpty, let first = ordered.first { setRepo(first) }   // first run: show something
             } else if repo.isEmpty {
-                lastError = "No repositories found for @\(owner). Pick one from the switcher."
+                lastError = Self.ghHint
             }
         }
     }

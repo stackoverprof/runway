@@ -138,6 +138,18 @@ struct LeftPane: View {
     @State private var pulled = false
 
     private var stream: some View {
+        streamScaffold(disabled: false) {
+            ForEach(feed.events) { event in
+                FeedRow(event: event, time: clock(event.date),
+                        isLast: event.id == feed.events.last?.id)
+            }
+        }
+    }
+
+    /// Shared scaffold for the real feed and the skeleton, so their caption and
+    /// paddings are *identical* (including the overscroll sentinel, whose presence
+    /// affects the top spacing — leaving it out made the skeleton caption ride up).
+    private func streamScaffold<Rows: View>(disabled: Bool, @ViewBuilder rows: () -> Rows) -> some View {
         ScrollView {
             // Overscroll-to-refresh: when pulled down past the top, refresh once.
             GeometryReader { geo in
@@ -156,15 +168,13 @@ struct LeftPane: View {
                     .foregroundStyle(Color.white.opacity(0.3))
                     .tracking(0.8)
                     .padding(.bottom, 18)
-                ForEach(feed.events) { event in
-                    FeedRow(event: event, time: clock(event.date),
-                            isLast: event.id == feed.events.last?.id)
-                }
+                rows()
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 16)
         }
+        .scrollDisabled(disabled)
         .scrollIndicators(.hidden)
         .coordinateSpace(name: "feed")
     }
@@ -191,23 +201,11 @@ struct LeftPane: View {
     }
 
     private var skeletonStream: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                Text("WHAT YOUR TEAM'S BEEN HUSTLING, AS IT HAPPENS.")
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
-                    .tracking(0.8)
-                    .padding(.bottom, 18)
-                ForEach(0..<7, id: \.self) { i in
-                    SkeletonRow(isLast: i == 6, seed: i)
-                }
+        streamScaffold(disabled: true) {
+            ForEach(0..<7, id: \.self) { i in
+                SkeletonRow(isLast: i == 6, seed: i)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            .padding(.bottom, 16)
         }
-        .scrollDisabled(true)
-        .scrollIndicators(.hidden)
     }
 
     /// Absolute clock time, e.g. "10.12".
@@ -375,11 +373,20 @@ private struct RepoPicker: View {
         query.isEmpty ? repos : repos.filter { $0.localizedCaseInsensitiveContains(query) }
     }
 
+    /// A typed `owner/repo` that isn't already in the list — lets you open any
+    /// repo (e.g. one beyond the fetched 100, or one you don't own).
+    private var freeform: String? {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard q.contains("/"), !q.hasPrefix("/"), !q.hasSuffix("/"),
+              !q.contains(" "), !repos.contains(q) else { return nil }
+        return q
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("Search repos…", text: $query)
+                TextField("Search, or type owner/repo", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
             }
@@ -387,12 +394,29 @@ private struct RepoPicker: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if let f = freeform {
+                        Button { onPick(f) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.right.circle")
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text("Open \(f)")
+                                    .font(.system(size: 12.5, design: .monospaced))
+                                    .foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 8)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                     ForEach(filtered, id: \.self) { r in
                         Button { onPick(r) } label: {
                             HStack(spacing: 8) {
-                                Text(r.split(separator: "/").last.map(String.init) ?? r)
+                                Text(r)
                                     .font(.system(size: 12.5, design: .monospaced))
                                     .foregroundStyle(.primary)
+                                    .lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 8)
                                 if r == current {
                                     Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
@@ -405,8 +429,8 @@ private struct RepoPicker: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    if filtered.isEmpty {
-                        Text(repos.isEmpty ? "Loading repos…" : "No matches")
+                    if filtered.isEmpty, freeform == nil {
+                        Text(repos.isEmpty ? "Loading repos…" : "No matches. Type owner/repo to open any repo.")
                             .font(.system(size: 12)).foregroundStyle(.secondary)
                             .padding(12)
                     }
@@ -513,14 +537,14 @@ private struct SkeletonRow: View {
             }
             .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    SkeletonShape().frame(width: 70, height: 11)
-                    SkeletonShape().frame(width: 46, height: 11)
+                    SkeletonShape().frame(width: 70, height: 12)
+                    SkeletonShape().frame(width: 46, height: 12)
                     Spacer(minLength: 6)
-                    SkeletonShape().frame(width: 30, height: 9)
+                    SkeletonShape().frame(width: 30, height: 10)
                 }
-                SkeletonShape().frame(width: 120 + CGFloat((seed % 3) * 34), height: 16)
+                SkeletonShape().frame(width: 120 + CGFloat((seed % 3) * 34), height: 18)
             }
             .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
