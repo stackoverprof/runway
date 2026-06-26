@@ -64,9 +64,10 @@ struct Presence: Identifiable {
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
 
-    /// Seconds between automatic polls.
-    let pollInterval: UInt64 = 45
-    private let idleThreshold: TimeInterval = 30 * 60
+    /// Seconds between automatic polls (Settings, default 45).
+    var pollInterval: UInt64 { UInt64(max(5, UserDefaults.standard.integer(forKey: SettingsKey.pollInterval))) }
+    /// How long without activity counts as idle (Settings, default 30 min).
+    private var idleThreshold: TimeInterval { TimeInterval(max(1, UserDefaults.standard.integer(forKey: SettingsKey.idleMinutes)) * 60) }
     private let isoFull = ISO8601DateFormatter()
 
     // Disk cache so reopening the app shows the last feed instantly (no skeleton).
@@ -88,11 +89,18 @@ struct Presence: Identifiable {
         didLoad = true
     }
 
-    private func saveCache() {
+    /// Delete the on-disk feed cache and refetch the current repo.
+    static func clearCache() {
+        try? FileManager.default.removeItem(at: cacheFile)
+        shared.events = []; shared.presence = []; shared.didLoad = false
+        Task { await shared.refresh() }
+    }
+
+    private func saveCache(_ list: [FeedEvent]) {
         guard !repo.isEmpty else { return }
         var byRepo = (try? Data(contentsOf: Self.cacheFile))
             .flatMap { try? Self.decoderDate.decode([String: [FeedEvent]].self, from: $0) } ?? [:]
-        byRepo[repo] = Array(events.prefix(200))   // cap per repo
+        byRepo[repo] = Array(list.prefix(200))   // cap per repo
         if let data = try? Self.coderDate.encode(byRepo) { try? data.write(to: Self.cacheFile) }
     }
 
@@ -156,10 +164,8 @@ struct Presence: Identifiable {
             ToastCenter.shared.show("Back online", icon: "wifi",
                                     tint: Color(red: 0.30, green: 0.78, blue: 0.45))
         }
-        merge(page.events)
-        presence = computePresence(from: events)
+        merge(page.events, staggerNew: true)
         fetchCommitCounts()
-        saveCache()
         lastError = nil
         didLoad = true
         loading = false
@@ -179,7 +185,6 @@ struct Presence: Identifiable {
         loadedPages = next
         canLoadMore = page.full
         fetchCommitCounts()
-        saveCache()
     }
 
     /// Fill in commit counts for pushes that don't have one yet, via the compare
@@ -214,16 +219,39 @@ struct Presence: Identifiable {
     private func fetchPage(_ page: Int) async -> (events: [FeedEvent], full: Bool)? {
         guard let data = await GH.api("/repos/\(repo)/events?per_page=100&page=\(page)"),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
-        let parsed = raw.compactMap(parse).filter { !$0.actor.hasSuffix("[bot]") }
+        let hideBots = UserDefaults.standard.bool(forKey: SettingsKey.hideBots)
+        let parsed = raw.compactMap(parse).filter { !(hideBots && $0.actor.hasSuffix("[bot]")) }
         return (parsed, raw.count >= 100)
     }
 
-    /// Merge new events into the timeline, de-duplicated by id, newest first.
-    private func merge(_ incoming: [FeedEvent]) {
+    /// Merge new events (deduped by id, newest first), recompute presence, cache.
+    /// With `staggerNew`, brand-new events at the top reveal one-by-one (phone-
+    /// notification style): older cards slide down as each new one fades in.
+    private func merge(_ incoming: [FeedEvent], staggerNew: Bool = false) {
+        let existing = Set(events.map(\.id))
         var byID = [String: FeedEvent](minimumCapacity: events.count + incoming.count)
         for e in events { byID[e.id] = e }
         for e in incoming { byID[e.id] = e }
-        events = byID.values.sorted { $0.date > $1.date }
+        let full = byID.values.sorted { $0.date > $1.date }
+
+        presence = computePresence(from: full)
+        saveCache(full)
+
+        let newTop = (staggerNew && !events.isEmpty)
+            ? Array(full.prefix { !existing.contains($0.id) }) : []
+        guard !newTop.isEmpty else { events = full; return }
+
+        events = Array(full.dropFirst(newTop.count))   // the prior list, unchanged on screen
+        // Reveal oldest-new first so the newest ends on top, each pushing the
+        // stack down; the per-item delay makes the staggered cascade.
+        for (i, ev) in newTop.reversed().enumerated() {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(Double(i) * 0.16 * 1_000_000_000))
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                    events.insert(ev, at: 0)
+                }
+            }
+        }
     }
 
     // MARK: parsing
@@ -304,6 +332,7 @@ struct Presence: Identifiable {
 
     private func computePresence(from events: [FeedEvent]) -> [Presence] {
         let now = Date()
+        let window = TimeInterval(max(1, UserDefaults.standard.integer(forKey: SettingsKey.officeHours))) * 3600
         let byActor = Dictionary(grouping: events, by: \.actor)
         return byActor.map { login, evs in
             let last = evs.map(\.date).max() ?? .distantPast
@@ -311,7 +340,7 @@ struct Presence: Identifiable {
             return Presence(login: login, avatarURL: evs.first?.avatarURL, lastActive: last,
                             recentCount: recent, idle: now.timeIntervalSince(last) > idleThreshold)
         }
-        .filter { now.timeIntervalSince($0.lastActive) < 6 * 3600 }   // shown if active in last 6h
+        .filter { now.timeIntervalSince($0.lastActive) < window }   // within the configured window
         // "On fire" (>= 5 events / 30m) first, then most-recently-active.
         .sorted { a, b in
             let aFire = a.recentCount >= 5, bFire = b.recentCount >= 5

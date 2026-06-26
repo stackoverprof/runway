@@ -17,9 +17,10 @@ import AppKit
 
     /// Show a toast (auto-dismisses). Optionally play the system alert sound.
     func show(_ title: String, icon: String = "bell.fill", tint: Color = .white, sound: Bool = false) {
+        if sound, UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) { Self.playSelectedSound() }
+        guard UserDefaults.standard.bool(forKey: SettingsKey.toastsEnabled) else { return }
         let toast = Toast(icon: icon, title: title, tint: tint)
         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { toasts.append(toast) }
-        if sound { Self.playAlert() }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 4_500_000_000)
             dismiss(toast.id)
@@ -30,8 +31,10 @@ import AppKit
         withAnimation(.easeOut(duration: 0.2)) { toasts.removeAll { $0.id == id } }
     }
 
-    private static func playAlert() {
-        if let sound = NSSound(named: "Glass") ?? NSSound(named: "Ping") {
+    /// Play the user's chosen alert sound (used by toasts and the Settings "Test").
+    static func playSelectedSound() {
+        let name = UserDefaults.standard.string(forKey: SettingsKey.alertSound) ?? "Glass"
+        if let sound = NSSound(named: name) ?? NSSound(named: "Glass") {
             sound.play()
         } else {
             NSSound.beep()

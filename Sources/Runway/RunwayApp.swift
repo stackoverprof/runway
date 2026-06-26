@@ -7,6 +7,7 @@ struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        SettingsKey.registerDefaults()
         // Must run before any terminal (GhosttyKit) loads its config.
         RunwayTerminal.installTheme()
     }
@@ -20,6 +21,8 @@ struct RunwayApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1100, height: 720)
+
+        Settings { SettingsView() }
     }
 }
 
@@ -87,6 +90,7 @@ struct AgentBox: Identifiable, Codable {
     var state: AgentState = .idle   // runtime only, not persisted
     var height: CGFloat = 264
     var cwd: String?                // last working directory, restored on relaunch
+    var autorun: String?            // one-time command for new boxes, not persisted
 
     enum CodingKeys: String, CodingKey { case id, name, detail, height, cwd }
 }
@@ -112,7 +116,7 @@ struct RightPane: View {
                                 detail: $box.detail,
                                 state: box.state,
                                 config: TerminalConfig(workingDirectory: box.cwd,
-                                                       environment: AgentControl.environment(for: box.id)),
+                                                       environment: AgentControl.environment(for: box.id, autorun: box.autorun)),
                                 height: $box.height,
                                 isFocused: ws.focusedID == box.id,
                                 fixedHeight: fixedHeight(for: box, geo: geo, count: n)
@@ -242,11 +246,11 @@ private struct ResizableBox: View {
         // Focus: a very slight brighter border + faint white glow.
         .overlay(
             RoundedRectangle(cornerRadius: 9)
-                .stroke(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.07),
+                .stroke(isFocused ? Color.white.opacity(0.30) : Color.white.opacity(0.07),
                         lineWidth: 1)
         )
-        .shadow(color: isFocused ? Color.white.opacity(0.22) : .clear,
-                radius: isFocused ? 13 : 0)
+        .shadow(color: isFocused ? Color.white.opacity(0.14) : .clear,
+                radius: isFocused ? 11 : 0)
         .overlay(alignment: .bottom) {
             if fixedHeight == nil { bottomEdgeHandle }   // no resize in accordion mode
         }
@@ -441,6 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         AgentControl.install()
+        AgentControl.resetStates()   // clear stale agent dots from the last session
         installCmdScrollMonitor()
         installClickFocusMonitor()
         installShortcutMonitor()
@@ -471,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Confirm before quitting (⌘Q / menu / Dock) so a stray keystroke doesn't
     /// kill all the running agent sessions.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard UserDefaults.standard.bool(forKey: SettingsKey.confirmQuit) else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Quit Runway?"
         alert.informativeText = "Your running agent sessions will be stopped."
@@ -493,29 +499,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private static func handleShortcut(_ ev: NSEvent) -> Bool {
-        let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
+        if KeyBindings.shared.recording { return false }   // Settings is capturing a chord
         let ws = Workspace.shared
-        let key = ev.charactersIgnoringModifiers?.lowercased() ?? ""
-        let code = ev.keyCode          // 126 = up, 125 = down, 36 = return
+        let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
 
-        if mods == [.command] {
-            if key == "n" { ws.newBox(); return true }
-            if key == "w" { return ws.closeFocused() }          // else fall through → window close
-            if let d = Int(key), (1...9).contains(d) { ws.focus(index: d - 1); return true }
-        } else if mods == [.command, .option] {
-            // Match letters by physical keyCode — with Option held,
-            // charactersIgnoringModifiers can return composed chars (⌥Q → "œ"),
-            // which would let ⌘⌥Q fall through to Quit.
-            if code == 126 { ws.focus(offset: -1); return true }  // ⌘⌥↑
-            if code == 125 { ws.focus(offset: 1); return true }   // ⌘⌥↓
-            if code == 36 { ws.toggleSolo(); return true }        // ⌘⌥⏎ solo/zoom
-            if code == 0 { ws.toggleAccordion(); return true }    // ⌘⌥A
-            if code == 12 { ws.toggleQuick(); return true }       // ⌘⌥Q quick terminal
-        } else if mods == [.command, .option, .shift] {
-            if code == 126 { ws.moveFocused(by: -1); return true } // ⌘⌥⇧↑ reorder
-            if code == 125 { ws.moveFocused(by: 1); return true }  // ⌘⌥⇧↓ reorder
+        // Fixed: ⌘1–9 jump to a card.
+        if mods == [.command], let key = ev.charactersIgnoringModifiers,
+           let d = Int(key), (1...9).contains(d) {
+            ws.focus(index: d - 1); return true
         }
-        return false
+
+        // While the quick terminal is open: ⌘⌥← / ⌘⌥→ jump between it (left) and
+        // the focused agent (right).
+        if ws.quickVisible, mods == [.command, .option] {
+            if ev.keyCode == 123 { ws.focusQuick?(); return true }                          // ⌘⌥←
+            if ev.keyCode == 124 { TerminalRegistry.shared.focusTerminal(ws.focusedID); return true }  // ⌘⌥→
+        }
+
+        switch KeyBindings.shared.action(for: ev) {
+        case .newBox:        ws.newBox()
+        case .closeBox:      return ws.closeFocused()   // else fall through → window close
+        case .navigatePrev:  ws.focus(offset: -1)
+        case .navigateNext:  ws.focus(offset: 1)
+        case .reorderUp:     ws.moveFocused(by: -1)
+        case .reorderDown:   ws.moveFocused(by: 1)
+        case .accordion:     ws.toggleAccordion()
+        case .solo:          ws.toggleSolo()
+        case .quickTerminal: ws.toggleQuick()
+        case .none:          return false
+        }
+        return true
     }
 
     /// Clicking inside a terminal focuses its box (resolved via the registry).
