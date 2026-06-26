@@ -34,6 +34,11 @@ no token setup — it reuses your existing `gh auth`).
 - **Searchable repo switcher** in the header, **overscroll-to-refresh**, and
   **load skeletons** so the pane never jumps from empty to full.
 
+> Note: the feed reads GitHub's *events* API, which lags by a minute or two and
+> only covers recent activity (roughly the last 300 events / 90 days). So
+> presence is a good "who's around" signal, not real-time precision, and very
+> quiet collaborators may not appear.
+
 ### Right — agent terminal cards
 
 A scrollable column of resizable cards, each a real GPU terminal

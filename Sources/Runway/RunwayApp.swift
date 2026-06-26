@@ -443,6 +443,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Confirm before quitting (⌘Q / menu / Dock) so a stray keystroke doesn't
+    /// kill all the running agent sessions.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let alert = NSAlert()
+        alert.messageText = "Quit Runway?"
+        alert.informativeText = "Your running agent sessions will be stopped."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     /// App-level keyboard shortcuts for the agent list. A local monitor catches
     /// these even while a terminal is first responder (⌘-combos don't reach the
     /// shell anyway), and swallows the ones it handles.

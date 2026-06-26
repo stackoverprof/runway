@@ -6,17 +6,20 @@ struct LeftPane: View {
     @Bindable private var ws = Workspace.shared
     @State private var showRepoPicker = false
 
-    /// First load (or repo switch) before any events arrive: show skeletons in
-    /// the same shape as the real content so nothing jumps when data lands.
-    private var isInitialLoad: Bool { feed.events.isEmpty && feed.lastError == nil }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if isInitialLoad {
+            if feed.events.isEmpty, let error = feed.lastError {
+                // gh missing / not signed in / bad repo: explain, don't spin.
+                feedNotice(error, systemImage: "exclamationmark.triangle")
+            } else if feed.events.isEmpty, !feed.didLoad {
+                // Genuinely still loading the first batch: skeletons (same shape
+                // as the real content, so nothing jumps when data lands).
                 skeletonPresence
                 feedDivider
                 skeletonStream
+            } else if feed.events.isEmpty {
+                feedNotice("No recent activity in this repo yet.", systemImage: "tray")
             } else {
                 if !feed.presence.isEmpty {
                     presenceStrip
@@ -31,6 +34,23 @@ struct LeftPane: View {
 
     private var feedDivider: some View {
         Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+    }
+
+    /// Centered message for the empty / error states (no gh, no repo, no events).
+    private func feedNotice(_ message: String, systemImage: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.3))
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.white.opacity(0.6))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 16)
+        .padding(.top, 28)
     }
 
     // MARK: Header

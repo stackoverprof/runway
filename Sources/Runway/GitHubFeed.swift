@@ -43,6 +43,12 @@ struct Presence: Identifiable {
     var presence: [Presence] = []
     var lastError: String?
     var loading = false
+    /// True once a fetch has succeeded, so the UI can tell "still loading"
+    /// (skeleton) apart from "loaded, nothing here" (empty notice).
+    var didLoad = false
+
+    /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
+    static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
 
     /// Seconds between automatic polls.
     let pollInterval: UInt64 = 45
@@ -54,6 +60,7 @@ struct Presence: Identifiable {
         fetchRepoList()
         Task { @MainActor in
             while !Task.isCancelled {
+                if repo.isEmpty { fetchRepoList() }   // keep retrying to bootstrap (e.g. after gh login)
                 await refresh()
                 try? await Task.sleep(nanoseconds: pollInterval * 1_000_000_000)
             }
@@ -64,7 +71,7 @@ struct Presence: Identifiable {
         guard r != repo, !r.isEmpty else { return }
         repo = r
         UserDefaults.standard.set(r, forKey: "runway.repo")
-        events = []; presence = []; lastError = nil
+        events = []; presence = []; lastError = nil; didLoad = false
         Task { await refresh() }
     }
 
@@ -75,22 +82,28 @@ struct Presence: Identifiable {
         Task { @MainActor in
             var owner = repo.split(separator: "/").first.map(String.init) ?? ""
             if owner.isEmpty {
-                if let data = await GH.run(["api", "user", "-q", ".login"]),
-                   let login = String(data: data, encoding: .utf8)?
-                       .trimmingCharacters(in: .whitespacesAndNewlines), !login.isEmpty {
-                    owner = login
+                guard let data = await GH.run(["api", "user", "-q", ".login"]),
+                      let login = String(data: data, encoding: .utf8)?
+                          .trimmingCharacters(in: .whitespacesAndNewlines), !login.isEmpty else {
+                    if repo.isEmpty { lastError = Self.ghHint }   // no repo yet + gh failed
+                    return
                 }
+                owner = login
             }
-            guard !owner.isEmpty else { return }
             guard let data = await GH.run(["repo", "list", owner, "--limit", "50",
                                            "--json", "nameWithOwner", "-q", ".[].nameWithOwner"]),
-                  let s = String(data: data, encoding: .utf8) else { return }
+                  let s = String(data: data, encoding: .utf8) else {
+                if repo.isEmpty { lastError = Self.ghHint }
+                return
+            }
             let repos = s.split(whereSeparator: \.isNewline).map(String.init)
             var seen = Set<String>(); var ordered: [String] = []
             for r in ([repo] + repos) where !r.isEmpty && seen.insert(r).inserted { ordered.append(r) }
             if !ordered.isEmpty {
                 availableRepos = ordered
                 if repo.isEmpty { setRepo(ordered[0]) }   // first run: show something
+            } else if repo.isEmpty {
+                lastError = "No repositories found for @\(owner). Pick one from the switcher."
             }
         }
     }
@@ -99,15 +112,16 @@ struct Presence: Identifiable {
         guard !repo.isEmpty else { return }
         loading = events.isEmpty
         guard let data = await GH.api("/repos/\(repo)/events?per_page=100") else {
-            lastError = "gh unavailable"; loading = false; return
+            lastError = Self.ghHint; loading = false; return
         }
         guard let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            lastError = "parse error"; loading = false; return
+            lastError = "Couldn't read GitHub's response."; loading = false; return
         }
         let parsed = raw.compactMap(parse).filter { !$0.actor.hasSuffix("[bot]") }
         events = parsed
         presence = computePresence(from: parsed)
         lastError = nil
+        didLoad = true
         loading = false
     }
 
