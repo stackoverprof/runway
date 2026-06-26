@@ -4,10 +4,11 @@ import Foundation
 // MARK: - Models
 
 enum FeedKind {
-    case push(branch: String, commits: [Commit])
+    case push(branch: String, count: Int?, commits: [Commit])
     case prOpened(number: Int, title: String, branch: String)
     case prMerged(number: Int, title: String, base: String, branch: String, additions: Int?, deletions: Int?)
     case branchCreated(String)
+    case branchDeleted(String)
     case review(number: Int, title: String, state: String)
     case issueOpened(number: Int, title: String)
     case issueClosed(number: Int, title: String)
@@ -46,6 +47,15 @@ struct Presence: Identifiable {
     /// True once a fetch has succeeded, so the UI can tell "still loading"
     /// (skeleton) apart from "loaded, nothing here" (empty notice).
     var didLoad = false
+    /// Infinite scroll: whether more pages may exist + an in-flight guard.
+    var canLoadMore = true
+    var loadingMore = false
+    private var loadedPages = 1
+    /// Commit counts for pushes (this events API strips `size`), keyed by
+    /// "before...head" and fetched via the compare API, with an in-flight guard.
+    private var commitCounts: [String: Int] = [:]
+    private var pushSHAs: [String: (before: String, head: String)] = [:]
+    private var fetchingCounts: Set<String> = []
 
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
@@ -72,6 +82,7 @@ struct Presence: Identifiable {
         repo = r
         UserDefaults.standard.set(r, forKey: "runway.repo")
         events = []; presence = []; lastError = nil; didLoad = false
+        loadedPages = 1; canLoadMore = true
         Task { await refresh() }
     }
 
@@ -102,18 +113,75 @@ struct Presence: Identifiable {
     func refresh() async {
         guard !repo.isEmpty else { return }
         loading = events.isEmpty
-        guard let data = await GH.api("/repos/\(repo)/events?per_page=100") else {
+        guard let page = await fetchPage(1) else {
             lastError = Self.ghHint; loading = false; return
         }
-        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            lastError = "Couldn't read GitHub's response."; loading = false; return
-        }
-        let parsed = raw.compactMap(parse).filter { !$0.actor.hasSuffix("[bot]") }
-        events = parsed
-        presence = computePresence(from: parsed)
+        merge(page.events)
+        presence = computePresence(from: events)
+        fetchCommitCounts()
         lastError = nil
         didLoad = true
         loading = false
+    }
+
+    /// Load the next page of older events (infinite scroll). The events API is
+    /// capped at ~300 events, so this naturally stops when GitHub runs out.
+    func loadMore() async {
+        guard didLoad, canLoadMore, !loadingMore, !repo.isEmpty else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let next = loadedPages + 1
+        guard let page = await fetchPage(next), !page.events.isEmpty else {
+            canLoadMore = false; return
+        }
+        merge(page.events)
+        loadedPages = next
+        canLoadMore = page.full
+        fetchCommitCounts()
+    }
+
+    /// Fill in commit counts for pushes that don't have one yet, via the compare
+    /// API (cached by range + an in-flight set so each range is fetched once).
+    private func fetchCommitCounts() {
+        for e in events {
+            guard case let .push(_, count, _) = e.kind, count == nil,
+                  let shas = pushSHAs[e.id] else { continue }
+            let key = "\(shas.before)...\(shas.head)"
+            if let cached = commitCounts[key] { applyCount(cached, to: e.id); continue }
+            if fetchingCounts.contains(key) { continue }
+            fetchingCounts.insert(key)
+            Task { @MainActor in
+                defer { fetchingCounts.remove(key) }
+                guard let data = await GH.api("/repos/\(repo)/compare/\(key)"),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let total = json["total_commits"] as? Int else { return }
+                commitCounts[key] = total
+                applyCount(total, to: e.id)
+            }
+        }
+    }
+
+    private func applyCount(_ count: Int, to id: String) {
+        guard let i = events.firstIndex(where: { $0.id == id }),
+              case let .push(branch, _, commits) = events[i].kind else { return }
+        let old = events[i]
+        events[i] = FeedEvent(id: old.id, actor: old.actor, avatarURL: old.avatarURL,
+                              date: old.date, kind: .push(branch: branch, count: count, commits: commits))
+    }
+
+    private func fetchPage(_ page: Int) async -> (events: [FeedEvent], full: Bool)? {
+        guard let data = await GH.api("/repos/\(repo)/events?per_page=100&page=\(page)"),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        let parsed = raw.compactMap(parse).filter { !$0.actor.hasSuffix("[bot]") }
+        return (parsed, raw.count >= 100)
+    }
+
+    /// Merge new events into the timeline, de-duplicated by id, newest first.
+    private func merge(_ incoming: [FeedEvent]) {
+        var byID = [String: FeedEvent](minimumCapacity: events.count + incoming.count)
+        for e in events { byID[e.id] = e }
+        for e in incoming { byID[e.id] = e }
+        events = byID.values.sorted { $0.date > $1.date }
     }
 
     // MARK: parsing
@@ -142,14 +210,24 @@ struct Presence: Identifiable {
                 FeedKind.Commit(sha: String(($0["sha"] as? String ?? "").prefix(7)),
                                 message: ($0["message"] as? String ?? "").split(separator: "\n").first.map(String.init) ?? "")
             }
-            kind = ref.isEmpty ? nil : .push(branch: ref, commits: commits)
+            // This events API strips `size`/`commits`, so we derive the count from
+            // the before...head range via the compare API (fetched + cached below).
+            guard !ref.isEmpty else { kind = nil; break }
+            let before = payload["before"] as? String ?? ""
+            let head = payload["head"] as? String ?? ""
+            if !before.isEmpty, !head.isEmpty, before.contains(where: { $0 != "0" }) {
+                pushSHAs[id] = (before, head)
+            }
+            kind = .push(branch: ref, count: commitCounts["\(before)...\(head)"], commits: commits)
         case "PullRequestEvent":
             let action = payload["action"] as? String ?? ""
             guard let p = pr(), let num = p["number"] as? Int else { kind = nil; break }
             let title = p["title"] as? String ?? ""
             let head = ((p["head"] as? [String: Any])?["ref"] as? String) ?? ""
             let merged = p["merged"] as? Bool ?? false
-            if action == "closed", merged {
+            // This events API uses action "merged"; the classic shape is
+            // "closed" + merged=true. Handle both.
+            if action == "merged" || (action == "closed" && merged) {
                 let base = ((p["base"] as? [String: Any])?["ref"] as? String) ?? "main"
                 kind = .prMerged(number: num, title: title, base: base, branch: head,
                                  additions: p["additions"] as? Int, deletions: p["deletions"] as? Int)
@@ -159,6 +237,10 @@ struct Presence: Identifiable {
         case "CreateEvent":
             if (payload["ref_type"] as? String) == "branch", let ref = payload["ref"] as? String {
                 kind = .branchCreated(ref)
+            } else { kind = nil }
+        case "DeleteEvent":
+            if (payload["ref_type"] as? String) == "branch", let ref = payload["ref"] as? String {
+                kind = .branchDeleted(ref)
             } else { kind = nil }
         case "PullRequestReviewEvent":
             guard let p = pr(), let num = p["number"] as? Int else { kind = nil; break }

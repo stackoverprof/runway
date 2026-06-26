@@ -130,15 +130,15 @@ struct LeftPane: View {
             if feed.presence.count > 5 {
                 let overflow = Array(feed.presence.dropFirst(5))
                 HStack(spacing: 8) {
+                    Text("+\(overflow.count) others")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.4))
                     HStack(spacing: -6) {
                         ForEach(overflow.prefix(6)) { p in
                             Avatar(login: p.login, url: p.avatarURL, size: 18)
                                 .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
                         }
                     }
-                    Text("+\(overflow.count) others")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.4))
                     Spacer(minLength: 6)
                 }
                 .padding(.top, 2)
@@ -160,6 +160,21 @@ struct LeftPane: View {
             ForEach(feed.events) { event in
                 FeedRow(event: event, time: clock(event.date),
                         isLast: event.id == feed.events.last?.id, repo: feed.repo)
+            }
+            // Infinite scroll: a zero-height sentinel that loads the next page
+            // when it scrolls into view (LazyVStack only renders it near the end).
+            if feed.canLoadMore, !feed.events.isEmpty {
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { Task { await feed.loadMore() } }
+            }
+            if feed.loadingMore {
+                HStack {
+                    Spacer()
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Spacer()
+                }
+                .padding(.vertical, 10)
             }
         }
     }
@@ -254,10 +269,11 @@ private struct FeedRow: View {
     private var link: URL? {
         let base = "https://github.com/\(repo)"
         switch event.kind {
-        case let .push(branch, _):           return URL(string: "\(base)/commits/\(branch)")
+        case let .push(branch, _, _):        return URL(string: "\(base)/commits/\(branch)")
         case let .prOpened(number, _, _):    return URL(string: "\(base)/pull/\(number)")
         case let .prMerged(number, _, _, _, _, _): return URL(string: "\(base)/pull/\(number)")
         case let .branchCreated(name):       return URL(string: "\(base)/tree/\(name)")
+        case .branchDeleted:                 return URL(string: "\(base)/branches")
         case let .review(number, _, _):      return URL(string: "\(base)/pull/\(number)")
         case let .issueOpened(number, _):    return URL(string: "\(base)/issues/\(number)")
         case let .issueClosed(number, _):    return URL(string: "\(base)/issues/\(number)")
@@ -319,10 +335,13 @@ private struct FeedRow: View {
 
     private var verb: String {
         switch event.kind {
-        case .push: return "pushed"
+        case let .push(_, count, _):
+            guard let count else { return "pushed" }
+            return "pushed \(count) commit\(count == 1 ? "" : "s")"
         case .prOpened: return "opened PR"
         case .prMerged: return "merged"
         case .branchCreated: return "created branch"
+        case .branchDeleted: return "deleted branch"
         case .review: return "reviewed"
         case .issueOpened: return "opened issue"
         case .issueClosed: return "closed issue"
@@ -334,6 +353,7 @@ private struct FeedRow: View {
         case .prOpened: return "arrow.triangle.pull"
         case .prMerged: return "arrow.triangle.merge"
         case .branchCreated: return "arrow.triangle.branch"
+        case .branchDeleted: return "trash"
         case .review: return "checkmark"
         case .issueOpened: return "exclamationmark"
         case .issueClosed: return "checkmark"
@@ -350,12 +370,13 @@ private struct FeedRow: View {
         case .prOpened, .branchCreated, .issueOpened: return Self.green
         case .push, .review: return Self.blue
         case .prMerged, .issueClosed: return Self.purple
+        case .branchDeleted: return Self.gray
         }
     }
 
     @ViewBuilder private var detail: some View {
         switch event.kind {
-        case let .push(branch, commits):
+        case let .push(branch, _, commits):
             VStack(alignment: .leading, spacing: 6) {
                 Chip(branch, tint: Self.blue)
                 ForEach(commits.prefix(3)) { c in
@@ -383,6 +404,8 @@ private struct FeedRow: View {
             }
         case let .branchCreated(name):
             Chip(name, tint: Self.green)
+        case let .branchDeleted(name):
+            Chip(name, tint: Self.gray)
         case let .review(number, title, state):
             prLine("#\(number) \(state.lowercased())", title, tint: Self.blue)
         case let .issueOpened(number, title):
