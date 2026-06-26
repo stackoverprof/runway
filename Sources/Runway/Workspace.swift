@@ -87,6 +87,16 @@ import AppKit
     private func pollControlFiles() {
         for i in boxes.indices {
             let id = boxes[i].id
+
+            // Working directory the box's shell recorded — persisted so the agent
+            // reopens in the same folder after a relaunch.
+            if let cwdData = try? Data(contentsOf: AgentControl.cwdFile(for: id)),
+               let dir = String(data: cwdData, encoding: .utf8)?
+                   .trimmingCharacters(in: .whitespacesAndNewlines),
+               !dir.isEmpty, dir != boxes[i].cwd {
+                boxes[i].cwd = dir
+            }
+
             guard let data = try? Data(contentsOf: AgentControl.file(for: id)),
                   let raw = String(data: data, encoding: .utf8) else { continue }
             if lastControl[id] == raw { continue }   // unchanged → skip
