@@ -561,10 +561,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return true
                 }
                 if terminal != nil {
-                    // Let AppKit dispatch natively — manually delivering + swallowing
-                    // broke momentum/precise-scroll continuity (huge jumps). The
-                    // terminal view consumes scroll without bubbling, so it won't
-                    // reach the list.
+                    // Trackpad momentum (inertial) scrolling keeps firing events
+                    // after the finger lifts. TUIs in mouse-reporting mode (claude,
+                    // etc.) act on each one, overshooting to the very top/bottom.
+                    // Drop the momentum phase so the terminal sees only the active
+                    // gesture; the active scroll dispatches natively (no re-delivery,
+                    // which previously broke precise-scroll continuity).
+                    if !ev.momentumPhase.isEmpty { return true }   // swallow inertia
                     return false
                 }
                 // Plain scroll over gaps / header / background inside the list:
