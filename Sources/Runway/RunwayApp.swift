@@ -447,6 +447,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Workspace.shared.startAgentWatch()
         GitHubFeed.shared.startPolling()
         observeFullScreen()
+
+        // Once the terminals have registered, route the keyboard to the focused
+        // box so typing, the focus glow, and accordion expansion all agree.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            if let id = Workspace.shared.focusedID {
+                TerminalRegistry.shared.focusTerminal(id)
+            }
+        }
     }
 
     private func observeFullScreen() {
