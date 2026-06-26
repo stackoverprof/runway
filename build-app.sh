@@ -15,6 +15,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN_DIR/Runway" "$APP/Contents/MacOS/Runway"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Bundle the libghostty GPU framework so the .app is self-contained (otherwise
 # it only runs while .build exists). Add an rpath so the binary finds it.
