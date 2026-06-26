@@ -26,6 +26,10 @@ import AppKit
     /// True while the window is full screen (no traffic lights → less top inset).
     var isFullScreen = false
 
+    /// NSEvent.timestamp of the last terminal scroll we forwarded — throttles the
+    /// dense trackpad precise-scroll stream so mouse-reporting TUIs don't overshoot.
+    @ObservationIgnored var lastTerminalScrollTS: TimeInterval = 0
+
     /// Last raw control-file contents seen per box, so we only apply changes (and
     /// don't clobber the user's UI edits with a stale file).
     private var lastControl: [UUID: String] = [:]
