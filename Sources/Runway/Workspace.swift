@@ -110,7 +110,14 @@ import AppKit
                 boxes[i].detail = String(desc.prefix(40))
             }
             if let state = json["state"] as? String {
-                boxes[i].state = AgentState(control: state)
+                let next = AgentState(control: state)
+                if next == .needsAction, boxes[i].state != .needsAction {
+                    ToastCenter.shared.show("\(boxes[i].name) needs your attention",
+                                            icon: "exclamationmark.bubble.fill",
+                                            tint: Color(red: 0.91, green: 0.62, blue: 0.20),
+                                            sound: true)
+                }
+                boxes[i].state = next
             }
         }
     }

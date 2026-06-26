@@ -71,6 +71,7 @@ struct ContentView: View {
                 // Always mounted (so its shell keeps running); slides in/out with ⌘⌥Q.
                 QuickTerminal(width: left, availableHeight: geo.size.height)
             }
+            .overlay(alignment: .topTrailing) { ToastOverlay() }
         }
         .ignoresSafeArea()
         .background(WindowConfigurator())
