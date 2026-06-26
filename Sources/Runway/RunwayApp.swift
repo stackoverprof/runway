@@ -386,6 +386,7 @@ private final class WindowConfigView: NSView {
             }
         }
         repositionTrafficLights()
+        syncFullScreen()   // catch launch-into-full-screen (no enter notification fires)
 
         // AppKit re-lays the buttons out on these events; re-pin each time.
         let nc = NotificationCenter.default
@@ -401,12 +402,24 @@ private final class WindowConfigView: NSView {
 
     @objc private func repositionTrafficLights() {
         guard let window else { return }
+        syncFullScreen()
         for type in buttonTypes {
             guard let button = window.standardWindowButton(type),
                   let origin = defaultOrigins[type] else { continue }
             // Clamp Y so we never push a button off the bottom of its container.
             let y = max(3, origin.y - insetY)
             button.setFrameOrigin(NSPoint(x: origin.x + insetX, y: y))
+        }
+    }
+
+    /// Mirror the window's real full-screen state into the workspace. The
+    /// enter/exit notifications don't fire when the app launches already in full
+    /// screen, which left the header using the windowed (traffic-light) inset.
+    private func syncFullScreen() {
+        guard let window else { return }
+        let fs = window.styleMask.contains(.fullScreen)
+        MainActor.assumeIsolated {
+            if Workspace.shared.isFullScreen != fs { Workspace.shared.isFullScreen = fs }
         }
     }
 
