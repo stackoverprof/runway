@@ -6,6 +6,7 @@ struct LeftPane: View {
     @Bindable private var feed = GitHubFeed.shared
     @Bindable private var ws = Workspace.shared
     @State private var showRepoPicker = false
+    @State private var showAllPresence = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -107,7 +108,7 @@ struct LeftPane: View {
                 .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.3))
                 .tracking(0.8)
-            ForEach(feed.presence.prefix(5)) { p in
+            ForEach(showAllPresence ? feed.presence : Array(feed.presence.prefix(5))) { p in
                 HStack(spacing: 8) {
                     Avatar(login: p.login, url: p.avatarURL, size: 18)
                     Text(p.login)
@@ -120,27 +121,40 @@ struct LeftPane: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.3))
                     } else {
-                        Text(p.recentCount >= 5 ? "🔥 on a roll" : "active now")
+                        Text(p.recentCount >= 5 ? "🔥 on a roll" : "active")
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(intensityColor(p.recentCount))
                     }
                 }
             }
-            // Beyond 5, collapse the rest into an overlapping avatar cluster + count.
+            // Beyond 5: a tappable row that expands to the full list (and collapses).
             if feed.presence.count > 5 {
                 let overflow = Array(feed.presence.dropFirst(5))
-                HStack(spacing: 8) {
-                    Text("+\(overflow.count) others")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.4))
-                    HStack(spacing: -6) {
-                        ForEach(overflow.prefix(6)) { p in
-                            Avatar(login: p.login, url: p.avatarURL, size: 18)
-                                .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showAllPresence.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if showAllPresence {
+                            Text("show less")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.4))
+                        } else {
+                            Text("+\(overflow.count) others")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.4))
+                            HStack(spacing: -6) {
+                                ForEach(overflow.prefix(6)) { p in
+                                    Avatar(login: p.login, url: p.avatarURL, size: 18)
+                                        .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
+                                }
+                            }
                         }
+                        Spacer(minLength: 6)
                     }
-                    Spacer(minLength: 6)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
                 .padding(.top, 2)
             }
         }
