@@ -565,9 +565,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // after the finger lifts. TUIs in mouse-reporting mode (claude,
                     // etc.) act on each one, overshooting to the very top/bottom.
                     // Drop the momentum phase so the terminal sees only the active
-                    // gesture; the active scroll dispatches natively (no re-delivery,
-                    // which previously broke precise-scroll continuity).
+                    // gesture.
                     if !ev.momentumPhase.isEmpty { return true }   // swallow inertia
+                    // The active gesture itself is a dense, high-frequency stream of
+                    // precise (pixel) deltas; forward at most one every ~55ms so the
+                    // TUI scrolls a sane number of lines. Coarse mouse wheels (not
+                    // precise) are already discrete, so pass them untouched.
+                    if ev.hasPreciseScrollingDeltas {
+                        let dt = ev.timestamp - Workspace.shared.lastTerminalScrollTS
+                        if dt < 0.055 { return true }              // swallow excess
+                        Workspace.shared.lastTerminalScrollTS = ev.timestamp
+                    }
                     return false
                 }
                 // Plain scroll over gaps / header / background inside the list:
