@@ -174,9 +174,9 @@ struct RightPane: View {
                 .foregroundStyle(Color.white.opacity(0.55))
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.05)))
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.05)))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 9)
                         .strokeBorder(Color.white.opacity(0.10),
                                       style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 )
@@ -237,10 +237,10 @@ private struct ResizableBox: View {
         }
         .frame(height: fixedHeight ?? height)
         .background(RunwayTerminal.body)                 // darker body fills the inset
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
         // Focus: a very slight brighter border + faint white glow.
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 9)
                 .stroke(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.07),
                         lineWidth: 1)
         )
@@ -277,14 +277,14 @@ private struct ResizableBox: View {
         if isEditingName {
             InlineField(
                 text: $name,
-                font: .monospacedSystemFont(ofSize: 12, weight: .medium),
+                font: .monospacedSystemFont(ofSize: 11, weight: .medium),
                 color: .white,
                 onEnd: { isEditingName = false }
             )
             .fixedSize()
         } else {
             Text(name)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.9))
                 .lineLimit(1)
                 .contentShape(Rectangle())
@@ -302,7 +302,7 @@ private struct ResizableBox: View {
         if isEditingDetail {
             InlineField(
                 text: $detail,
-                font: .monospacedSystemFont(ofSize: 11, weight: .regular),
+                font: .monospacedSystemFont(ofSize: 10, weight: .regular),
                 color: NSColor.white.withAlphaComponent(0.55),
                 alignment: .right,
                 placeholder: "Add a description",
@@ -321,7 +321,7 @@ private struct ResizableBox: View {
 
     private func detailLabel(_ text: String, opacity: Double) -> some View {
         Text(text)
-            .font(.system(size: 11, design: .monospaced))
+            .font(.system(size: 10, design: .monospaced))
             .foregroundStyle(Color.white.opacity(opacity))
             .lineLimit(1)
             .truncationMode(.tail)
