@@ -121,7 +121,7 @@ struct LeftPane: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.3))
                     } else {
-                        Text(p.recentCount >= 5 ? "🔥 on a roll" : "active")
+                        Text(p.recentCount >= 5 ? "🔥 on fire" : "active")
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(intensityColor(p.recentCount))
                     }
