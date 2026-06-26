@@ -245,8 +245,8 @@ private struct ResizableBox: View {
                 .stroke(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.07),
                         lineWidth: 1)
         )
-        .shadow(color: isFocused ? Color.white.opacity(0.12) : .clear,
-                radius: isFocused ? 10 : 0)
+        .shadow(color: isFocused ? Color.white.opacity(0.22) : .clear,
+                radius: isFocused ? 13 : 0)
         .overlay(alignment: .bottom) {
             if fixedHeight == nil { bottomEdgeHandle }   // no resize in accordion mode
         }

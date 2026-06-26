@@ -312,7 +312,12 @@ struct Presence: Identifiable {
                             recentCount: recent, idle: now.timeIntervalSince(last) > idleThreshold)
         }
         .filter { now.timeIntervalSince($0.lastActive) < 6 * 3600 }   // shown if active in last 6h
-        .sorted { $0.lastActive > $1.lastActive }
+        // "On fire" (>= 5 events / 30m) first, then most-recently-active.
+        .sorted { a, b in
+            let aFire = a.recentCount >= 5, bFire = b.recentCount >= 5
+            if aFire != bFire { return aFire }
+            return a.lastActive > b.lastActive
+        }
     }
 }
 
