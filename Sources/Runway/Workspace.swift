@@ -19,6 +19,8 @@ import AppKit
     /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
     var quickVisible = false
     var quickHeight: CGFloat = 0
+    /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
+    @ObservationIgnored var focusQuick: (() -> Void)?
 
     /// Width of the left pane (the split divider position).
     var leftWidth: CGFloat = 460
@@ -43,6 +45,11 @@ import AppKit
         // Focus the first box on launch so the glow + accordion expansion match
         // where the keyboard actually lands (the terminal that auto-focuses).
         focusedID = boxes.first?.id
+        // Quitting kills the sessions, so reopen each restored agent into the
+        // configured command (e.g. claude) too, not just ⌘N-created ones.
+        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cmd.isEmpty { for i in boxes.indices { boxes[i].autorun = cmd } }
     }
 
     // MARK: Persistence
@@ -134,7 +141,10 @@ import AppKit
     // MARK: Actions (driven by the keyboard monitor + clicks)
 
     func newBox() {
-        let box = AgentBox(name: "agent\(boxes.count + 1)")
+        var box = AgentBox(name: "agent\(boxes.count + 1)")
+        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cmd.isEmpty { box.autorun = cmd }   // run it as the shell starts
         boxes.append(box)
         setFocus(box.id)
     }

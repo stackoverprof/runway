@@ -61,20 +61,30 @@ enum AgentControl {
 
     /// Environment for a box's terminal: where to report state, plus the zsh
     /// wrapper that auto-injects Claude Code hooks.
-    static func environment(for id: UUID) -> [String: String] {
+    static func environment(for id: UUID, autorun: String? = nil) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
-        return [
+        var env = [
             "RUNWAY_BOX": id.uuidString,
             "RUNWAY_CONTROL": file(for: id).path,
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
         ]
+        if let autorun, !autorun.isEmpty { env["RUNWAY_AUTORUN"] = autorun }
+        return env
     }
 
     static func cleanup(_ id: UUID) {
         try? FileManager.default.removeItem(at: file(for: id))
         try? FileManager.default.removeItem(at: cwdFile(for: id))
+    }
+
+    /// Clear stale agent states at launch: the shells start fresh (nothing running
+    /// yet), so any leftover state file from a previous session is bogus.
+    static func resetStates() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: controlDir, includingPropertiesForKeys: nil) else { return }
+        for f in files where f.pathExtension == "json" { try? FileManager.default.removeItem(at: f) }
     }
 
     // MARK: One-time install (idempotent; call at launch)
@@ -114,7 +124,11 @@ enum AgentControl {
         # are unaffected; your ~/.zshrc and ~/.claude are never modified.
         [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
         if [ -n "$RUNWAY_CONTROL" ] && [ -n "$RUNWAY_CLAUDE_HOOKS" ]; then
-          claude() { command claude --settings "$RUNWAY_CLAUDE_HOOKS" "$@"; }
+          claude() {
+            command claude --settings "$RUNWAY_CLAUDE_HOOKS" "$@"
+            # Back at the shell prompt: the agent is no longer running.
+            printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+          }
         fi
         # Record the working directory so Runway can reopen each agent in the same
         # folder after a relaunch (written at startup, on cd, and at each prompt).
@@ -124,6 +138,13 @@ enum AgentControl {
           add-zsh-hook chpwd _runway_cwd 2>/dev/null
           add-zsh-hook precmd _runway_cwd 2>/dev/null
           _runway_cwd
+        fi
+        # New agents open straight into a command (e.g. claude). Runs once, before
+        # the first prompt, so the agent is up the moment the card appears; you
+        # drop to the shell when it exits.
+        if [ -n "$RUNWAY_AUTORUN" ]; then
+          _cmd="$RUNWAY_AUTORUN"; unset RUNWAY_AUTORUN
+          eval "$_cmd"
         fi
         """)
     }

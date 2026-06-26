@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import GhosttyKit
 
 /// Engine-agnostic description of what a terminal pane should run. Keeping this

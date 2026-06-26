@@ -174,6 +174,7 @@ struct LeftPane: View {
             ForEach(feed.events) { event in
                 FeedRow(event: event, time: clock(event.date),
                         isLast: event.id == feed.events.last?.id, repo: feed.repo)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
             // Infinite scroll: a zero-height sentinel that loads the next page
             // when it scrolls into view (LazyVStack only renders it near the end).
@@ -210,11 +211,20 @@ struct LeftPane: View {
             .frame(height: 0)
 
             LazyVStack(alignment: .leading, spacing: 0) {
-                Text("WHAT YOUR TEAM'S BEEN HUSTLING, AS IT HAPPENS.")
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
-                    .tracking(0.8)
-                    .padding(.bottom, 18)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("WHAT YOUR TEAM'S BEEN HUSTLING, AS IT HAPPENS.")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                        .tracking(0.8)
+                    Spacer(minLength: 8)
+                    TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                        Text(clock(ctx.date))
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.3))
+                            .tracking(0.8)
+                    }
+                }
+                .padding(.bottom, 18)
                 rows()
             }
             .padding(.horizontal, 16)

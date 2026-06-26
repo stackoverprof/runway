@@ -10,7 +10,17 @@ struct QuickTerminal: View {
     let availableHeight: CGFloat  // full pane height
 
     @Bindable private var ws = Workspace.shared
-    @State private var session: GhosttyTerminalSession = makeRunwaySession()
+    @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
+
+    /// The quick terminal also runs the configured command on launch (it uses the
+    /// Runway ZDOTDIR so the .zshrc autorun block fires).
+    static func startupConfig() -> TerminalConfig {
+        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var env = ["ZDOTDIR": AgentControl.zdotdir.path]
+        if !cmd.isEmpty { env["RUNWAY_AUTORUN"] = cmd }
+        return TerminalConfig(environment: env)
+    }
     @State private var dragStartHeight: CGFloat?
 
     private let margin: CGFloat = 8
@@ -29,7 +39,10 @@ struct QuickTerminal: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 5)
                 .padding(.bottom, 5)
-                .onAppear { applyRunwayTheme(to: session) }
+                .onAppear {
+                    applyRunwayTheme(to: session)
+                    Workspace.shared.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                }
                 .dropDestination(for: URL.self) { urls, _ in
                     let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
                     guard !text.isEmpty else { return false }
@@ -51,10 +64,14 @@ struct QuickTerminal: View {
         .allowsHitTesting(ws.quickVisible)
         .animation(.easeOut(duration: 0.22), value: ws.quickVisible)
         .onChange(of: ws.quickVisible) { _, visible in
-            guard visible else { return }
-            // Focus the quick terminal so you can type immediately.
             DispatchQueue.main.async {
-                if let view = session.view { view.window?.makeFirstResponder(view) }
+                if visible {
+                    // Focus the quick terminal so you can type immediately.
+                    if let view = session.view { view.window?.makeFirstResponder(view) }
+                } else {
+                    // Closed: hand the keyboard back to the focused agent.
+                    TerminalRegistry.shared.focusTerminal(ws.focusedID)
+                }
             }
         }
     }
