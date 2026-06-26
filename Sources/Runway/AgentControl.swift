@@ -54,6 +54,11 @@ enum AgentControl {
         controlDir.appendingPathComponent("\(id.uuidString).json")
     }
 
+    /// Where the box's shell records its working directory (restored on relaunch).
+    static func cwdFile(for id: UUID) -> URL {
+        controlDir.appendingPathComponent("\(id.uuidString).cwd")
+    }
+
     /// Environment for a box's terminal: where to report state, plus the zsh
     /// wrapper that auto-injects Claude Code hooks.
     static func environment(for id: UUID) -> [String: String] {
@@ -61,6 +66,7 @@ enum AgentControl {
         return [
             "RUNWAY_BOX": id.uuidString,
             "RUNWAY_CONTROL": file(for: id).path,
+            "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
         ]
@@ -68,6 +74,7 @@ enum AgentControl {
 
     static func cleanup(_ id: UUID) {
         try? FileManager.default.removeItem(at: file(for: id))
+        try? FileManager.default.removeItem(at: cwdFile(for: id))
     }
 
     // MARK: One-time install (idempotent; call at launch)
@@ -102,12 +109,21 @@ enum AgentControl {
         write(".zprofile", #"[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile""#)
         write(".zlogin", #"[ -f "$HOME/.zlogin" ] && source "$HOME/.zlogin""#)
         write(".zshrc", """
-        # Managed by Runway. Loads your real zsh config, then — only inside a Runway
-        # box — routes `claude` through state-reporting hooks. Shells outside Runway
+        # Managed by Runway. Loads your real zsh config, then (only inside a Runway
+        # box) routes `claude` through state-reporting hooks. Shells outside Runway
         # are unaffected; your ~/.zshrc and ~/.claude are never modified.
         [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
         if [ -n "$RUNWAY_CONTROL" ] && [ -n "$RUNWAY_CLAUDE_HOOKS" ]; then
           claude() { command claude --settings "$RUNWAY_CLAUDE_HOOKS" "$@"; }
+        fi
+        # Record the working directory so Runway can reopen each agent in the same
+        # folder after a relaunch (written at startup, on cd, and at each prompt).
+        if [ -n "$RUNWAY_CWD_FILE" ]; then
+          _runway_cwd() { pwd > "$RUNWAY_CWD_FILE" 2>/dev/null; }
+          autoload -Uz add-zsh-hook 2>/dev/null
+          add-zsh-hook chpwd _runway_cwd 2>/dev/null
+          add-zsh-hook precmd _runway_cwd 2>/dev/null
+          _runway_cwd
         fi
         """)
     }

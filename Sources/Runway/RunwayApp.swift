@@ -83,10 +83,11 @@ struct AgentBox: Identifiable, Codable {
     var id = UUID()
     var name: String
     var detail: String = ""
-    var state: AgentState = .idle   // runtime only — not persisted
+    var state: AgentState = .idle   // runtime only, not persisted
     var height: CGFloat = 264
+    var cwd: String?                // last working directory, restored on relaunch
 
-    enum CodingKeys: String, CodingKey { case id, name, detail, height }
+    enum CodingKeys: String, CodingKey { case id, name, detail, height, cwd }
 }
 
 /// Right pane: a vertical list of agent boxes. Normal mode scrolls (⌘-scroll);
@@ -109,7 +110,8 @@ struct RightPane: View {
                                 name: $box.name,
                                 detail: $box.detail,
                                 state: box.state,
-                                config: TerminalConfig(environment: AgentControl.environment(for: box.id)),
+                                config: TerminalConfig(workingDirectory: box.cwd,
+                                                       environment: AgentControl.environment(for: box.id)),
                                 height: $box.height,
                                 isFocused: ws.focusedID == box.id,
                                 fixedHeight: fixedHeight(for: box, geo: geo, count: n)
