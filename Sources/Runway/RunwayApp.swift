@@ -516,7 +516,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       let hit = window.contentView?.hitTest(ev.locationInWindow),
                       let id = TerminalRegistry.shared.boxID(under: hit) else { return false }
                 let changingFocus = id != Workspace.shared.focusedID
-                Workspace.shared.focusedID = id
+                // setFocus (not just focusedID) so the clicked terminal also becomes
+                // the keyboard first responder — otherwise the glow moves but typing
+                // stays on the previously-focused terminal.
+                Workspace.shared.setFocus(id)
                 // In accordion mode a focus change resizes the boxes; swallow that
                 // first click so the terminal doesn't begin a stray selection while
                 // it reflows. A second click then interacts with the terminal.
