@@ -34,7 +34,8 @@ enum RunwayTerminal {
 
     private static let themeContents = """
     # Runway embedded-terminal theme: neutral near-black, opaque, flat.
-    font-size = 11
+    # Default ~2 zoom levels smaller than 11 so sessions fit comfortably.
+    font-size = 9
     # Tame trackpad scroll in TUIs (claude, etc.); Ghostty's default (3) jumps.
     mouse-scroll-multiplier = 1
     background = 0e1012
@@ -44,8 +45,8 @@ enum RunwayTerminal {
     selection-background = 2b2b33
     selection-foreground = ffffff
     background-opacity = 1
-    window-padding-x = 8
-    window-padding-y = 6
+    window-padding-x = 2
+    window-padding-y = 2
     window-padding-balance = true
     cursor-style = block
     palette = 0=#15151a

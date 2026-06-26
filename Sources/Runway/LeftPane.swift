@@ -107,7 +107,7 @@ struct LeftPane: View {
                 .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.3))
                 .tracking(0.8)
-            ForEach(feed.presence) { p in
+            ForEach(feed.presence.prefix(5)) { p in
                 HStack(spacing: 8) {
                     Avatar(login: p.login, url: p.avatarURL, size: 18)
                     Text(p.login)
@@ -125,6 +125,23 @@ struct LeftPane: View {
                             .foregroundStyle(intensityColor(p.recentCount))
                     }
                 }
+            }
+            // Beyond 5, collapse the rest into an overlapping avatar cluster + count.
+            if feed.presence.count > 5 {
+                let overflow = Array(feed.presence.dropFirst(5))
+                HStack(spacing: 8) {
+                    HStack(spacing: -6) {
+                        ForEach(overflow.prefix(6)) { p in
+                            Avatar(login: p.login, url: p.avatarURL, size: 18)
+                                .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
+                        }
+                    }
+                    Text("+\(overflow.count) others")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                    Spacer(minLength: 6)
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.horizontal, 16)
