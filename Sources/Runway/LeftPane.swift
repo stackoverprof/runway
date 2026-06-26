@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
@@ -141,7 +142,7 @@ struct LeftPane: View {
         streamScaffold(disabled: false) {
             ForEach(feed.events) { event in
                 FeedRow(event: event, time: clock(event.date),
-                        isLast: event.id == feed.events.last?.id)
+                        isLast: event.id == feed.events.last?.id, repo: feed.repo)
             }
         }
     }
@@ -229,6 +230,22 @@ private struct FeedRow: View {
     let event: FeedEvent
     let time: String
     let isLast: Bool
+    let repo: String
+    @State private var hovering = false
+
+    /// The GitHub page this event points at.
+    private var link: URL? {
+        let base = "https://github.com/\(repo)"
+        switch event.kind {
+        case let .push(branch, _):           return URL(string: "\(base)/commits/\(branch)")
+        case let .prOpened(number, _, _):    return URL(string: "\(base)/pull/\(number)")
+        case let .prMerged(number, _, _, _, _, _): return URL(string: "\(base)/pull/\(number)")
+        case let .branchCreated(name):       return URL(string: "\(base)/tree/\(name)")
+        case let .review(number, _, _):      return URL(string: "\(base)/pull/\(number)")
+        case let .issueOpened(number, _):    return URL(string: "\(base)/issues/\(number)")
+        case let .issueClosed(number, _):    return URL(string: "\(base)/issues/\(number)")
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
@@ -271,8 +288,14 @@ private struct FeedRow: View {
             }
             .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.06 : 0.035)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(hovering ? 0.16 : 0.06), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .onHover { h in
+                hovering = h
+                if h, link != nil { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            }
+            .onTapGesture { if let link { NSWorkspace.shared.open(link) } }
             .padding(.bottom, 10)
         }
     }
@@ -458,27 +481,46 @@ private struct Chip: View {
     }
 }
 
+/// Caches decoded avatars by URL so the same person's photo is fetched once and
+/// reused across every row (AsyncImage re-fetches per appearance, which made
+/// repeated/identical avatars intermittently fall back to initials).
+@MainActor final class AvatarCache {
+    static let shared = AvatarCache()
+    private let cache = NSCache<NSString, NSImage>()
+
+    func cached(_ url: String) -> NSImage? { cache.object(forKey: url as NSString) }
+
+    func load(_ url: String) async -> NSImage? {
+        if let img = cached(url) { return img }
+        guard let u = URL(string: url) else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(from: u),
+              let img = NSImage(data: data) else { return nil }
+        cache.setObject(img, forKey: url as NSString)
+        return img
+    }
+}
+
 private struct Avatar: View {
     let login: String
     var url: String? = nil
     let size: CGFloat
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let url, let u = URL(string: url) {
-                AsyncImage(url: u) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        initialsCircle
-                    }
-                }
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
             } else {
                 initialsCircle
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .task(id: url) {
+            guard let url else { image = nil; return }
+            if let hit = AvatarCache.shared.cached(url) { image = hit; return }
+            if let loaded = await AvatarCache.shared.load(url) { image = loaded }
+        }
     }
 
     private var initialsCircle: some View {
