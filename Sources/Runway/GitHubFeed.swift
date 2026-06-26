@@ -3,7 +3,7 @@ import Foundation
 
 // MARK: - Models
 
-enum FeedKind {
+enum FeedKind: Codable {
     case push(branch: String, count: Int?, commits: [Commit])
     case prOpened(number: Int, title: String, branch: String)
     case prMerged(number: Int, title: String, base: String, branch: String, additions: Int?, deletions: Int?)
@@ -13,10 +13,13 @@ enum FeedKind {
     case issueOpened(number: Int, title: String)
     case issueClosed(number: Int, title: String)
 
-    struct Commit: Identifiable { let id = UUID(); let sha: String; let message: String }
+    struct Commit: Identifiable, Codable {
+        let id = UUID(); let sha: String; let message: String
+        enum CodingKeys: String, CodingKey { case sha, message }   // id is regenerated
+    }
 }
 
-struct FeedEvent: Identifiable {
+struct FeedEvent: Identifiable, Codable {
     let id: String
     let actor: String
     let avatarURL: String?
@@ -51,6 +54,7 @@ struct Presence: Identifiable {
     var canLoadMore = true
     var loadingMore = false
     private var loadedPages = 1
+    private var offline = false   // for the offline/online toast transition
     /// Commit counts for pushes (this events API strips `size`), keyed by
     /// "before...head" and fetched via the compare API, with an in-flight guard.
     private var commitCounts: [String: Int] = [:]
@@ -64,7 +68,33 @@ struct Presence: Identifiable {
     let pollInterval: UInt64 = 45
     private let idleThreshold: TimeInterval = 30 * 60
     private let isoFull = ISO8601DateFormatter()
-    private init() {}
+
+    // Disk cache so reopening the app shows the last feed instantly (no skeleton).
+    private static var cacheFile: URL { AgentControl.supportDir.appendingPathComponent("feed-cache.json") }
+    private static let coderDate: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
+    private static let decoderDate: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
+
+    private init() { loadCache() }
+
+    /// Load the cached feed for the current repo (if any) so the left pane renders
+    /// immediately instead of a skeleton. Recomputes presence from it.
+    private func loadCache() {
+        didLoad = false; events = []; presence = []
+        guard let data = try? Data(contentsOf: Self.cacheFile),
+              let byRepo = try? Self.decoderDate.decode([String: [FeedEvent]].self, from: data),
+              let cached = byRepo[repo], !cached.isEmpty else { return }
+        events = cached.sorted { $0.date > $1.date }
+        presence = computePresence(from: events)
+        didLoad = true
+    }
+
+    private func saveCache() {
+        guard !repo.isEmpty else { return }
+        var byRepo = (try? Data(contentsOf: Self.cacheFile))
+            .flatMap { try? Self.decoderDate.decode([String: [FeedEvent]].self, from: $0) } ?? [:]
+        byRepo[repo] = Array(events.prefix(200))   // cap per repo
+        if let data = try? Self.coderDate.encode(byRepo) { try? data.write(to: Self.cacheFile) }
+    }
 
     func startPolling() {
         fetchRepoList()
@@ -81,8 +111,8 @@ struct Presence: Identifiable {
         guard r != repo, !r.isEmpty else { return }
         repo = r
         UserDefaults.standard.set(r, forKey: "runway.repo")
-        events = []; presence = []; lastError = nil; didLoad = false
-        loadedPages = 1; canLoadMore = true
+        presence = []; lastError = nil; loadedPages = 1; canLoadMore = true
+        loadCache()   // show this repo's cached feed instantly (or skeleton if none)
         Task { await refresh() }
     }
 
@@ -114,11 +144,22 @@ struct Presence: Identifiable {
         guard !repo.isEmpty else { return }
         loading = events.isEmpty
         guard let page = await fetchPage(1) else {
+            if !offline {
+                offline = true
+                ToastCenter.shared.show("Can't reach GitHub", icon: "wifi.slash",
+                                        tint: Color(red: 0.95, green: 0.45, blue: 0.40))
+            }
             lastError = Self.ghHint; loading = false; return
+        }
+        if offline {
+            offline = false
+            ToastCenter.shared.show("Back online", icon: "wifi",
+                                    tint: Color(red: 0.30, green: 0.78, blue: 0.45))
         }
         merge(page.events)
         presence = computePresence(from: events)
         fetchCommitCounts()
+        saveCache()
         lastError = nil
         didLoad = true
         loading = false
@@ -138,6 +179,7 @@ struct Presence: Identifiable {
         loadedPages = next
         canLoadMore = page.full
         fetchCommitCounts()
+        saveCache()
     }
 
     /// Fill in commit counts for pushes that don't have one yet, via the compare
