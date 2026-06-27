@@ -40,7 +40,7 @@ import AppKit
     /// pre-existing needs-action state on launch doesn't fire a burst of toasts.
     private var watchReady = false
 
-    private init() {
+    init() {
         load()
         // Focus the first box on launch so the glow + accordion expansion match
         // where the keyboard actually lands (the terminal that auto-focuses).

@@ -40,10 +40,12 @@ enum RunwayTerminalHost {
 /// backed by libghostty's GPU renderer via GhosttyKit.
 struct TerminalSurfaceView: View {
     let boxID: UUID
+    let workspace: Workspace
     @State private var session: GhosttyTerminalSession
 
-    init(boxID: UUID, config: TerminalConfig) {
+    init(boxID: UUID, workspace: Workspace, config: TerminalConfig) {
         self.boxID = boxID
+        self.workspace = workspace
         let launch = GhosttyTerminalLaunchConfiguration(
             command: config.command,
             workingDirectory: config.workingDirectory,
@@ -66,7 +68,7 @@ struct TerminalSurfaceView: View {
                 let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
                 guard !text.isEmpty else { return false }
                 session.insertText(text + " ")
-                Workspace.shared.focusedID = boxID
+                workspace.focusedID = boxID
                 return true
             }
     }

@@ -75,7 +75,7 @@ struct Presence: Identifiable {
     private static let coderDate: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
     private static let decoderDate: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
 
-    private init() { loadCache() }
+    init() { loadCache() }
 
     /// Load the cached feed for the current repo (if any) so the left pane renders
     /// immediately instead of a skeleton. Recomputes presence from it.
@@ -94,6 +94,17 @@ struct Presence: Identifiable {
         try? FileManager.default.removeItem(at: cacheFile)
         shared.events = []; shared.presence = []; shared.didLoad = false
         Task { await shared.refresh() }
+    }
+
+    /// Inject synthetic feed events for local testing. This does not touch the
+    /// on-disk cache, so a real poll will replace the mock data.
+    func injectSyntheticEvents() {
+        guard !repo.isEmpty else { return }
+        let count = Int.random(in: 1...3)
+        let incoming = (0..<count).map { index in makeSyntheticEvent(offset: index) }
+        merge(incoming, staggerNew: true, persistCache: false, animateFromEmpty: true)
+        lastError = nil
+        didLoad = true
     }
 
     private func saveCache(_ list: [FeedEvent]) {
@@ -227,17 +238,25 @@ struct Presence: Identifiable {
     /// Merge new events (deduped by id, newest first), recompute presence, cache.
     /// With `staggerNew`, brand-new events at the top reveal one-by-one (phone-
     /// notification style): older cards slide down as each new one fades in.
-    private func merge(_ incoming: [FeedEvent], staggerNew: Bool = false) {
+    private func merge(_ incoming: [FeedEvent], staggerNew: Bool = false, persistCache: Bool = true, animateFromEmpty: Bool = false) {
         let existing = Set(events.map(\.id))
         var byID = [String: FeedEvent](minimumCapacity: events.count + incoming.count)
         for e in events { byID[e.id] = e }
         for e in incoming { byID[e.id] = e }
         let full = byID.values.sorted { $0.date > $1.date }
+        let hadEvents = !events.isEmpty
 
-        presence = computePresence(from: full)
-        saveCache(full)
+        let nextPresence = computePresence(from: full)
+        if hadEvents || animateFromEmpty {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                presence = nextPresence
+            }
+        } else {
+            presence = nextPresence
+        }
+        if persistCache { saveCache(full) }
 
-        let newTop = (staggerNew && !events.isEmpty)
+        let newTop = (staggerNew && (!events.isEmpty || animateFromEmpty))
             ? Array(full.prefix { !existing.contains($0.id) }) : []
         guard !newTop.isEmpty else { events = full; return }
 
@@ -252,6 +271,94 @@ struct Presence: Identifiable {
                 }
             }
         }
+    }
+
+    private func makeSyntheticEvent(offset: Int) -> FeedEvent {
+        let samples: [(actor: String, avatarURL: String?, kind: FeedKind)] = [
+            ("alex", nil, .push(
+                branch: "feature/live-feed-\(Int.random(in: 12...98))",
+                count: Int.random(in: 1...4),
+                commits: [
+                    .init(sha: randomSHA(), message: randomCommitMessage()),
+                    .init(sha: randomSHA(), message: randomCommitMessage())
+                ]
+            )),
+            ("maria", nil, .prOpened(
+                number: Int.random(in: 180...999),
+                title: randomPRTitle(),
+                branch: "feature/\(randomSlug())"
+            )),
+            ("sam", nil, .issueOpened(
+                number: Int.random(in: 120...899),
+                title: randomIssueTitle()
+            )),
+            ("devon", nil, .branchCreated("wip/\(randomSlug())")),
+            ("jordan", nil, .review(
+                number: Int.random(in: 180...999),
+                title: randomPRTitle(),
+                state: ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"].randomElement() ?? "COMMENTED"
+            )),
+            ("taylor", nil, .prMerged(
+                number: Int.random(in: 180...999),
+                title: randomPRTitle(),
+                base: ["main", "develop", "release"].randomElement() ?? "main",
+                branch: "feature/\(randomSlug())",
+                additions: Int.random(in: 5...240),
+                deletions: Int.random(in: 0...180)
+            )),
+            ("casey", nil, .issueClosed(
+                number: Int.random(in: 120...899),
+                title: randomIssueTitle()
+            )),
+            ("rowan", nil, .branchDeleted("old/\(randomSlug())"))
+        ]
+        let sample = samples.randomElement()!
+        return FeedEvent(
+            id: "synthetic-\(Date().timeIntervalSince1970)-\(offset)-\(UUID().uuidString)",
+            actor: sample.actor,
+            avatarURL: sample.avatarURL,
+            date: Date().addingTimeInterval(-Double(offset) * 45),
+            kind: sample.kind
+        )
+    }
+
+    private func randomSlug() -> String {
+        ["alpha", "beta", "gamma", "delta", "ember", "flux", "orbit", "pulse", "quartz", "signal"].randomElement()! + "-\(Int.random(in: 10...99))"
+    }
+
+    private func randomSHA() -> String {
+        let digits = Array("0123456789abcdef")
+        return String((0..<7).map { _ in digits.randomElement()! })
+    }
+
+    private func randomCommitMessage() -> String {
+        [
+            "Tighten feed animation timing",
+            "Polish row entrance transitions",
+            "Refine feed preview spacing",
+            "Adjust timeline card layout",
+            "Make the feed feel more alive",
+            "Fix the insert cascade"
+        ].randomElement()!
+    }
+
+    private func randomPRTitle() -> String {
+        [
+            "Improve feed motion",
+            "Ship the timeline polish",
+            "Smooth the incoming card cascade",
+            "Reduce visual jump on refresh",
+            "Tune feed reveal timing"
+        ].randomElement()!
+    }
+
+    private func randomIssueTitle() -> String {
+        [
+            "Feed rows should animate when new data lands",
+            "Timeline reveal needs a clearer cue",
+            "Add a quick way to simulate incoming events",
+            "Test the activity pane with synthetic data"
+        ].randomElement()!
     }
 
     // MARK: parsing
