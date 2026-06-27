@@ -3,8 +3,9 @@ import AppKit
 
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
-    @Bindable private var feed = GitHubFeed.shared
-    @Bindable private var ws = Workspace.shared
+    @Bindable var ws: Workspace
+    @Bindable var feed: GitHubFeed
+    @Bindable var agentFeed: AgentFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
 
@@ -20,7 +21,7 @@ struct LeftPane: View {
                 skeletonPresence
                 feedDivider
                 skeletonStream
-            } else if feed.events.isEmpty {
+            } else if feed.events.isEmpty, agentFeed.posts.isEmpty {
                 feedNotice("No recent activity in this repo yet.", systemImage: "tray")
             } else {
                 if !feed.presence.isEmpty {
@@ -170,11 +171,20 @@ struct LeftPane: View {
     @State private var pulled = false
 
     private var stream: some View {
-        streamScaffold(disabled: false) {
-            ForEach(feed.events) { event in
-                FeedRow(event: event, time: clock(event.date),
-                        isLast: event.id == feed.events.last?.id, repo: feed.repo)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+        let items = agentFeed.timeline(github: feed.events)
+        return streamScaffold(disabled: false) {
+            ForEach(items) { entry in
+                switch entry {
+                case let .github(event):
+                    FeedRow(event: event, time: clock(event.date),
+                        isLast: entry.id == items.last?.id, repo: feed.repo)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                case let .agent(post):
+                    AgentFeedRow(post: post, time: clock(post.date),
+                                 isLast: entry.id == items.last?.id,
+                                 agentFeed: agentFeed)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             // Infinite scroll: a zero-height sentinel that loads the next page
             // when it scrolls into view (LazyVStack only renders it near the end).
@@ -216,12 +226,14 @@ struct LeftPane: View {
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.3))
                         .tracking(0.8)
+                        .lineLimit(1)
                     Spacer(minLength: 8)
                     TimelineView(.periodic(from: .now, by: 60)) { ctx in
-                        Text(clock(ctx.date))
+                        Text(dateClock(ctx.date))
                             .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.3))
+                            .foregroundStyle(Color.white.opacity(0.2))
                             .tracking(0.8)
+                            .fixedSize()
                     }
                 }
                 .padding(.bottom, 18)
@@ -271,12 +283,101 @@ struct LeftPane: View {
         let f = DateFormatter(); f.dateFormat = "HH.mm"; return f
     }()
 
+    /// Full date + clock for the caption, e.g. "FRI 26 JUN 21.02".
+    private func dateClock(_ date: Date) -> String { Self.dateClockFormatter.string(from: date).uppercased() }
+    private static let dateClockFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE d MMM HH.mm"; return f
+    }()
+
     /// Relative duration, used for "idle 3h" in the presence strip.
     private func ago(_ date: Date) -> String {
         let s = Int(Date().timeIntervalSince(date))
         if s < 3600 { return "\(max(s / 60, 1))m" }
         if s < 86400 { return "\(s / 3600)h" }
         return "\(s / 86400)d"
+    }
+}
+
+// MARK: - Agent feed row
+
+private struct AgentFeedRow: View {
+    let post: AgentPost
+    let time: String
+    let isLast: Bool
+    let agentFeed: AgentFeed
+    @State private var hovering = false
+
+    private static let accent = Color(red: 0.45, green: 0.82, blue: 0.78)
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            ZStack(alignment: .top) {
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 1.5)
+                        .frame(maxHeight: .infinity)
+                }
+                Avatar(login: post.author, size: 28)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 14, height: 14)
+                            .background(Circle().fill(Self.accent))
+                            .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
+                            .offset(x: 3, y: 3)
+                    }
+            }
+            .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(post.author)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                    Text("posted")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                    Spacer(minLength: 6)
+                    deleteButton
+                    Text(time)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                }
+                if let title = post.title, !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.78))
+                }
+                MarkdownBody(source: post.body)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.06 : 0.035)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Self.accent.opacity(hovering ? 0.35 : 0.18), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .onHover { isHovering in
+                withAnimation(.easeInOut(duration: 0.12)) { hovering = isHovering }
+            }
+            .padding(.bottom, 10)
+        }
+    }
+
+    private var deleteButton: some View {
+        Button {
+            agentFeed.deletePost(id: post.id)
+        } label: {
+            Image(systemName: "trash")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .frame(width: 18, height: 18)
+                .opacity(hovering ? 1 : 0)
+        }
+        .buttonStyle(.plain)
+        .help("Delete post")
+        .allowsHitTesting(hovering)
+        .accessibilityHidden(!hovering)
     }
 }
 

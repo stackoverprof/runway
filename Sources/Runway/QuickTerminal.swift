@@ -6,10 +6,10 @@ import GhosttyKit
 /// Toggled with ⌘⌥Q. It stays mounted while hidden (slid off-screen) so its shell
 /// keeps running in the background. Resizable by dragging its top edge.
 struct QuickTerminal: View {
+    @Bindable var ws: Workspace
     let width: CGFloat            // left-pane width
     let availableHeight: CGFloat  // full pane height
 
-    @Bindable private var ws = Workspace.shared
     @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
 
     /// The quick terminal also runs the configured command on launch (it uses the
@@ -17,7 +17,10 @@ struct QuickTerminal: View {
     static func startupConfig() -> TerminalConfig {
         let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        var env = ["ZDOTDIR": AgentControl.zdotdir.path]
+        var env = [
+            "ZDOTDIR": AgentControl.zdotdir.path,
+            "RUNWAY_FEED": AgentControl.feedInbox.path,
+        ]
         if !cmd.isEmpty { env["RUNWAY_AUTORUN"] = cmd }
         return TerminalConfig(environment: env)
     }
@@ -41,7 +44,7 @@ struct QuickTerminal: View {
                 .padding(.bottom, 5)
                 .onAppear {
                     applyRunwayTheme(to: session)
-                    Workspace.shared.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                    ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
                 }
                 .dropDestination(for: URL.self) { urls, _ in
                     let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")

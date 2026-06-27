@@ -5,6 +5,7 @@ import GhosttyKit
 @main
 struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
 
     init() {
         SettingsKey.registerDefaults()
@@ -13,7 +14,7 @@ struct RunwayApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Runway") {
+        WindowGroup("Runway", id: "main") {
             ContentView()
                 .frame(minWidth: 720, minHeight: 480)
                 .ignoresSafeArea()
@@ -21,6 +22,15 @@ struct RunwayApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1100, height: 720)
+        .commandsRemoved()
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("New Window") {
+                    openWindow(id: "main")
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+        }
 
         Settings { SettingsView() }
     }
@@ -30,7 +40,7 @@ struct RunwayApp: App {
 /// No titlebar/toolbar chrome — content runs edge to edge. Built as a plain
 /// HStack (not HSplitView) so it can fill under the hidden titlebar.
 struct ContentView: View {
-    @Bindable private var ws = Workspace.shared
+    @State private var context = RunwayWindowContext()
     private let minLeft: CGFloat = 220
     private let minRight: CGFloat = 320
 
@@ -38,11 +48,11 @@ struct ContentView: View {
         GeometryReader { geo in
             let total = geo.size.width
             let maxLeft = max(minLeft, total - minRight)
-            let left = min(max(ws.leftWidth, minLeft), maxLeft)
+            let left = min(max(context.workspace.leftWidth, minLeft), maxLeft)
 
             ZStack(alignment: .bottomLeading) {
                 HStack(spacing: 0) {
-                    LeftPane()                     // GitHub activity feed
+                    LeftPane(ws: context.workspace, feed: context.githubFeed, agentFeed: context.agentFeed)     // GitHub activity feed
                         .frame(width: left)
 
                     Rectangle()
@@ -60,24 +70,26 @@ struct ContentView: View {
                                 .gesture(
                                     DragGesture(coordinateSpace: .named("split"))
                                         .onChanged { value in
-                                            ws.leftWidth = min(max(value.location.x, minLeft), maxLeft)
+                                            context.workspace.leftWidth = min(max(value.location.x, minLeft), maxLeft)
                                         }
                                 )
                         )
 
-                    RightPane()                    // right: scrollable boxes + add button
+                    RightPane(ws: context.workspace)    // right: scrollable boxes + add button
                         .frame(maxWidth: .infinity)
                 }
                 .frame(maxHeight: .infinity)
                 .coordinateSpace(name: "split")
 
                 // Always mounted (so its shell keeps running); slides in/out with ⌘⌥Q.
-                QuickTerminal(width: left, availableHeight: geo.size.height)
+                QuickTerminal(ws: context.workspace, width: left, availableHeight: geo.size.height)
             }
             .overlay(alignment: .topTrailing) { ToastOverlay() }
         }
         .ignoresSafeArea()
         .background(WindowConfigurator())
+        .background(WindowRegistrationView(context: context))
+        .onAppear { context.startIfNeeded() }
     }
 }
 
@@ -99,7 +111,7 @@ struct AgentBox: Identifiable, Codable {
 /// accordion mode (⌘⌥A) locks scrolling and splits the height across boxes, with
 /// the focused box getting a larger share.
 struct RightPane: View {
-    @Bindable private var ws = Workspace.shared
+    @Bindable var ws: Workspace
 
     var body: some View {
         GeometryReader { geo in
@@ -112,6 +124,7 @@ struct RightPane: View {
                         ForEach($ws.boxes) { $box in
                             ResizableBox(
                                 id: box.id,
+                                workspace: ws,
                                 name: $box.name,
                                 detail: $box.detail,
                                 state: box.state,
@@ -211,6 +224,7 @@ struct RightPane: View {
 /// resizable via the bottom edge.
 private struct ResizableBox: View {
     let id: UUID
+    let workspace: Workspace
     @Binding var name: String
     @Binding var detail: String
     var state: AgentState = .idle
@@ -235,7 +249,7 @@ private struct ResizableBox: View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .background(RunwayTerminal.headerBar)   // slightly lighter header bar
-            TerminalSurfaceView(boxID: id, config: config)
+            TerminalSurfaceView(boxID: id, workspace: workspace, config: config)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 10)   // + 2 window-padding ≈ 12, aligns with the header
                 .padding(.bottom, 2)        // tiny inset to clear the rounded corners
@@ -273,7 +287,7 @@ private struct ResizableBox: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHoveringHeader = $0 }
-        .onTapGesture { Workspace.shared.focusedID = id }
+        .onTapGesture { workspace.focusedID = id }
     }
 
     /// The agent name: a label that becomes an inline text field when clicked.
@@ -293,7 +307,7 @@ private struct ResizableBox: View {
                 .foregroundStyle(Color.white.opacity(0.9))
                 .lineLimit(1)
                 .contentShape(Rectangle())
-                .onTapGesture { Workspace.shared.focusedID = id; isEditingName = true }
+                .onTapGesture { workspace.focusedID = id; isEditingName = true }
                 .onHover { hovering in
                     if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
                 }
@@ -331,7 +345,7 @@ private struct ResizableBox: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .contentShape(Rectangle())
-            .onTapGesture { Workspace.shared.focusedID = id; isEditingDetail = true }
+            .onTapGesture { workspace.focusedID = id; isEditingDetail = true }
             .onHover { hovering in
                 if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
             }
@@ -426,7 +440,10 @@ private final class WindowConfigView: NSView {
         guard let window else { return }
         let fs = window.styleMask.contains(.fullScreen)
         MainActor.assumeIsolated {
-            if Workspace.shared.isFullScreen != fs { Workspace.shared.isFullScreen = fs }
+            if let workspace = RunwayWindowRegistry.shared.context(for: window)?.workspace,
+               workspace.isFullScreen != fs {
+                workspace.isFullScreen = fs
+            }
         }
     }
 
@@ -449,27 +466,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installCmdScrollMonitor()
         installClickFocusMonitor()
         installShortcutMonitor()
-        Workspace.shared.startAgentWatch()
-        GitHubFeed.shared.startPolling()
         observeFullScreen()
-
-        // Once the terminals have registered, route the keyboard to the focused
-        // box so typing, the focus glow, and accordion expansion all agree.
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            if let id = Workspace.shared.focusedID {
-                TerminalRegistry.shared.focusTerminal(id)
-            }
-        }
     }
 
     private func observeFullScreen() {
         let nc = NotificationCenter.default
-        nc.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Workspace.shared.isFullScreen = true }
+        nc.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: nil, queue: .main) { note in
+            nonisolated(unsafe) let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                RunwayWindowRegistry.shared.context(for: window)?.workspace.isFullScreen = true
+            }
         }
-        nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Workspace.shared.isFullScreen = false }
+        nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: nil, queue: .main) { note in
+            nonisolated(unsafe) let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                RunwayWindowRegistry.shared.context(for: window)?.workspace.isFullScreen = false
+            }
         }
     }
 
@@ -500,7 +512,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private static func handleShortcut(_ ev: NSEvent) -> Bool {
         if KeyBindings.shared.recording { return false }   // Settings is capturing a chord
-        let ws = Workspace.shared
+        guard let context = RunwayWindowRegistry.shared.context(for: ev.window) ?? RunwayWindowRegistry.shared.activeContext() else {
+            return false
+        }
+        let ws = context.workspace
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
 
         // Fixed: ⌘1–9 jump to a card.
@@ -540,15 +555,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let window = ev.window,
                       let hit = window.contentView?.hitTest(ev.locationInWindow),
                       let id = TerminalRegistry.shared.boxID(under: hit) else { return false }
-                let changingFocus = id != Workspace.shared.focusedID
+                guard let ws = RunwayWindowRegistry.shared.context(for: window)?.workspace else { return false }
+                let changingFocus = id != ws.focusedID
                 // setFocus (not just focusedID) so the clicked terminal also becomes
                 // the keyboard first responder — otherwise the glow moves but typing
                 // stays on the previously-focused terminal.
-                Workspace.shared.setFocus(id)
+                ws.setFocus(id)
                 // In accordion mode a focus change resizes the boxes; swallow that
                 // first click so the terminal doesn't begin a stray selection while
                 // it reflows. A second click then interacts with the terminal.
-                return changingFocus && Workspace.shared.accordion
+                return changingFocus && ws.accordion
             }
             return swallow ? nil : event
         }
@@ -567,10 +583,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       let hit = window.contentView?.hitTest(ev.locationInWindow)
                 else { return false }
 
-                // Left pane (the activity feed) scrolls natively — the ⌘-lock is
-                // only for the right/terminal pane.
-                if ev.locationInWindow.x < Workspace.shared.leftWidth { return false }
-
                 // Walk up: find the terminal (if any) and the enclosing list scroll view.
                 var node: NSView? = hit
                 var terminal: NSView?
@@ -581,30 +593,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     node = cur.superview
                 }
 
-                if ev.modifierFlags.contains(.command) {
-                    list?.scrollWheel(with: ev)        // ⌘-scroll → scroll the list
-                    return true
-                }
+                // Over a terminal (agent grid OR the quick-terminal overlay): tame
+                // trackpad scroll so TUIs don't overshoot.
                 if terminal != nil {
-                    // Trackpad momentum (inertial) scrolling keeps firing events
-                    // after the finger lifts. TUIs in mouse-reporting mode (claude,
-                    // etc.) act on each one, overshooting to the very top/bottom.
-                    // Drop the momentum phase so the terminal sees only the active
-                    // gesture.
-                    if !ev.momentumPhase.isEmpty { return true }   // swallow inertia
-                    // The active gesture itself is a dense, high-frequency stream of
-                    // precise (pixel) deltas; forward at most one every ~55ms so the
-                    // TUI scrolls a sane number of lines. Coarse mouse wheels (not
-                    // precise) are already discrete, so pass them untouched.
+                    if ev.modifierFlags.contains(.command) {
+                        list?.scrollWheel(with: ev)    // ⌘-scroll → scroll the enclosing list
+                        return true
+                    }
+                    // Drop momentum (inertia overshoots mouse-reporting TUIs like
+                    // claude), then throttle the dense precise-scroll stream;
+                    // coarse mouse wheels (not precise) pass untouched.
+                    if !ev.momentumPhase.isEmpty { return true }
                     if ev.hasPreciseScrollingDeltas {
-                        let dt = ev.timestamp - Workspace.shared.lastTerminalScrollTS
-                        if dt < 0.055 { return true }              // swallow excess
-                        Workspace.shared.lastTerminalScrollTS = ev.timestamp
+                        guard let ws = RunwayWindowRegistry.shared.context(for: ev.window)?.workspace else { return false }
+                        let dt = ev.timestamp - ws.lastTerminalScrollTS
+                        if dt < 0.055 { return true }
+                        ws.lastTerminalScrollTS = ev.timestamp
                     }
                     return false
                 }
-                // Plain scroll over gaps / header / background inside the list:
-                // do nothing. The list only scrolls with ⌘ held.
+
+                // Not over a terminal: the left pane (activity feed) scrolls
+                // natively; the right pane only scrolls its list with ⌘ held.
+                guard let ws = RunwayWindowRegistry.shared.context(for: ev.window)?.workspace else { return false }
+                if ev.locationInWindow.x < ws.leftWidth { return false }
+                if ev.modifierFlags.contains(.command) { list?.scrollWheel(with: ev); return true }
                 return list != nil
             }
             return swallow ? nil : event
@@ -616,6 +629,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        Workspace.shared.saveIfNeeded()
+        // Each window saves itself on its own polling loop; nothing global to do.
     }
 }

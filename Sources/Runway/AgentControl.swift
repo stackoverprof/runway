@@ -46,6 +46,13 @@ enum AgentControl {
         return dir
     }()
 
+    static var feedDir: URL {
+        let dir = supportDir.appendingPathComponent("feed", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var feedInbox: URL { feedDir.appendingPathComponent("inbox.jsonl") }
+    static var feedPostScript: URL { supportDir.appendingPathComponent("feed-post.py") }
     static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
     static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
     static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
@@ -66,6 +73,7 @@ enum AgentControl {
         var env = [
             "RUNWAY_BOX": id.uuidString,
             "RUNWAY_CONTROL": file(for: id).path,
+            "RUNWAY_FEED": feedInbox.path,
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
@@ -91,7 +99,15 @@ enum AgentControl {
 
     static func install() {
         writeHooks()
+        writeFeedPostScript()
         writeZshWrapper()
+        ensureFeedInbox()
+    }
+
+    private static func ensureFeedInbox() {
+        if !FileManager.default.fileExists(atPath: feedInbox.path) {
+            FileManager.default.createFile(atPath: feedInbox.path, contents: nil)
+        }
     }
 
     private static func writeHooks() {
@@ -111,8 +127,64 @@ enum AgentControl {
         try? data.write(to: hooksFile)
     }
 
+    private static func writeFeedPostScript() {
+        // Standalone script — avoids Swift→zsh→python escape corruption.
+        let py = """
+        #!/usr/bin/env python3
+        import json, sys, datetime
+
+        def unesc(s):
+            if not s:
+                return s
+            return (s.replace("\\\\n", chr(10))
+                     .replace("\\\\t", chr(9))
+                     .replace("\\\\r", chr(13)))
+
+        def main():
+            args = sys.argv[1:]
+            stdin_body = None
+            if args and args[-1] == "-":
+                stdin_body = sys.stdin.read()
+                args = args[:-1]
+
+            if stdin_body is not None:
+                if len(args) == 0:
+                    author, title = "agent", ""
+                elif len(args) == 1:
+                    author, title = args[0], ""
+                else:
+                    author, title = args[0], args[1]
+                body = stdin_body
+            elif len(args) == 0:
+                return
+            elif len(args) == 1:
+                author, title, body = "agent", "", args[0]
+            elif len(args) == 2:
+                author, title, body = args[0], "", args[1]
+            else:
+                author, body, title = args[0], args[1], args[2]
+
+            title = unesc(title)
+            body = unesc(body)
+            if not body.strip():
+                return
+            print(json.dumps({
+                "author": author,
+                "title": title,
+                "body": body,
+                "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }))
+
+        if __name__ == "__main__":
+            main()
+        """
+        try? py.data(using: .utf8)?.write(to: feedPostScript)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: feedPostScript.path)
+    }
+
     private static func writeZshWrapper() {
         try? FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
+        let postScript = feedPostScript.path
         // zsh reads each startup file from $ZDOTDIR; source the user's real ones
         // so their environment is preserved, then add the claude function.
         write(".zshenv", #"[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv""#)
@@ -130,6 +202,19 @@ enum AgentControl {
             printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
           }
         fi
+        # Post a markdown card to the activity timeline.
+        #   runway-post "body"                       (author: agent)
+        #   runway-post author "body"              (no title)
+        #   runway-post author "body" "title"
+        #   runway-post author "title" - <<'EOF'   (multiline body from stdin)
+        runway-post() {
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-post: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            echo '  Use Runway quick terminal (⌘⌥Q) or an agent card.' >&2
+            return 1
+          fi
+          python3 '\(postScript)' "$@" >> "$RUNWAY_FEED"
+        }
         # Record the working directory so Runway can reopen each agent in the same
         # folder after a relaunch (written at startup, on cd, and at each prompt).
         if [ -n "$RUNWAY_CWD_FILE" ]; then

@@ -1,5 +1,5 @@
 {
-  "originHash" : "ab8b5a0c6ef5dd0338c7b088f0cb6339dba256021baea781d7c8e18a60b2f4c2",
+  "originHash" : "d2b613af34541d27e2c16f31e0592e3ea708f1b699cf7b5845ca546a91bc652c",
   "pins" : [
     {
       "identity" : "ghosttykit",
@@ -7,6 +7,33 @@
       "location" : "https://github.com/briannadoubt/GhosttyKit.git",
       "state" : {
         "revision" : "f3756807a61a42dba3dc1d866a1fd865f1ddfe21"
+      }
+    },
+    {
+      "identity" : "networkimage",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/NetworkImage",
+      "state" : {
+        "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
+        "version" : "6.0.1"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark",
+      "state" : {
+        "revision" : "924936d0427cb25a61169739a7660230bffa6ea6",
+        "version" : "0.8.0"
+      }
+    },
+    {
+      "identity" : "swift-markdown-ui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/swift-markdown-ui",
+      "state" : {
+        "revision" : "5f613358148239d0292c0cef674a3c2314737f9e",
+        "version" : "2.4.1"
       }
     }
   ],

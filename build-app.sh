@@ -24,7 +24,9 @@ if [ -d "$BIN_DIR/CGhosttyKitBinary.framework" ]; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "$APP/Contents/MacOS/Runway" 2>/dev/null || true
   # Re-sign ad-hoc so the modified binary + bundled framework load cleanly.
-  codesign --force --deep --sign - "$APP" 2>/dev/null || true
+  chmod -R u+w "$APP"
+  xattr -cr "$APP" 2>/dev/null || true
+  codesign --force --deep --sign - "$APP"
 fi
 
 echo "▸ Built $APP"

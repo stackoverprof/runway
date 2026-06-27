@@ -11,13 +11,15 @@ let package = Package(
         .package(
             url: "https://github.com/briannadoubt/GhosttyKit.git",
             revision: "f3756807a61a42dba3dc1d866a1fd865f1ddfe21"
-        )
+        ),
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1")
     ],
     targets: [
         .executableTarget(
             name: "Runway",
             dependencies: [
-                .product(name: "GhosttyKit", package: "GhosttyKit")
+                .product(name: "GhosttyKit", package: "GhosttyKit"),
+                .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ],
             path: "Sources/Runway"
         )
