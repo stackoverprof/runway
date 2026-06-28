@@ -165,15 +165,11 @@ struct Presence: Identifiable {
         guard let page = await fetchPage(1) else {
             if !offline {
                 offline = true
-                ToastCenter.shared.show("Can't reach GitHub", icon: "wifi.slash",
-                                        tint: Color(red: 0.95, green: 0.45, blue: 0.40))
             }
             lastError = Self.ghHint; loading = false; return
         }
         if offline {
             offline = false
-            ToastCenter.shared.show("Back online", icon: "wifi",
-                                    tint: Color(red: 0.30, green: 0.78, blue: 0.45))
         }
         merge(page.events, staggerNew: true)
         fetchCommitCounts()

@@ -145,6 +145,7 @@ struct RightPane: View {
                     .frame(minHeight: (ws.accordion || ws.soloed) ? geo.size.height : nil,
                            alignment: .top)
                 }
+                .ignoresSafeArea()
                 .scrollDisabled(ws.accordion || ws.soloed)
                 .scrollIndicators(.hidden)
                 .onChange(of: ws.focusedID) { _, id in
