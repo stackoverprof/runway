@@ -18,7 +18,7 @@ GitHub activity feed for your team's repo. Built in SwiftUI (macOS 14+, Swift 6)
    GitHub activity feed         Agent terminal cards
 ```
 
-## The two panes
+## The features and panes
 
 ### Left — GitHub activity feed
 
@@ -31,6 +31,7 @@ no token setup — it reuses your existing `gh auth`).
 - **Timeline** of pushes, PRs (opened / merged), branch creates, reviews, and
   issue open/close — color-coded by intent: **green** = creation,
   **blue** = push / progress, **purple** = closure / merge.
+- **PR Merged Styling** — branch merge events get a customized deep-purple card theme (`#0a051a`), a subtle top-to-bottom glow gradient, and a decorative background pattern of scaled merge vector paths.
 - **Searchable repo switcher** in the header, **overscroll-to-refresh**, and
   **load skeletons** so the pane never jumps from empty to full.
 
@@ -52,6 +53,16 @@ Claude Code, Codex, or any shell, one agent per card.
 - A persistent **quick terminal** overlay (⌘⌥Q) that keeps running in the
   background.
 - Layout (cards, names, sizes, mode) **persists** across relaunches.
+
+### Global settings & profiles pane (⌘,)
+
+A dedicated preferences window offering two main areas of configuration:
+- **General Settings**: Customize alert sounds (e.g. Glass, Ping, Submarine), toggle sound effects, enable/disable native macOS notifications, and manage autostart command preferences (select from pre-set CLI configurations like Claude, Gemini, Cursor, Copilot, etc.).
+- **People Profiles**: Manage profiles of teammates who appear in the office presence list. Assign custom display names and upload custom profile photos to personalize your timeline feed.
+
+### Native macOS notifications
+
+Replaced in-app toast overlays with native macOS Notification Center integrations (`UNUserNotificationCenter`). Receive time-sensitive notifications (e.g. offline alerts, agent attention status) with customizable system sound alerts.
 
 ### Agent status & self-labeling
 
@@ -90,6 +101,7 @@ and wraps `claude` to inject state-reporting hooks. Your `~/.claude` and
 | `⌘⌥A` | accordion layout |
 | `⌘⌥⏎` | solo / zoom the focused card |
 | `⌘⌥Q` | toggle the quick terminal |
+| `⌘,` | open settings & profiles window |
 | `⌘` + scroll | scroll the card list (it's otherwise locked) |
 
 ## Install
@@ -141,6 +153,8 @@ Sources/Runway/
   TerminalSurface.swift  Swappable terminal protocol + the GhosttyKit backing
   TerminalTheme.swift    Terminal theme/colors applied to every surface
   InlineField.swift      Inline-editable name/description fields
+  Settings.swift         Preferences UI: General controls & People profiles editor
+  Toast.swift            Native macOS notifications dispatch center
 ```
 
 GhosttyKit is pinned to a specific commit in `Package.swift` — libghostty's C
