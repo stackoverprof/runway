@@ -83,9 +83,7 @@ struct QuickTerminal: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            ws.quickVisible = true
-                        }
+                        ws.quickVisible = true
                     }
                     .transition(.identity)
             }
@@ -106,6 +104,7 @@ struct QuickTerminal: View {
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .padding(margin)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: ws.quickVisible)
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -191,19 +190,15 @@ struct QuickTerminal: View {
 
     private func triggerAutoHide() {
         guard !ws.quickPinned else { return }
-        guard !isFocused else { return }
         
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s delay
             guard !Task.isCancelled else { return }
             guard !isHovered else { return }
-            guard !isFocused else { return }
             guard !ws.quickPinned else { return }
             
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                ws.quickVisible = false
-            }
+            ws.quickVisible = false
         }
     }
 }
