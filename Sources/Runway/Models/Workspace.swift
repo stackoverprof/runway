@@ -18,6 +18,7 @@ import AppKit
     /// Quick terminal: a persistent background terminal overlaid bottom-left,
     /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
     var quickVisible = false
+    var quickPinned = false
     var quickHeight: CGFloat = 0
     /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
     @ObservationIgnored var focusQuick: (() -> Void)?
@@ -59,6 +60,7 @@ import AppKit
         var leftWidth: CGFloat
         var quickHeight: CGFloat
         var accordion: Bool
+        var quickPinned: Bool?
     }
 
     private static var stateFile: URL { AgentControl.supportDir.appendingPathComponent("workspace.json") }
@@ -70,13 +72,15 @@ import AppKit
         leftWidth = s.leftWidth
         quickHeight = s.quickHeight
         accordion = s.accordion
+        quickPinned = s.quickPinned ?? false
         lastSaved = data
     }
 
     /// Write current layout to disk if it changed. Cheap enough to call on the poll tick.
     func saveIfNeeded() {
         let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
-                                 quickHeight: quickHeight, accordion: accordion)
+                                 quickHeight: quickHeight, accordion: accordion,
+                                 quickPinned: quickPinned)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
         try? data.write(to: Self.stateFile)

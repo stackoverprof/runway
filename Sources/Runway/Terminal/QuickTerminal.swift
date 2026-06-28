@@ -3,14 +3,17 @@ import AppKit
 import GhosttyKit
 
 /// A persistent "quick" terminal overlaid on the bottom-left of the left pane.
-/// Toggled with ⌘⌥Q. It stays mounted while hidden (slid off-screen) so its shell
-/// keeps running in the background. Resizable by dragging its top edge.
+/// Toggled with ⌘⌥Q or by hovering/peeking the bottom-left corner of the window.
+/// It stays mounted while hidden (slid off-screen) so its shell keeps running.
 struct QuickTerminal: View {
     @Bindable var ws: Workspace
     let width: CGFloat            // left-pane width
     let availableHeight: CGFloat  // full pane height
 
     @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
+    @State private var dragStartHeight: CGFloat?
+    @State private var isHovered = false
+    @State private var hideTask: Task<Void, Never>? = nil
 
     /// The quick terminal also runs the configured command on launch (it uses the
     /// Runway ZDOTDIR so the .zshrc autorun block fires).
@@ -24,10 +27,10 @@ struct QuickTerminal: View {
         if !cmd.isEmpty { env["RUNWAY_AUTORUN"] = cmd }
         return TerminalConfig(environment: env)
     }
-    @State private var dragStartHeight: CGFloat?
 
     private let margin: CGFloat = 8
     private let minHeight: CGFloat = 140
+    private let peekSize: CGFloat = 36
 
     private var height: CGFloat {
         let fallback = availableHeight * 0.5
@@ -35,46 +38,103 @@ struct QuickTerminal: View {
         return min(max(h, minHeight), availableHeight - margin * 2)
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            GhosttyTerminalRepresentable(session: session, configuration: .default)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 5)
-                .padding(.bottom, 5)
-                .onAppear {
-                    applyRunwayTheme(to: session)
-                    ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
-                }
-                .dropDestination(for: URL.self) { urls, _ in
-                    let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
-                    guard !text.isEmpty else { return false }
-                    session.insertText(text + " ")
-                    return true
-                }
+    private var actualWidth: CGFloat {
+        max(width - margin * 2, 120)
+    }
+
+    private var isFocused: Bool {
+        if let view = session.view, let window = view.window {
+            return window.firstResponder == view
         }
-        .frame(width: max(width - margin * 2, 120), height: height)
-        .background(RunwayTerminal.body)
+        return false
+    }
+
+    var body: some View {
+        ZStack {
+            if ws.quickVisible {
+                VStack(spacing: 0) {
+                    header
+                    GhosttyTerminalRepresentable(session: session, configuration: .default)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.horizontal, 5)
+                        .padding(.bottom, 5)
+                        .onAppear {
+                            applyRunwayTheme(to: session)
+                            ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                        }
+                        .dropDestination(for: URL.self) { urls, _ in
+                            let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
+                            guard !text.isEmpty else { return false }
+                            session.insertText(text + " ")
+                            return true
+                        }
+                }
+                .transition(.identity)
+            } else {
+                // Diagonal bottom-left corner peek tab
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
+                            .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
+                    }
+                }
+                .padding(10)
+                .frame(width: actualWidth, height: height, alignment: .bottomTrailing)
+                .transition(.identity)
+            }
+        }
+        .frame(width: actualWidth, height: height)
+        .background(ws.quickVisible ? RunwayTerminal.body : Color.white.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.12), lineWidth: 1))
-        // Invisible drag strip on the top edge to resize (no visible line above the header).
-        .overlay(alignment: .top) { resizeHandle }
-        .shadow(color: .black.opacity(0.55), radius: 18, y: 8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(ws.quickVisible ? Color.white.opacity(0.12) : Color.white.opacity(0.08), lineWidth: 1)
+        )
+        // Invisible drag strip on the top edge to resize when visible.
+        .overlay(alignment: .top) {
+            if ws.quickVisible { resizeHandle }
+        }
+        .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.2), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .padding(margin)
-        // Slide off the bottom when hidden; stays mounted so the shell keeps running.
-        .offset(y: ws.quickVisible ? 0 : height + margin * 2 + 24)
-        .opacity(ws.quickVisible ? 1 : 0)
-        .allowsHitTesting(ws.quickVisible)
-        .animation(.easeOut(duration: 0.22), value: ws.quickVisible)
+        // Slide diagonally off the bottom-left (so only the bottom-right corner of the view remains at bottom-left of the window)
+        .offset(
+            x: ws.quickVisible ? 0 : -actualWidth + peekSize,
+            y: ws.quickVisible ? 0 : height - peekSize
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                hideTask?.cancel()
+                hideTask = nil
+                
+                // Auto-expand on corner hover
+                if !ws.quickVisible {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        ws.quickVisible = true
+                    }
+                }
+            } else {
+                triggerAutoHide()
+            }
+        }
         .onChange(of: ws.quickVisible) { _, visible in
             DispatchQueue.main.async {
                 if visible {
-                    // Focus the quick terminal so you can type immediately.
                     if let view = session.view { view.window?.makeFirstResponder(view) }
                 } else {
-                    // Closed: hand the keyboard back to the focused agent.
                     TerminalRegistry.shared.focusTerminal(ws.focusedID)
                 }
+            }
+        }
+        .onChange(of: ws.focusedID) { _, _ in
+            // If focus shifts away and mouse is not hovering, trigger auto-hide
+            if !isHovered {
+                triggerAutoHide()
             }
         }
     }
@@ -88,9 +148,22 @@ struct QuickTerminal: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
             Spacer()
+            
+            // Pin button
+            Button {
+                ws.quickPinned.toggle()
+            } label: {
+                Image(systemName: ws.quickPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(ws.quickPinned ? Color(red: 0.45, green: 0.82, blue: 0.78) : Color.white.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
+            
             Text("⌘⌥Q")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.25))
+                .padding(.leading, 4)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -117,5 +190,23 @@ struct QuickTerminal: View {
                     }
                     .onEnded { _ in dragStartHeight = nil }
             )
+    }
+
+    private func triggerAutoHide() {
+        guard !ws.quickPinned else { return }
+        guard !isFocused else { return }
+        
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s delay
+            guard !Task.isCancelled else { return }
+            guard !isHovered else { return }
+            guard !isFocused else { return }
+            guard !ws.quickPinned else { return }
+            
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                ws.quickVisible = false
+            }
+        }
     }
 }
