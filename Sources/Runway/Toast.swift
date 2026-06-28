@@ -1,37 +1,37 @@
+// Rebuild and relaunch trigger: Native macOS notification integration.
 import SwiftUI
 import AppKit
+import UserNotifications
 
-/// Transient top-right notifications (offline, agent needs attention, etc.).
+/// Native macOS notification center (replaces in-app toasts).
 @MainActor @Observable final class ToastCenter {
     static let shared = ToastCenter()
 
-    struct Toast: Identifiable {
-        let id = UUID()
-        let icon: String
-        let title: String
-        let tint: Color
+    private init() {
+        requestNotificationPermission()
     }
 
-    private(set) var toasts: [Toast] = []
-    private init() {}
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
 
-    /// Show a toast (auto-dismisses). Optionally play the system alert sound.
+    /// Show a native macOS notification. Optionally play the system alert sound.
     func show(_ title: String, icon: String = "bell.fill", tint: Color = .white, sound: Bool = false) {
         if sound, UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) { Self.playSelectedSound() }
         guard UserDefaults.standard.bool(forKey: SettingsKey.toastsEnabled) else { return }
-        let toast = Toast(icon: icon, title: title, tint: tint)
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { toasts.append(toast) }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 4_500_000_000)
-            dismiss(toast.id)
+        
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.interruptionLevel = .timeSensitive
+        if !sound {
+            content.sound = nil
         }
+        
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
 
-    func dismiss(_ id: UUID) {
-        withAnimation(.easeOut(duration: 0.2)) { toasts.removeAll { $0.id == id } }
-    }
-
-    /// Play the user's chosen alert sound (used by toasts and the Settings "Test").
+    /// Play the user's chosen alert sound (used by notifications and the Settings "Test").
     static func playSelectedSound() {
         let name = UserDefaults.standard.string(forKey: SettingsKey.alertSound) ?? "Glass"
         if let sound = NSSound(named: name) ?? NSSound(named: "Glass") {
@@ -42,35 +42,9 @@ import AppKit
     }
 }
 
-/// Stacked toasts pinned to the top-right of the window.
+/// Empty overlay (toasts moved to native macOS notifications).
 struct ToastOverlay: View {
-    @Bindable private var center = ToastCenter.shared
-
     var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            ForEach(center.toasts) { toast in
-                HStack(spacing: 9) {
-                    Image(systemName: toast.icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(toast.tint)
-                    Text(toast.title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.14)))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                .shadow(color: .black.opacity(0.45), radius: 14, y: 5)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
-                .onTapGesture { center.dismiss(toast.id) }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .frame(maxWidth: 300, alignment: .trailing)
-        .padding(.top, 14)
-        .padding(.trailing, 14)
+        EmptyView()
     }
 }

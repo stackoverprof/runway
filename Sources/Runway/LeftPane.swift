@@ -27,6 +27,9 @@ struct LeftPane: View {
                 if !feed.presence.isEmpty {
                     presenceStrip
                     feedDivider
+                } else {
+                    emptyOfficeNotice
+                    feedDivider
                 }
                 stream
             }
@@ -165,6 +168,28 @@ struct LeftPane: View {
 
     private func intensityColor(_ n: Int) -> Color {
         n >= 5 ? Color(red: 0.95, green: 0.55, blue: 0.25) : Color(red: 0.247, green: 0.725, blue: 0.314)
+    }
+
+    /// Placeholder when nobody is in the office.
+    private var emptyOfficeNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OFFICE HOURS")
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.3))
+                .tracking(0.8)
+            HStack(spacing: 10) {
+                Image(systemName: "moon.zzz")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.25))
+                Text("Nobody in the office right now")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.5))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
     }
 
     // MARK: Activity stream
@@ -319,15 +344,6 @@ private struct AgentFeedRow: View {
                         .frame(maxHeight: .infinity)
                 }
                 Avatar(login: post.author, size: 28)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 14, height: 14)
-                            .background(Circle().fill(Self.accent))
-                            .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
-                            .offset(x: 3, y: 3)
-                    }
             }
             .frame(width: 28)
 
@@ -355,7 +371,7 @@ private struct AgentFeedRow: View {
             .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.06 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Self.accent.opacity(hovering ? 0.35 : 0.18), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(hovering ? 0.12 : 0.06), lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onHover { isHovering in
                 withAnimation(.easeInOut(duration: 0.12)) { hovering = isHovering }
@@ -416,38 +432,54 @@ private struct FeedRow: View {
                         .frame(maxHeight: .infinity)
                 }
                 Avatar(login: event.actor, url: event.avatarURL, size: 28)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: glyph)
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 14, height: 14)
-                            .background(Circle().fill(accent))
-                            .overlay(Circle().stroke(Color(white: 0.035), lineWidth: 2))
-                            .offset(x: 3, y: 3)
-                    }
             }
             .frame(width: 28)
 
             // Card
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(event.actor)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.9))
-                    Text(verb)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color.white.opacity(0.55))
-                    Spacer(minLength: 6)
-                    Text(time)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.3))
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(event.actor)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.9))
+                        Text(verb)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Color.white.opacity(0.55))
+                        Spacer(minLength: 6)
+                        Text(time)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.3))
+                    }
+                    
+                    // Wider gap for merge events
+                    if case .prMerged = event.kind {
+                        Spacer().frame(height: 20)
+                    } else {
+                        Spacer().frame(height: 6)
+                    }
+                    
+                    detail
                 }
-                detail
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.06 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(hovering ? 0.16 : 0.06), lineWidth: 1))
+            .background(cardBackground)
+            .overlay(alignment: .top) {
+                if case .prMerged = event.kind {
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Self.purple.opacity(0.12),
+                            Color.clear
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay(cardBorder)
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onHover { h in
                 hovering = h
@@ -545,6 +577,36 @@ private struct FeedRow: View {
             Chip(tag, tint: tint)
             Text(title).font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.55)).lineLimit(1)
         }
+    }
+
+    private var cardBackgroundColor: Color {
+        if case .prMerged = event.kind {
+            return Color(red: 0.04, green: 0.02, blue: 0.10).opacity(hovering ? 0.95 : 0.85)
+        } else {
+            return Color.white.opacity(hovering ? 0.06 : 0.035)
+        }
+    }
+
+    private var cardBorderColor: Color {
+        if case .prMerged = event.kind {
+            return Self.purple.opacity(hovering ? 0.22 : 0.10)
+        } else {
+            return Color.white.opacity(hovering ? 0.16 : 0.06)
+        }
+    }
+
+    private var cardBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10).fill(cardBackgroundColor)
+            if case .prMerged = event.kind {
+                MergeCardDecorations()
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1)
     }
 }
 
@@ -759,5 +821,89 @@ private struct SkeletonRow: View {
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.05), lineWidth: 1))
             .padding(.bottom, 10)
         }
+    }
+}
+
+// MARK: - Merge Event Decorations
+
+private struct MergeIconShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        
+        // Circle 1: cx="4.5" cy="3.5" r="1.75"
+        path.addEllipse(in: CGRect(x: 4.5 - 1.75, y: 3.5 - 1.75, width: 3.5, height: 3.5))
+        
+        // Circle 2: cx="4.5" cy="12.5" r="1.75"
+        path.addEllipse(in: CGRect(x: 4.5 - 1.75, y: 12.5 - 1.75, width: 3.5, height: 3.5))
+        
+        // Circle 3: cx="12.5" cy="8.5" r="1.75"
+        path.addEllipse(in: CGRect(x: 12.5 - 1.75, y: 8.5 - 1.75, width: 3.5, height: 3.5))
+        
+        // Path: d="m4.75 10.25v-4.5c1 2 2 3 5.5 3"
+        path.move(to: CGPoint(x: 4.75, y: 10.25))
+        path.addLine(to: CGPoint(x: 4.75, y: 5.75))
+        path.addCurve(
+            to: CGPoint(x: 10.25, y: 8.75),
+            control1: CGPoint(x: 5.75, y: 7.75),
+            control2: CGPoint(x: 6.75, y: 8.75)
+        )
+        
+        let scaleX = rect.width / 16.0
+        let scaleY = rect.height / 16.0
+        let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+        return path.applying(transform)
+    }
+}
+
+private struct MergeCardDecorations: View {
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            
+            ZStack(alignment: .top) {
+                // Icon 1: far left, small/medium, low opacity
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.03), style: StrokeStyle(lineWidth: 1.5 * (14.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 14, height: 14)
+                    .position(x: width * 0.02, y: 8)
+                
+                // Icon 2: large, higher opacity, sticking out top
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.06), style: StrokeStyle(lineWidth: 1.5 * (36.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 36, height: 36)
+                    .position(x: width * 0.12, y: 6)
+                
+                // Icon 3: small, low opacity, centered-left
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.04), style: StrokeStyle(lineWidth: 1.5 * (10.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 10, height: 10)
+                    .position(x: width * 0.25, y: 4)
+                
+                // Icon 4: tiny, low opacity, near center
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.03), style: StrokeStyle(lineWidth: 1.5 * (8.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 8, height: 8)
+                    .position(x: width * 0.50, y: 5)
+                
+                // Icon 5: small/medium, centered-right
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.045), style: StrokeStyle(lineWidth: 1.5 * (12.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 12, height: 12)
+                    .position(x: width * 0.75, y: 7)
+                
+                // Icon 6: large, high opacity
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.08), style: StrokeStyle(lineWidth: 1.5 * (32.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 32, height: 32)
+                    .position(x: width * 0.86, y: 8)
+                
+                // Icon 7: medium/small, far right
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.05), style: StrokeStyle(lineWidth: 1.5 * (16.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 16, height: 16)
+                    .position(x: width * 0.97, y: 6)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
