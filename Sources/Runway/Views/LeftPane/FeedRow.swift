@@ -124,8 +124,7 @@ struct FeedRow: View {
                             .foregroundStyle(Color.white.opacity(0.3))
                     }
                     
-                    // Wider gap for merge events
-                    if case .prMerged = event.kind {
+                    if isMergeEvent {
                         Spacer().frame(height: 20)
                     } else {
                         Spacer().frame(height: 6)
@@ -133,7 +132,9 @@ struct FeedRow: View {
                     
                     detail
                 }
-                .padding(11)
+                .padding(.horizontal, 11)
+                .padding(.bottom, 11)
+                .padding(.top, isMergeEvent ? 11 : 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,6 +162,11 @@ struct FeedRow: View {
             .onTapGesture { if let link { NSWorkspace.shared.open(link) } }
             .padding(.bottom, 10)
         }
+    }
+
+    private var isMergeEvent: Bool {
+        if case .prMerged = event.kind { return true }
+        return false
     }
 
     private var verb: String {
