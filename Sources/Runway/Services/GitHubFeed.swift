@@ -111,7 +111,7 @@ struct Presence: Identifiable {
         guard !repo.isEmpty else { return }
         var byRepo = (try? Data(contentsOf: Self.cacheFile))
             .flatMap { try? Self.decoderDate.decode([String: [FeedEvent]].self, from: $0) } ?? [:]
-        byRepo[repo] = Array(list.prefix(200))   // cap per repo
+        byRepo[repo] = Array(list.prefix(1000))   // cap per repo
         if let data = try? Self.coderDate.encode(byRepo) { try? data.write(to: Self.cacheFile) }
     }
 
