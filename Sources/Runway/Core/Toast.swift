@@ -18,7 +18,6 @@ import UserNotifications
     /// Show a native macOS notification. Optionally play the system alert sound.
     func show(_ title: String, icon: String = "bell.fill", tint: Color = .white, sound: Bool = false) {
         if sound, UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) { Self.playSelectedSound() }
-        guard UserDefaults.standard.bool(forKey: SettingsKey.toastsEnabled) else { return }
         
         let content = UNMutableNotificationContent()
         content.title = title
@@ -42,9 +41,3 @@ import UserNotifications
     }
 }
 
-/// Empty overlay (toasts moved to native macOS notifications).
-struct ToastOverlay: View {
-    var body: some View {
-        EmptyView()
-    }
-}

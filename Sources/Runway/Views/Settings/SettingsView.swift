@@ -7,7 +7,6 @@ enum SettingsKey {
     static let idleMinutes   = "runway.idleMinutes"
     static let officeHours   = "runway.officeHours"
     static let hideBots      = "runway.hideBots"
-    static let toastsEnabled = "runway.toastsEnabled"
     static let soundEnabled  = "runway.soundEnabled"
     static let alertSound    = "runway.alertSound"
     static let confirmQuit   = "runway.confirmQuit"
@@ -19,7 +18,7 @@ enum SettingsKey {
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             pollInterval: 45, idleMinutes: 30, officeHours: 6,
-            hideBots: true, toastsEnabled: true, soundEnabled: true,
+            hideBots: true, soundEnabled: true,
             alertSound: "Glass", confirmQuit: true, initialCommand: "",
             agentCommandEnabled: true, agentCommand: "claude",
             personProfiles: [],

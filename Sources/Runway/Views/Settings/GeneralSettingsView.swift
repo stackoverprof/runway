@@ -6,7 +6,6 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.idleMinutes)   private var idleMinutes = 30
     @AppStorage(SettingsKey.officeHours)   private var officeHours = 6
     @AppStorage(SettingsKey.hideBots)      private var hideBots = true
-    @AppStorage(SettingsKey.toastsEnabled) private var toastsEnabled = true
     @AppStorage(SettingsKey.soundEnabled)  private var soundEnabled = true
     @AppStorage(SettingsKey.alertSound)    private var alertSound = "Glass"
     @AppStorage(SettingsKey.confirmQuit)   private var confirmQuit = true
@@ -40,7 +39,6 @@ struct GeneralSettings: View {
             }
 
             Section("Notifications") {
-                Toggle("Show toasts", isOn: $toastsEnabled)
                 Toggle("Play a sound when an agent needs attention", isOn: $soundEnabled)
                 HStack {
                     Picker("Alert sound", selection: $alertSound) {
