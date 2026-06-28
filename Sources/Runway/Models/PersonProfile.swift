@@ -21,6 +21,9 @@ struct PersonProfile: Codable, Identifiable {
     static let shared = PersonProfileManager()
 
     var profiles: [PersonProfile] = []
+    
+    // In-memory cache of decoded NSImage objects to avoid expensive decoding in body
+    private var imageCache: [String: NSImage] = [:]
 
     private init() {
         load()
@@ -44,11 +47,21 @@ struct PersonProfile: Codable, Identifiable {
     }
 
     func customImage(for login: String) -> NSImage? {
-        guard let data = profiles.first(where: { $0.login.lowercased() == login.lowercased() })?.imageData else { return nil }
-        return NSImage(data: data)
+        let key = login.lowercased()
+        if let cached = imageCache[key] { return cached }
+        
+        guard let data = profiles.first(where: { $0.login.lowercased() == key })?.imageData else { return nil }
+        if let image = NSImage(data: data) {
+            imageCache[key] = image
+            return image
+        }
+        return nil
     }
 
     func updateProfile(_ profile: PersonProfile) {
+        let key = profile.login.lowercased()
+        imageCache.removeValue(forKey: key) // Invalidate cached image
+        
         if let index = profiles.firstIndex(where: { $0.login == profile.login }) {
             profiles[index] = profile
         } else {

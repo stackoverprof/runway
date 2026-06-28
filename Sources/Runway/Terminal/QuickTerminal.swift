@@ -4,7 +4,7 @@ import GhosttyKit
 
 /// A persistent "quick" terminal overlaid on the bottom-left of the left pane.
 /// Toggled with ⌘⌥Q or by hovering/peeking the bottom-left corner of the window.
-/// It stays mounted while hidden (slid off-screen) so its shell keeps running.
+/// It stays mounted while hidden (shid-off/shrunk) so its shell keeps running.
 struct QuickTerminal: View {
     @Bindable var ws: Workspace
     let width: CGFloat            // left-pane width
@@ -30,7 +30,6 @@ struct QuickTerminal: View {
 
     private let margin: CGFloat = 8
     private let minHeight: CGFloat = 140
-    private let peekSize: CGFloat = 36
 
     private var height: CGFloat {
         let fallback = availableHeight * 0.5
@@ -71,40 +70,31 @@ struct QuickTerminal: View {
                 }
                 .transition(.identity)
             } else {
-                // Diagonal bottom-left corner peek tab
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
-                            .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
-                    }
-                }
-                .padding(10)
-                .frame(width: actualWidth, height: height, alignment: .bottomTrailing)
-                .transition(.identity)
+                // Centered peeking bolt icon
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
+                    .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.identity)
             }
         }
-        .frame(width: actualWidth, height: height)
-        .background(ws.quickVisible ? RunwayTerminal.body : Color.white.opacity(0.04))
+        .frame(
+            width: ws.quickVisible ? actualWidth : 36,
+            height: ws.quickVisible ? height : 36
+        )
+        .background(ws.quickVisible ? RunwayTerminal.body : Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(ws.quickVisible ? Color.white.opacity(0.12) : Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(ws.quickVisible ? Color.white.opacity(0.12) : Color.white.opacity(0.15), lineWidth: 1)
         )
         // Invisible drag strip on the top edge to resize when visible.
         .overlay(alignment: .top) {
             if ws.quickVisible { resizeHandle }
         }
-        .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.2), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
+        .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .padding(margin)
-        // Slide diagonally off the bottom-left (so only the bottom-right corner of the view remains at bottom-left of the window)
-        .offset(
-            x: ws.quickVisible ? 0 : -actualWidth + peekSize,
-            y: ws.quickVisible ? 0 : height - peekSize
-        )
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -132,7 +122,6 @@ struct QuickTerminal: View {
             }
         }
         .onChange(of: ws.focusedID) { _, _ in
-            // If focus shifts away and mouse is not hovering, trigger auto-hide
             if !isHovered {
                 triggerAutoHide()
             }
