@@ -3,28 +3,28 @@ import AppKit
 
 struct PeopleSettings: View {
     @Bindable var feed = GitHubFeed.shared
-    @State private var profiles: [PersonProfile] = []
     @State private var selectedPersonLogin: String?
     @State private var knownLogins: Set<String> = []
     @State private var editingDisplayName = ""
+
+    private var manager = PersonProfileManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
             peopleList
             
             if let selected = selectedPersonLogin {
-                let profile = profiles.first { $0.login == selected } ?? PersonProfile(login: selected)
+                let profile = manager.profiles.first { $0.login == selected } ?? PersonProfile(login: selected)
                 Divider()
                 editProfilePanel(for: selected, profile: profile)
             }
         }
         .frame(minHeight: 500)
         .onAppear {
-            loadProfiles()
             updateKnownLogins()
         }
         .onChange(of: selectedPersonLogin) { _, selected in
-            if let selected, let profile = profiles.first(where: { $0.login == selected }) {
+            if let selected, let profile = manager.profiles.first(where: { $0.login == selected }) {
                 editingDisplayName = profile.displayName
             } else if let selected {
                 editingDisplayName = selected
@@ -53,7 +53,7 @@ struct PeopleSettings: View {
     }
 
     private func peopleRow(login: String) -> some View {
-        let profile = profiles.first { $0.login == login } ?? PersonProfile(login: login)
+        let profile = manager.profiles.first { $0.login == login } ?? PersonProfile(login: login)
         return HStack(spacing: 10) {
             if let imageData = profile.imageData, let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
@@ -143,25 +143,7 @@ struct PeopleSettings: View {
         knownLogins = logins
     }
 
-    private func loadProfiles() {
-        if let data = UserDefaults.standard.data(forKey: SettingsKey.personProfiles),
-           let decoded = try? JSONDecoder().decode([PersonProfile].self, from: data) {
-            profiles = decoded
-        }
-    }
-
     private func updateProfile(_ profile: PersonProfile) {
-        if let index = profiles.firstIndex(where: { $0.login == profile.login }) {
-            profiles[index] = profile
-        } else {
-            profiles.append(profile)
-        }
-        saveProfiles()
-    }
-
-    private func saveProfiles() {
-        if let encoded = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(encoded, forKey: SettingsKey.personProfiles)
-        }
+        manager.updateProfile(profile)
     }
 }

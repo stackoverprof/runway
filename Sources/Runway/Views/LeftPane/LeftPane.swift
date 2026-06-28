@@ -115,7 +115,7 @@ struct LeftPane: View {
             ForEach(showAllPresence ? feed.presence : Array(feed.presence.prefix(5))) { p in
                 HStack(spacing: 8) {
                     Avatar(login: p.login, url: p.avatarURL, size: 18)
-                    Text(p.login)
+                    Text(PersonProfileManager.shared.displayName(for: p.login))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Color.white.opacity(p.idle ? 0.4 : 0.9))
                         .lineLimit(1)

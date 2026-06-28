@@ -24,7 +24,7 @@ struct AgentFeedRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(post.author)
+                    Text(PersonProfileManager.shared.displayName(for: post.author))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.9))
                     Text("posted")
@@ -112,7 +112,7 @@ struct FeedRow: View {
             ZStack(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(event.actor)
+                        Text(PersonProfileManager.shared.displayName(for: event.actor))
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.9))
                         Text(verb)

@@ -28,7 +28,9 @@ struct Avatar: View {
 
     var body: some View {
         Group {
-            if let image {
+            if let customImg = PersonProfileManager.shared.customImage(for: login) {
+                Image(nsImage: customImg).resizable().scaledToFill()
+            } else if let image {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 initialsCircle
@@ -37,6 +39,7 @@ struct Avatar: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
         .task(id: url) {
+            guard PersonProfileManager.shared.customImage(for: login) == nil else { return }
             guard let url else { image = nil; return }
             if let hit = AvatarCache.shared.cached(url) { image = hit; return }
             if let loaded = await AvatarCache.shared.load(url) { image = loaded }
