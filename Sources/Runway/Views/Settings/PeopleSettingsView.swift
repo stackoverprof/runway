@@ -3,6 +3,7 @@ import AppKit
 
 struct PeopleSettings: View {
     @Bindable var feed = GitHubFeed.shared
+    @Bindable var agentFeed = AgentFeed.shared
     @State private var selectedPersonLogin: String?
     @State private var knownLogins: Set<String> = []
     @State private var editingDisplayName = ""
@@ -29,6 +30,12 @@ struct PeopleSettings: View {
             } else if let selected {
                 editingDisplayName = selected
             }
+        }
+        .onChange(of: feed.events) { _, _ in
+            updateKnownLogins()
+        }
+        .onChange(of: agentFeed.posts) { _, _ in
+            updateKnownLogins()
         }
     }
 
@@ -140,6 +147,7 @@ struct PeopleSettings: View {
         var logins = Set<String>()
         logins.formUnion(feed.events.map { $0.actor })
         logins.formUnion(feed.presence.map { $0.login })
+        logins.formUnion(agentFeed.posts.map { $0.author })
         knownLogins = logins
     }
 

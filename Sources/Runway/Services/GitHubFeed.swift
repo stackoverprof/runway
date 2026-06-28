@@ -3,7 +3,7 @@ import Foundation
 
 // MARK: - Models
 
-enum FeedKind: Codable {
+enum FeedKind: Codable, Equatable {
     case push(branch: String, count: Int?, commits: [Commit])
     case prOpened(number: Int, title: String, branch: String)
     case prMerged(number: Int, title: String, base: String, branch: String, additions: Int?, deletions: Int?)
@@ -13,13 +13,14 @@ enum FeedKind: Codable {
     case issueOpened(number: Int, title: String)
     case issueClosed(number: Int, title: String)
 
-    struct Commit: Identifiable, Codable {
-        let id = UUID(); let sha: String; let message: String
-        enum CodingKeys: String, CodingKey { case sha, message }   // id is regenerated
+    struct Commit: Identifiable, Codable, Equatable {
+        var id: String { sha }
+        let sha: String; let message: String
+        enum CodingKeys: String, CodingKey { case sha, message }   // id is computed
     }
 }
 
-struct FeedEvent: Identifiable, Codable {
+struct FeedEvent: Identifiable, Codable, Equatable {
     let id: String
     let actor: String
     let avatarURL: String?
