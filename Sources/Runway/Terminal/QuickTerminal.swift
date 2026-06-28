@@ -155,11 +155,6 @@ struct QuickTerminal: View {
             }
             .buttonStyle(.plain)
             .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
-            
-            Text("⌘⌥Q")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.25))
-                .padding(.leading, 4)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
