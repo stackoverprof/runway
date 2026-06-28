@@ -210,7 +210,7 @@ import AppKit
     static let shared = TerminalRegistry()
     private var viewToID: [ObjectIdentifier: UUID] = [:]
     private var idToView: [UUID: NSView] = [:]
-    private init() {}
+    private var initSentinel = false
 
     func register(_ view: NSView, id: UUID) {
         viewToID[ObjectIdentifier(view)] = id
