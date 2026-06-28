@@ -92,7 +92,16 @@ struct QuickTerminal: View {
             width: ws.quickVisible ? actualWidth : 36,
             height: ws.quickVisible ? height : 36
         )
-        .background(ws.quickVisible ? RunwayTerminal.body : Color.white.opacity(0.06))
+        .background(
+            Group {
+                if ws.quickVisible {
+                    RunwayTerminal.body
+                } else {
+                    Color.black.opacity(0.55)
+                        .background(.ultraThinMaterial)
+                }
+            }
+        )
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
