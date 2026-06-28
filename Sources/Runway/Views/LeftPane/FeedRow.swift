@@ -19,6 +19,7 @@ struct AgentFeedRow: View {
                         .frame(maxHeight: .infinity)
                 }
                 Avatar(login: post.author, size: 28)
+                    .padding(.top, 4)
             }
             .frame(width: 28)
 
@@ -105,6 +106,7 @@ struct FeedRow: View {
                         .frame(maxHeight: .infinity)
                 }
                 Avatar(login: event.actor, url: event.avatarURL, size: 28)
+                    .padding(.top, 4)
             }
             .frame(width: 28)
 
@@ -124,7 +126,8 @@ struct FeedRow: View {
                             .foregroundStyle(Color.white.opacity(0.3))
                     }
                     
-                    if isMergeEvent {
+                    // Wider gap for merge events
+                    if case .prMerged = event.kind {
                         Spacer().frame(height: 20)
                     } else {
                         Spacer().frame(height: 6)
@@ -132,9 +135,7 @@ struct FeedRow: View {
                     
                     detail
                 }
-                .padding(.horizontal, 11)
-                .padding(.bottom, 11)
-                .padding(.top, isMergeEvent ? 11 : 8)
+                .padding(11)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
