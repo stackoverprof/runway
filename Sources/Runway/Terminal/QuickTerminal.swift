@@ -14,6 +14,7 @@ struct QuickTerminal: View {
     @State private var dragStartHeight: CGFloat?
     @State private var isHovered = false
     @State private var hideTask: Task<Void, Never>? = nil
+    @State private var allowExpandOnHover = true
 
     /// The quick terminal also runs the configured command on launch (it uses the
     /// Runway ZDOTDIR so the .zshrc autorun block fires).
@@ -50,27 +51,31 @@ struct QuickTerminal: View {
 
     var body: some View {
         ZStack {
-            if ws.quickVisible {
-                VStack(spacing: 0) {
-                    header
-                    GhosttyTerminalRepresentable(session: session, configuration: .default)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 5)
-                        .padding(.bottom, 5)
-                        .onAppear {
-                            applyRunwayTheme(to: session)
-                            ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
-                        }
-                        .dropDestination(for: URL.self) { urls, _ in
-                            let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
-                            guard !text.isEmpty else { return false }
-                            session.insertText(text + " ")
-                            return true
-                        }
-                }
-                .transition(.identity)
-            } else {
-                // Centered peeking bolt icon
+            // Keep the Ghostty view permanently mounted in the ZStack.
+            // When hidden, we set opacity to 0 and disable hit-testing.
+            // This prevents the Metal GPU renderer from locking up due to nil window context.
+            VStack(spacing: 0) {
+                header
+                GhosttyTerminalRepresentable(session: session, configuration: .default)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 5)
+                    .padding(.bottom, 5)
+                    .onAppear {
+                        applyRunwayTheme(to: session)
+                        ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                    }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
+                        guard !text.isEmpty else { return false }
+                        session.insertText(text + " ")
+                        return true
+                    }
+            }
+            .opacity(ws.quickVisible ? 1 : 0)
+            .allowsHitTesting(ws.quickVisible)
+            
+            if !ws.quickVisible {
+                // Centered peeking bolt icon when closed
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
@@ -102,17 +107,21 @@ struct QuickTerminal: View {
                 hideTask?.cancel()
                 hideTask = nil
                 
-                // Auto-expand on corner hover
-                if !ws.quickVisible {
+                // Auto-expand on corner hover (only if allowed)
+                if !ws.quickVisible && allowExpandOnHover {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                         ws.quickVisible = true
                     }
                 }
             } else {
+                allowExpandOnHover = true // Reset allowed state when mouse leaves
                 triggerAutoHide()
             }
         }
         .onChange(of: ws.quickVisible) { _, visible in
+            if !visible {
+                allowExpandOnHover = false // Require mouse exit before next expand
+            }
             DispatchQueue.main.async {
                 if visible {
                     if let view = session.view { view.window?.makeFirstResponder(view) }
