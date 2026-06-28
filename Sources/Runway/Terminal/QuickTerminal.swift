@@ -81,6 +81,12 @@ struct QuickTerminal: View {
                     .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
                     .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            ws.quickVisible = true
+                        }
+                    }
                     .transition(.identity)
             }
         }
@@ -106,13 +112,6 @@ struct QuickTerminal: View {
             if hovering {
                 hideTask?.cancel()
                 hideTask = nil
-                
-                // Auto-expand on corner hover (only if allowed)
-                if !ws.quickVisible && allowExpandOnHover {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        ws.quickVisible = true
-                    }
-                }
             } else {
                 allowExpandOnHover = true // Reset allowed state when mouse leaves
                 triggerAutoHide()
