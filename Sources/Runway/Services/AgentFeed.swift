@@ -65,9 +65,39 @@ enum TimelineEntry: Identifiable {
 
     init() { loadPosts() }
 
+    /// Filter out merge noise: branch deletions and automated merge-commit pushes.
+    /// Shared between timeline display and presence computation.
+    static func filterNoise(_ events: [FeedEvent]) -> [FeedEvent] {
+        let mergeTargets: [(branch: String, date: Date)] = events.compactMap { event in
+            if case let .prMerged(_, _, base, _, _, _, _, _) = event.kind {
+                return (base, event.date)
+            }
+            return nil
+        }
+
+        return events.filter { event in
+            switch event.kind {
+            case .branchDeleted:
+                return false
+            case let .push(branch, _, _):
+                // A push to the merge target branch within 2 min of a merge
+                // event is the automated merge-commit push — hide it.
+                let dominated = mergeTargets.contains { target in
+                    target.branch == branch &&
+                    abs(target.date.timeIntervalSince(event.date)) < 120
+                }
+                if dominated { return false }
+                return true
+            default:
+                return true
+            }
+        }
+    }
+
     /// Merge GitHub events with agent posts, newest first.
     func timeline(github events: [FeedEvent]) -> [TimelineEntry] {
-        let gh = events.map { TimelineEntry.github($0) }
+        let filtered = Self.filterNoise(events)
+        let gh = filtered.map { TimelineEntry.github($0) }
         let local = posts.map { TimelineEntry.agent($0) }
         return (gh + local).sorted { $0.date > $1.date }
     }

@@ -64,12 +64,6 @@ struct QuickTerminal: View {
                         applyRunwayTheme(to: session)
                         ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
                     }
-                    .dropDestination(for: URL.self) { urls, _ in
-                        let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
-                        guard !text.isEmpty else { return false }
-                        session.insertText(text + " ")
-                        return true
-                    }
             }
             .opacity(ws.quickVisible ? 1 : 0)
             .allowsHitTesting(ws.quickVisible)
@@ -112,6 +106,13 @@ struct QuickTerminal: View {
             if ws.quickVisible { resizeHandle }
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard ws.quickVisible else { return false }
+            let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
+            guard !text.isEmpty else { return false }
+            session.insertText(text + " ")
+            return true
+        }
         .padding(margin)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: ws.quickVisible)
         .contentShape(Rectangle())
@@ -192,14 +193,16 @@ struct QuickTerminal: View {
             )
     }
 
+
     private func triggerAutoHide() {
         guard !ws.quickPinned else { return }
         
         hideTask?.cancel()
         hideTask = Task {
-            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s delay
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s delay
             guard !Task.isCancelled else { return }
             guard !isHovered else { return }
+            guard !isFocused else { return }
             guard !ws.quickPinned else { return }
             
             ws.quickVisible = false

@@ -86,7 +86,7 @@ struct FeedRow: View {
         switch event.kind {
         case let .push(branch, _, _):        return URL(string: "\(base)/commits/\(branch)")
         case let .prOpened(number, _, _):    return URL(string: "\(base)/pull/\(number)")
-        case let .prMerged(number, _, _, _, _, _): return URL(string: "\(base)/pull/\(number)")
+        case let .prMerged(number, _, _, _, _, _, _, _): return URL(string: "\(base)/pull/\(number)")
         case let .branchCreated(name):       return URL(string: "\(base)/tree/\(name)")
         case .branchDeleted:                 return URL(string: "\(base)/branches")
         case let .review(number, _, _):      return URL(string: "\(base)/pull/\(number)")
@@ -226,15 +226,23 @@ struct FeedRow: View {
             }
         case let .prOpened(number, title, branch):
             prLine("#\(number)", title.isEmpty ? branch : title, tint: Self.green)
-        case let .prMerged(number, title, base, branch, adds, dels):
+        case let .prMerged(number, title, base, branch, adds, dels, commits, duration):
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Chip("#\(number)", tint: Self.purple)
                     Image(systemName: "arrow.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.white.opacity(0.3))
                     Chip(base, tint: Self.gray)
                     if let a = adds, let d = dels {
-                        Text("+\(a)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.4, green: 0.78, blue: 0.45))
-                        Text("-\(d)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.95, green: 0.36, blue: 0.32))
+                        Text("+\(a)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.4, green: 0.78, blue: 0.45).opacity(0.65))
+                        Text("-\(d)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.95, green: 0.36, blue: 0.32).opacity(0.65))
+                    }
+                    if let c = commits {
+                        Text("•").font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.2))
+                        Text("\(c) commit\(c == 1 ? "" : "s")").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
+                    }
+                    if let dur = duration {
+                        Text("•").font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.2))
+                        Text(formatPRDuration(dur)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
                     }
                 }
                 Text(title.isEmpty ? branch : title).font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.55)).lineLimit(1)
@@ -283,6 +291,23 @@ struct FeedRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
+    }
+
+    private func formatPRDuration(_ duration: TimeInterval) -> String {
+        let secs = Int(duration)
+        if secs < 60 { return "open \(secs)s" }
+        let mins = secs / 60
+        if mins < 60 { return "open \(mins)m" }
+        let hours = mins / 60
+        if hours < 24 {
+            let remMins = mins % 60
+            if remMins > 0 { return "open \(hours)h \(remMins)m" }
+            return "open \(hours)h"
+        }
+        let days = hours / 24
+        let remHours = hours % 24
+        if remHours > 0 { return "open \(days)d \(remHours)h" }
+        return "open \(days)d"
     }
 
     private var cardBorder: some View {
