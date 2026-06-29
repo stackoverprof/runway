@@ -76,6 +76,12 @@ struct MergeCardDecorations: View {
                     .stroke(FeedRow.purple.opacity(0.05), style: StrokeStyle(lineWidth: 1.5 * (16.0 / 16.0), lineCap: .round, lineJoin: .round))
                     .frame(width: 16, height: 16)
                     .position(x: width * 0.97, y: 6)
+                
+                // Icon 8: Big, subtle background watermark on the far right
+                MergeIconShape()
+                    .stroke(FeedRow.purple.opacity(0.045), style: StrokeStyle(lineWidth: 1.5 * (75.0 / 16.0), lineCap: .round, lineJoin: .round))
+                    .frame(width: 75, height: 75)
+                    .position(x: width * 0.88, y: geo.size.height * 0.5)
             }
         }
         .allowsHitTesting(false)

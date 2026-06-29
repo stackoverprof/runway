@@ -6,7 +6,7 @@ import Foundation
 enum FeedKind: Codable, Equatable {
     case push(branch: String, count: Int?, commits: [Commit])
     case prOpened(number: Int, title: String, branch: String)
-    case prMerged(number: Int, title: String, base: String, branch: String, additions: Int?, deletions: Int?)
+    case prMerged(number: Int, title: String, base: String, branch: String, additions: Int?, deletions: Int?, commits: Int?, duration: TimeInterval?)
     case branchCreated(String)
     case branchDeleted(String)
     case review(number: Int, title: String, state: String)
@@ -61,6 +61,7 @@ struct Presence: Identifiable {
     private var commitCounts: [String: Int] = [:]
     private var pushSHAs: [String: (before: String, head: String)] = [:]
     private var fetchingCounts: Set<String> = []
+    private var fetchingPRs: Set<Int> = []
 
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
@@ -173,7 +174,9 @@ struct Presence: Identifiable {
             offline = false
         }
         merge(page.events, staggerNew: true)
+        canLoadMore = page.full
         fetchCommitCounts()
+        fetchPRDetails()
         lastError = nil
         didLoad = true
         loading = false
@@ -193,6 +196,7 @@ struct Presence: Identifiable {
         loadedPages = next
         canLoadMore = page.full
         fetchCommitCounts()
+        fetchPRDetails()
     }
 
     /// Fill in commit counts for pushes that don't have one yet, via the compare
@@ -224,12 +228,87 @@ struct Presence: Identifiable {
                               date: old.date, kind: .push(branch: branch, count: count, commits: commits))
     }
 
+    private func fetchPRDetails() {
+        for e in events {
+            guard case let .prMerged(num, _, _, _, _, _, commits, _) = e.kind,
+                  commits == nil else { continue }
+            if fetchingPRs.contains(num) { continue }
+            fetchingPRs.insert(num)
+            
+            Task { @MainActor in
+                defer { fetchingPRs.remove(num) }
+                guard let data = await GH.api("/repos/\(repo)/pulls/\(num)"),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                
+                let additions = json["additions"] as? Int ?? 0
+                let deletions = json["deletions"] as? Int ?? 0
+                let commitsCount = json["commits"] as? Int ?? 0
+                
+                let createdStr = json["created_at"] as? String ?? ""
+                let mergedStr = json["merged_at"] as? String ?? json["closed_at"] as? String ?? ""
+                
+                let df = ISO8601DateFormatter()
+                let created = df.date(from: createdStr) ?? Date()
+                let merged = df.date(from: mergedStr) ?? Date()
+                let duration = merged.timeIntervalSince(created)
+                
+                applyPRDetails(number: num, additions: additions, deletions: deletions, commits: commitsCount, duration: duration)
+            }
+        }
+    }
+
+    private func applyPRDetails(number: Int, additions: Int, deletions: Int, commits: Int, duration: TimeInterval) {
+        for i in 0..<events.count {
+            if case let .prMerged(num, title, base, branch, _, _, _, _) = events[i].kind, num == number {
+                let old = events[i]
+                events[i] = FeedEvent(
+                    id: old.id,
+                    actor: old.actor,
+                    avatarURL: old.avatarURL,
+                    date: old.date,
+                    kind: .prMerged(
+                        number: num,
+                        title: title,
+                        base: base,
+                        branch: branch,
+                        additions: additions,
+                        deletions: deletions,
+                        commits: commits,
+                        duration: duration
+                    )
+                )
+            }
+        }
+        saveCache(events)
+    }
+
     private func fetchPage(_ page: Int) async -> (events: [FeedEvent], full: Bool)? {
         guard let data = await GH.api("/repos/\(repo)/events?per_page=100&page=\(page)"),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         let hideBots = UserDefaults.standard.bool(forKey: SettingsKey.hideBots)
         let parsed = raw.compactMap(parse).filter { !(hideBots && $0.actor.hasSuffix("[bot]")) }
         return (parsed, raw.count >= 100)
+    }
+
+    private func mergeEvent(_ old: FeedEvent, _ new: FeedEvent) -> FeedEvent {
+        if case let .push(branch, oldCount, commits) = old.kind,
+           case let .push(_, newCount, _) = new.kind {
+            let count = newCount ?? oldCount
+            return FeedEvent(id: new.id, actor: new.actor, avatarURL: new.avatarURL, date: new.date,
+                             kind: .push(branch: branch, count: count, commits: commits))
+        }
+        if case let .prMerged(num, title, base, branch, oldAdds, oldDels, oldCommits, oldDur) = old.kind,
+           case let .prMerged(_, _, _, _, newAdds, newDels, newCommits, newDur) = new.kind {
+            let additions = newAdds ?? oldAdds
+            let deletions = newDels ?? oldDels
+            let commits = newCommits ?? oldCommits
+            let duration = newDur ?? oldDur
+            return FeedEvent(id: new.id, actor: new.actor, avatarURL: new.avatarURL, date: new.date,
+                             kind: .prMerged(number: num, title: title, base: base, branch: branch,
+                                             additions: additions, deletions: deletions,
+                                             commits: commits, duration: duration))
+        }
+        return new
     }
 
     /// Merge new events (deduped by id, newest first), recompute presence, cache.
@@ -239,7 +318,13 @@ struct Presence: Identifiable {
         let existing = Set(events.map(\.id))
         var byID = [String: FeedEvent](minimumCapacity: events.count + incoming.count)
         for e in events { byID[e.id] = e }
-        for e in incoming { byID[e.id] = e }
+        for e in incoming {
+            if let old = byID[e.id] {
+                byID[e.id] = mergeEvent(old, e)
+            } else {
+                byID[e.id] = e
+            }
+        }
         let full = byID.values.sorted { $0.date > $1.date }
         let hadEvents = !events.isEmpty
 
@@ -301,7 +386,9 @@ struct Presence: Identifiable {
                 base: ["main", "develop", "release"].randomElement() ?? "main",
                 branch: "feature/\(randomSlug())",
                 additions: Int.random(in: 5...240),
-                deletions: Int.random(in: 0...180)
+                deletions: Int.random(in: 0...180),
+                commits: Int.random(in: 1...12),
+                duration: TimeInterval(Int.random(in: 600...86400 * 3))
             )),
             ("casey", nil, .issueClosed(
                 number: Int.random(in: 120...899),
@@ -404,7 +491,8 @@ struct Presence: Identifiable {
             if action == "merged" || (action == "closed" && merged) {
                 let base = ((p["base"] as? [String: Any])?["ref"] as? String) ?? "main"
                 kind = .prMerged(number: num, title: title, base: base, branch: head,
-                                 additions: p["additions"] as? Int, deletions: p["deletions"] as? Int)
+                                 additions: p["additions"] as? Int, deletions: p["deletions"] as? Int,
+                                 commits: nil, duration: nil)
             } else if action == "opened" || action == "reopened" {
                 kind = .prOpened(number: num, title: title, branch: head)
             } else { kind = nil }
@@ -437,7 +525,8 @@ struct Presence: Identifiable {
     private func computePresence(from events: [FeedEvent]) -> [Presence] {
         let now = Date()
         let window = TimeInterval(max(1, UserDefaults.standard.integer(forKey: SettingsKey.officeHours))) * 3600
-        let byActor = Dictionary(grouping: events, by: \.actor)
+        let visible = AgentFeed.filterNoise(events)
+        let byActor = Dictionary(grouping: visible, by: \.actor)
         return byActor.map { login, evs in
             let last = evs.map(\.date).max() ?? .distantPast
             let recent = evs.filter { now.timeIntervalSince($0.date) <= idleThreshold }.count

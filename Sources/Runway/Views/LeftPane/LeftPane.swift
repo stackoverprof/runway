@@ -226,6 +226,13 @@ struct LeftPane: View {
                 }
                 .padding(.vertical, 10)
             }
+            if !feed.canLoadMore, !feed.events.isEmpty {
+                Text("END OF HISTORY — GITHUB KEEPS ~300 EVENTS")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.2))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            }
         }
     }
 
@@ -302,10 +309,32 @@ struct LeftPane: View {
         }
     }
 
-    /// Absolute clock time, e.g. "10.12".
-    private func clock(_ date: Date) -> String { Self.clockFormatter.string(from: date) }
+    /// Smart clock: today → "10.12", yesterday → "Yesterday 10.12",
+    /// this week → "Fri 10.12", older → "21 Jun 10.12".
+    private func clock(_ date: Date) -> String {
+        let cal = Calendar.current
+        let time = Self.clockFormatter.string(from: date)
+        if cal.isDateInToday(date) {
+            return time
+        }
+        if cal.isDateInYesterday(date) {
+            return "Yesterday \(time)"
+        }
+        // Within 6 days → day name
+        let daysAgo = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: Date())).day ?? 7
+        if daysAgo < 7 {
+            return "\(Self.dayNameFormatter.string(from: date)) \(time)"
+        }
+        return "\(Self.fullDateFormatter.string(from: date)) \(time)"
+    }
     private static let clockFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH.mm"; return f
+    }()
+    private static let dayNameFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE"; return f
+    }()
+    private static let fullDateFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "d MMM"; return f
     }()
 
     /// Full date + clock for the caption, e.g. "FRI 26 JUN 21.02".
