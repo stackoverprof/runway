@@ -1,6 +1,12 @@
 import SwiftUI
 import AppKit
 
+enum FeedTab: String, CaseIterable, Codable {
+    case feeds = "Feeds"
+    case merge = "Merge"
+    case posts = "Posts"
+}
+
 /// App-wide state + actions for the agent list. Owned here (not in a view) so the
 /// app-level keyboard monitor can drive it even while a terminal has focus.
 @MainActor @Observable final class Workspace {
@@ -20,6 +26,9 @@ import AppKit
     var quickVisible = false
     var quickPinned = false
     var quickHeight: CGFloat = 0
+    var quickState: AgentState = .idle
+    /// The currently selected feed tab in the left pane
+    var selectedTab: FeedTab = .feeds
     /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
     @ObservationIgnored var focusQuick: (() -> Void)?
 
@@ -41,6 +50,9 @@ import AppKit
     /// pre-existing needs-action state on launch doesn't fire a burst of toasts.
     private var watchReady = false
 
+    @ObservationIgnored private var dirWatcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var dirDescriptor: Int32 = -1
+
     init() {
         load()
         // Focus the first box on launch so the glow + accordion expansion match
@@ -61,6 +73,7 @@ import AppKit
         var quickHeight: CGFloat
         var accordion: Bool
         var quickPinned: Bool?
+        var selectedTab: FeedTab?
     }
 
     private static var stateFile: URL { AgentControl.supportDir.appendingPathComponent("workspace.json") }
@@ -73,6 +86,7 @@ import AppKit
         quickHeight = s.quickHeight
         accordion = s.accordion
         quickPinned = s.quickPinned ?? false
+        selectedTab = s.selectedTab ?? .feeds
         lastSaved = data
     }
 
@@ -80,7 +94,7 @@ import AppKit
     func saveIfNeeded() {
         let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
                                  quickHeight: quickHeight, accordion: accordion,
-                                 quickPinned: quickPinned)
+                                 quickPinned: quickPinned, selectedTab: selectedTab)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
         try? data.write(to: Self.stateFile)
@@ -94,14 +108,39 @@ import AppKit
 
     /// Poll each box's control file and apply name/description/state the agent wrote.
     func startAgentWatch() {
+        let dirPath = AgentControl.controlDir.path
+        dirDescriptor = open(dirPath, O_EVTONLY)
+        if dirDescriptor >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: dirDescriptor,
+                eventMask: .write,
+                queue: DispatchQueue.main
+            )
+            source.setEventHandler { [weak self] in
+                guard let self else { return }
+                self.pollControlFiles()
+                self.saveIfNeeded()
+            }
+            source.setCancelHandler { [weak self] in
+                guard let fd = self?.dirDescriptor else { return }
+                close(fd)
+            }
+            dirWatcher = source
+            source.resume()
+        }
+
         Task { @MainActor in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 400_000_000)
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
                 pollControlFiles()
                 saveIfNeeded()
                 watchReady = true   // subsequent polls fire transition toasts
             }
         }
+    }
+
+    deinit {
+        dirWatcher?.cancel()
     }
 
     private func pollControlFiles() {
@@ -132,13 +171,44 @@ import AppKit
             if let state = json["state"] as? String {
                 let next = AgentState(control: state)
                 if watchReady, next == .needsAction, boxes[i].state != .needsAction {
-                    ToastCenter.shared.show("\(boxes[i].name) needs your attention",
-                                            icon: "exclamationmark.bubble.fill",
-                                            tint: Color(red: 0.91, green: 0.62, blue: 0.20),
-                                            sound: true)
+                    if NSApp.isActive {
+                        // App is active: only play sound, no native banner (header will pulse in UI).
+                        if UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) {
+                            RunwayNotificationManager.playSelectedSound()
+                        }
+                    } else {
+                        // App is backgrounded: show native OS notification banner with sound.
+                        RunwayNotificationManager.shared.show("\(boxes[i].name) needs your attention", sound: true)
+                    }
                 }
                 boxes[i].state = next
             }
+        }
+        
+        // Poll quick terminal's control file
+        let quickID = QuickTerminal.quickBoxID
+        if let data = try? Data(contentsOf: AgentControl.file(for: quickID)),
+           let raw = String(data: data, encoding: .utf8) {
+            if lastControl[quickID] != raw {
+                lastControl[quickID] = raw
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let state = json["state"] as? String {
+                    let next = AgentState(control: state)
+                    if watchReady, next == .needsAction, quickState != .needsAction {
+                        quickVisible = true
+                        if NSApp.isActive {
+                            if UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) {
+                                RunwayNotificationManager.playSelectedSound()
+                            }
+                        } else {
+                            RunwayNotificationManager.shared.show("Quick terminal needs your attention", sound: true)
+                        }
+                    }
+                    quickState = next
+                }
+            }
+        } else {
+            quickState = .idle
         }
     }
 

@@ -30,6 +30,9 @@ enum AgentControl {
     static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
     static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
     static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
+    static var binDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".runway/bin", isDirectory: true)
+    }
 
     static func file(for id: UUID) -> URL {
         controlDir.appendingPathComponent("\(id.uuidString).json")
@@ -44,6 +47,10 @@ enum AgentControl {
     /// wrapper that auto-injects Claude Code hooks.
     static func environment(for id: UUID, autorun: String? = nil) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let skillDir = home.appendingPathComponent(".gemini/config/skills/runway_api")
+        let binPath = binDir.path
+        let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         var env = [
             "RUNWAY_BOX": id.uuidString,
             "RUNWAY_CONTROL": file(for: id).path,
@@ -51,6 +58,8 @@ enum AgentControl {
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
+            "RUNWAY_SKILL_PATH": skillDir.path,
+            "PATH": "\(binPath):\(systemPath)",
         ]
         if let autorun, !autorun.isEmpty { env["RUNWAY_AUTORUN"] = autorun }
         return env
@@ -76,6 +85,136 @@ enum AgentControl {
         writeFeedPostScript()
         writeZshWrapper()
         ensureFeedInbox()
+        writeGlobalSkill()
+        try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        writeBinScripts()
+    }
+
+    private static func writeBinScripts() {
+        let postPath = binDir.appendingPathComponent("runway-post")
+        let delPath = binDir.appendingPathComponent("runway-delete")
+        let pinPath = binDir.appendingPathComponent("runway-pin")
+        let unpinPath = binDir.appendingPathComponent("runway-unpin")
+
+        // 1. runway-post
+        let postScript = """
+        #!/usr/bin/env python3
+        import sys, os, json, datetime
+        
+        def main():
+            args = sys.argv[1:]
+            if "-h" in args or "--help" in args:
+                print("Runway API: Post a note or post to the activity feed.", file=sys.stderr)
+                print("Usage:", file=sys.stderr)
+                print("  runway-post \\"body text\\"                       (author: agent)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"body text\\"         (custom author)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"body text\\" \\"title\\" (custom title)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"title\\" - <<EOF     (multiline stdin)", file=sys.stderr)
+                sys.exit(0)
+            
+            feed = os.environ.get("RUNWAY_FEED")
+            if not feed:
+                print("runway-post: not in a Runway terminal (RUNWAY_FEED unset)", file=sys.stderr)
+                sys.exit(1)
+
+            def unesc(s):
+                return s.replace('\\\\n', '\\n').replace('\\\\t', '\\t')
+
+            stdin_body = ""
+            if args and args[-1] == "-":
+                stdin_body = sys.stdin.read()
+                args = args[:-1]
+
+            if stdin_body:
+                if len(args) == 0:
+                    author, title = "agent", ""
+                elif len(args) == 1:
+                    author, title = args[0], ""
+                else:
+                    author, title = args[0], args[1]
+                body = stdin_body
+            elif len(args) == 0:
+                return
+            elif len(args) == 1:
+                author, title, body = "agent", "", args[0]
+            elif len(args) == 2:
+                author, title, body = args[0], "", args[1]
+            else:
+                author, body, title = args[0], args[1], args[2]
+
+            title = unesc(title)
+            body = unesc(body)
+            if not body.strip():
+                return
+            
+            payload = {
+                "author": author,
+                "title": title,
+                "body": body,
+                "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            with open(feed, "a") as f:
+                f.write(json.dumps(payload) + "\\n")
+
+        if __name__ == "__main__":
+            main()
+        """
+        try? postScript.data(using: .utf8)?.write(to: postPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: postPath.path)
+
+        // 2. runway-delete
+        let delScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Delete a feed post or user note by ID.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-delete <post_id_or_note_id>   (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-delete: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"delete\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? delScript.data(using: .utf8)?.write(to: delPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: delPath.path)
+
+        // 3. runway-pin
+        let pinScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Pin a feed post or user note to the top of the Posts tab.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-pin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"pin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? pinScript.data(using: .utf8)?.write(to: pinPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pinPath.path)
+
+        // 4. runway-unpin
+        let unpinScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Unpin a feed post or user note from the top of the Posts tab.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-unpin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"unpin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? unpinScript.data(using: .utf8)?.write(to: unpinPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unpinPath.path)
     }
 
     private static func ensureFeedInbox() {
@@ -99,6 +238,113 @@ enum AgentControl {
         ]]
         guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted]) else { return }
         try? data.write(to: hooksFile)
+    }
+
+    private static func writeGlobalSkill() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let skillDir = home.appendingPathComponent(".gemini/config/skills/runway_api", isDirectory: true)
+        try? FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
+        
+        let markdown = """
+        ---
+        name: runway-app-integration
+        description: Harness Runway app terminal API features to post notes, delete notes, pin notes, change titles, or configure status indicators.
+        ---
+
+        # Runway Integration Skill
+
+        This skill explains how agents running inside Runway terminal boxes can fully integrate with the app's visual features (the activity timeline, status dots, and card labels) via terminal command-line interfaces.
+
+        ## Environment Variables
+
+        Each Runway terminal box exposes the following environment variables to its shell:
+        - `RUNWAY_BOX`: The unique UUID of the terminal card.
+        - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
+        - `RUNWAY_FEED`: Absolute path to the timeline feed inbox JSONL file.
+        - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
+        - `RUNWAY_SKILL_PATH`: Path to this auto-discovered Runway API skill guide.
+
+        ---
+
+        ## 1. Post to the Activity Feed
+
+        You can post markdown updates, build reports, deployment logs, or daily recaps directly to the **Posts** tab using the built-in shell helper `runway-post`.
+
+        ### Usage
+        ```bash
+        # Post a simple note (author defaults to "agent")
+        runway-post "Auth migration complete"
+
+        # Post with a custom author name
+        runway-post "deploy-bot" "Production deployed successfully! :rocket:"
+
+        # Post with custom author and title
+        runway-post "linter" "Found 2 warning highlights" "Style Check"
+
+        # Post a multiline markdown document from standard input
+        runway-post "analyzer" "Security Audit" - <<'EOF'
+        ## Shipped Checks
+        - Code injection check: **Passed**
+        - Dependency audit: *0 vulnerabilities*
+
+        Check logs for details.
+        EOF
+        ```
+
+        ---
+
+        ## 2. Delete, Pin, and Unpin Posts
+
+        You can delete, pin, or unpin any timeline note or post by its `id` (e.g. `note-1234` or `agent-abcd`).
+
+        ### Usage
+        ```bash
+        # Delete a post or note by ID
+        runway-delete "note-1234"
+
+        # Pin a post or note to the top of the Posts tab
+        runway-pin "agent-5678"
+
+        # Unpin a post or note
+        runway-unpin "agent-5678"
+        ```
+
+        ---
+
+        ## 3. Update Card Status and Metadata
+
+        You can dynamically update the card's **State Dot (color)**, **Title**, and **Description** at any time.
+
+        ### Updating State
+        To change the colored dot next to your terminal card, write a JSON payload to `$RUNWAY_CONTROL`:
+        ```bash
+        # Set status to active/busy (Green dot)
+        echo '{"state":"running"}' > "$RUNWAY_CONTROL"
+
+        # Set status to needs attention (Amber dot)
+        echo '{"state":"needs-action"}' > "$RUNWAY_CONTROL"
+
+        # Set status back to idle (Grey dot)
+        echo '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        ```
+
+        ### Updating Name or Description
+        Write a JSON payload to `$RUNWAY_CONTROL` containing `name` and/or `description`:
+        ```bash
+        # Rename the terminal card title
+        echo '{"name":"Build Runner"}' > "$RUNWAY_CONTROL"
+
+        # Update the right-side gray description text
+        echo '{"description":"Building release 1.0.0-beta..."}' > "$RUNWAY_CONTROL"
+
+        # Update state, name, and description in one go
+        echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
+        ```
+        Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
+        """
+        
+        let fileURL = skillDir.appendingPathComponent("SKILL.md")
+        try? markdown.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
     private static func writeFeedPostScript() {
@@ -177,17 +423,76 @@ enum AgentControl {
           }
         fi
         # Post a markdown card to the activity timeline.
-        #   runway-post "body"                       (author: agent)
-        #   runway-post author "body"              (no title)
-        #   runway-post author "body" "title"
-        #   runway-post author "title" - <<'EOF'   (multiline body from stdin)
         runway-post() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Post a note or post to the activity feed.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-post "body text"                       (author: agent)' >&2
+            echo '  runway-post "author_name" "body text"         (custom author)' >&2
+            echo '  runway-post "author_name" "body text" "title" (custom title)' >&2
+            echo '  runway-post "author_name" "title" - <<EOF     (multiline stdin)' >&2
+            return 0
+          fi
           if [ -z "$RUNWAY_FEED" ]; then
             echo 'runway-post: not in a Runway terminal (RUNWAY_FEED unset)' >&2
             echo '  Use Runway quick terminal (⌘⌥Q) or an agent card.' >&2
             return 1
           fi
           python3 '\(postScript)' "$@" >> "$RUNWAY_FEED"
+        }
+        # Delete a post or note by ID.
+        runway-delete() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Delete a feed post or user note by ID.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-delete <post_id_or_note_id>   (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-delete: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-delete <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"delete\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        }
+        # Pin a post or note by ID.
+        runway-pin() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Pin a feed post or user note to the top of the Posts tab.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-pin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-pin <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"pin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        }
+        # Unpin a post or note by ID.
+        runway-unpin() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Unpin a feed post or user note from the top of the Posts tab.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-unpin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-unpin <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"unpin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
         }
         # Record the working directory so Runway can reopen each agent in the same
         # folder after a relaunch (written at startup, on cd, and at each prompt).

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import GhosttyKit
 
 /// Engine-agnostic description of what a terminal pane should run. Keeping this
@@ -21,7 +22,13 @@ struct TerminalConfig: Equatable {
 /// symbols come from GhosttyKit's `@_exported import CGhosttyKitBinary`.
 @MainActor
 enum RunwayTerminalHost {
-    static let shared = try? GhosttyTerminalHost(loadDefaultTheme: false)
+    static let shared: GhosttyTerminalHost? = {
+        let host = try? GhosttyTerminalHost(loadDefaultTheme: false)
+        if let host, let cfg = themedConfig {
+            ghostty_app_update_config(host.app, cfg)
+        }
+        return host
+    }()
 
     /// Built once: user's config + Runway's neutral theme last. Applied app-wide
     /// here; each surface also gets it via `session.updateConfig` after it attaches.
@@ -30,10 +37,11 @@ enum RunwayTerminalHost {
         ghostty_config_load_default_files(cfg)
         RunwayTerminal.themeFilePath.withCString { ghostty_config_load_file(cfg, $0) }
         ghostty_config_finalize(cfg)
-        if let app = shared?.app { ghostty_app_update_config(app, cfg) }
         return cfg
     }()
 }
+
+import UniformTypeIdentifiers
 
 /// The swappable terminal seam. Everything in Runway embeds `TerminalSurfaceView`;
 /// switching the terminal engine means rewriting only this file. Today it is
@@ -64,26 +72,55 @@ struct TerminalSurfaceView: View {
             // GhosttyKit's embedded view doesn't accept file drops; replicate
             // Ghostty's behavior by typing the dropped file's path (shell-escaped)
             // into the terminal — Claude Code then picks it up as an image.
-            .dropDestination(for: URL.self) { urls, _ in
-                let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
-                guard !text.isEmpty else { return false }
-                session.insertText(text + " ")
-                workspace.focusedID = boxID
+            .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+                handleDropProviders(providers, session: session) {
+                    Task { @MainActor in
+                        workspace.focusedID = boxID
+                    }
+                }
                 return true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in
+                forceTerminalLayoutUpdate(for: session)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
+                forceTerminalLayoutUpdate(for: session)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
+                forceTerminalLayoutUpdate(for: session)
             }
     }
 
     /// Register this box's terminal view so clicks on it resolve to the box.
     private func registerForFocus() {
-        if let view = session.view {
-            TerminalRegistry.shared.register(view, id: boxID)
-        } else {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                if let view = session.view { TerminalRegistry.shared.register(view, id: boxID) }
+        Task { @MainActor in
+            for _ in 0..<100 {
+                if let view = session.view {
+                    TerminalRegistry.shared.register(view, id: boxID)
+                    for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
+                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        if view.window != nil {
+                            forceTerminalLayoutUpdate(for: session)
+                        }
+                    }
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
     }
+}
+
+/// Force libghostty to update its display ID, backing scale factor, and physical surface size.
+@MainActor func forceTerminalLayoutUpdate(for session: GhosttyTerminalSession) {
+    guard let view = session.view else { return }
+    let scale = view.window?.backingScaleFactor ?? 1.0
+    view.layer?.contentsScale = scale
+    view.viewDidChangeBackingProperties()
+    session.updateContentScale()
+    session.resize(to: view.bounds.size)
+    view.needsLayout = true
+    view.needsDisplay = true
 }
 
 /// Make a fresh libghostty session backed by Runway's host (falls back to a
@@ -103,9 +140,11 @@ struct TerminalSurfaceView: View {
 @MainActor func applyRunwayTheme(to session: GhosttyTerminalSession) {
     guard let cfg = RunwayTerminalHost.themedConfig else { return }
     session.updateConfig(cfg)
+    forceTerminalLayoutUpdate(for: session)
     Task { @MainActor in
         try? await Task.sleep(nanoseconds: 250_000_000)
         session.updateConfig(cfg)
+        forceTerminalLayoutUpdate(for: session)
     }
 }
 
@@ -119,4 +158,58 @@ func runwayShellEscape(_ path: String) -> String {
         out.append(ch)
     }
     return out
+}
+
+/// Unified, robust drag-and-drop provider handler for file URLs, images, and screenshots
+@MainActor func handleDropProviders(
+    _ providers: [NSItemProvider],
+    session: GhosttyTerminalSession,
+    onComplete: @Sendable @escaping () -> Void = {}
+) {
+    for provider in providers {
+        nonisolated(unsafe) let safeProvider = provider
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url = url, FileManager.default.fileExists(atPath: url.path) {
+                    DispatchQueue.main.async {
+                        let text = runwayShellEscape(url.path)
+                        session.insertText(text + " ")
+                        onComplete()
+                    }
+                } else {
+                    // Fall back to image loading if URL was not locally on disk (like a floating screenshot promise)
+                    loadAsImage(safeProvider, session: session, onComplete: onComplete)
+                }
+            }
+        } else {
+            loadAsImage(safeProvider, session: session, onComplete: onComplete)
+        }
+    }
+}
+
+private func loadAsImage(
+    _ provider: NSItemProvider,
+    session: GhosttyTerminalSession,
+    onComplete: @Sendable @escaping () -> Void
+) {
+    if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+            guard let data = data else { return }
+            let fm = FileManager.default
+            let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let fileURL = downloads.appendingPathComponent("Screenshot-\(timestamp).png")
+            do {
+                try data.write(to: fileURL)
+                DispatchQueue.main.async {
+                    let text = runwayShellEscape(fileURL.path)
+                    session.insertText(text + " ")
+                    onComplete()
+                }
+            } catch {
+                print("Failed to write dropped image: \(error)")
+            }
+        }
+    }
 }

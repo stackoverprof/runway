@@ -45,7 +45,7 @@ struct GeneralSettings: View {
                         ForEach(sounds, id: \.self) { Text($0).tag($0) }
                     }
                     .disabled(!soundEnabled)
-                    Button("Test") { ToastCenter.playSelectedSound() }
+                    Button("Test") { RunwayNotificationManager.playSelectedSound() }
                         .disabled(!soundEnabled)
                 }
             }

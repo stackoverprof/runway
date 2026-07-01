@@ -17,6 +17,7 @@ struct AgentFeedRow: View {
                         .fill(Color.white.opacity(0.08))
                         .frame(width: 1.5)
                         .frame(maxHeight: .infinity)
+                        .padding(.top, 18)
                 }
                 Avatar(login: post.author, size: 28)
                     .padding(.top, 4)
@@ -33,6 +34,7 @@ struct AgentFeedRow: View {
                         .foregroundStyle(Color.white.opacity(0.55))
                     Spacer(minLength: 6)
                     deleteButton
+                    pinButton
                     Text(time)
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.3))
@@ -54,6 +56,26 @@ struct AgentFeedRow: View {
             }
             .padding(.bottom, 10)
         }
+    }
+
+    private var pinButton: some View {
+        Button {
+            if post.pinned == true {
+                agentFeed.unpinPost(id: post.id)
+            } else {
+                agentFeed.pinPost(id: post.id)
+            }
+        } label: {
+            Image(systemName: post.pinned == true ? "pin.fill" : "pin")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(post.pinned == true ? Self.accent : Color.white.opacity(0.5))
+                .frame(width: 18, height: 18)
+                .opacity(hovering ? 1 : (post.pinned == true ? 0.7 : 0))
+        }
+        .buttonStyle(.plain)
+        .help(post.pinned == true ? "Unpin post" : "Pin post")
+        .allowsHitTesting(hovering || post.pinned == true)
+        .accessibilityHidden(!hovering && post.pinned != true)
     }
 
     private var deleteButton: some View {
@@ -104,6 +126,7 @@ struct FeedRow: View {
                         .fill(Color.white.opacity(0.08))
                         .frame(width: 1.5)
                         .frame(maxHeight: .infinity)
+                        .padding(.top, 18)
                 }
                 Avatar(login: event.actor, url: event.avatarURL, size: 28)
                     .padding(.top, 4)

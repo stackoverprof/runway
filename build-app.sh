@@ -26,7 +26,9 @@ if [ -d "$BIN_DIR/CGhosttyKitBinary.framework" ]; then
   # Re-sign ad-hoc so the modified binary + bundled framework load cleanly.
   chmod -R u+w "$APP"
   xattr -cr "$APP" 2>/dev/null || true
-  codesign --force --deep --sign - "$APP"
+  # Sign the nested framework first, then the app bundle to establish a valid nested signature
+  codesign --force --sign - "$APP/Contents/Frameworks/CGhosttyKitBinary.framework"
+  codesign --force --sign - "$APP"
 fi
 
 echo "▸ Built $APP"

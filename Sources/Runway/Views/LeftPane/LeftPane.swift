@@ -8,6 +8,35 @@ struct LeftPane: View {
     @Bindable var agentFeed: AgentFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
+    @State private var showNoteComposer = false
+
+    private static let taglines = [
+        "WHAT HAS BEEN HAPPENING",
+        "LATELY ON THE WIRE",
+        "WHAT HAS BEEN COOKING",
+        "RECENTLY ON THE RADAR",
+        "THINGS CURRENTLY IN MOTION",
+        "WHAT IS MOVING NOW",
+        "LIVE FROM THE REPO",
+        "FRESH OFF THE WIRE",
+        "THE LATEST RUNDOWN HERE",
+        "WHAT IS IN THE AIR",
+        "SIGNAL ON THE WIRE",
+        "WHAT IS ON THE RADAR",
+        "UP TO THE MINUTE STATUS",
+        "ACTIVE RADAR ON THE GO",
+        "FEEDS RUNNING IN MOTION",
+        "DEVELOPMENTS ON THE GROUND",
+        "LATEST FROM THE ENGINE",
+        "CATCH UP ON RECENT GOINGS",
+        "WHILE YOU WERE AWAY INBOX",
+        "STREAMING LIVE ON THE RADAR",
+    ]
+    @State private var taglineIndex = Int.random(in: 0..<20)
+    @State private var displayedTagline = ""
+    @State private var taglineOpacity: Double = 1.0
+    @State private var isTyping = false
+    @State private var lastEventCount = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,17 +50,16 @@ struct LeftPane: View {
                 skeletonPresence
                 feedDivider
                 skeletonStream
-            } else if feed.events.isEmpty, agentFeed.posts.isEmpty {
-                feedNotice("No recent activity in this repo yet.", systemImage: "tray")
             } else {
                 if !feed.presence.isEmpty {
                     presenceStrip
                     feedDivider
-                } else {
+                } else if feed.didLoad {
                     emptyOfficeNotice
                     feedDivider
                 }
-                stream
+                subHeader
+                slidingTabContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -195,24 +223,167 @@ struct LeftPane: View {
     // MARK: Activity stream
     @State private var pulled = false
 
-    private var stream: some View {
-        let items = agentFeed.timeline(github: feed.events)
-        return streamScaffold(disabled: false) {
-            ForEach(items) { entry in
-                switch entry {
-                case let .github(event):
-                    FeedRow(event: event, time: clock(event.date),
-                        isLast: entry.id == items.last?.id, repo: feed.repo)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                case let .agent(post):
-                    AgentFeedRow(post: post, time: clock(post.date),
-                                 isLast: entry.id == items.last?.id,
-                                 agentFeed: agentFeed)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
+    private var tabIndex: Int {
+        switch ws.selectedTab {
+        case .feeds: return 0
+        case .merge: return 1
+        case .posts: return 2
+        }
+    }
+
+    private var subHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(displayedTagline)
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.3))
+                .tracking(0.8)
+                .lineLimit(1)
+                .opacity(taglineOpacity)
+            Spacer(minLength: 8)
+            feedTabs
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
+        .onAppear {
+            if displayedTagline.isEmpty {
+                displayedTagline = Self.taglines[taglineIndex]
+                lastEventCount = feed.events.count
             }
-            // Infinite scroll: a zero-height sentinel that loads the next page
-            // when it scrolls into view (LazyVStack only renders it near the end).
+        }
+        .onChange(of: feed.events.count) { old, new in
+            guard new > old, !isTyping else { return }
+            rotateTagline()
+        }
+    }
+
+    private var slidingTabContent: some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                // Feeds tab
+                feedScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        let items = agentFeed.timeline(github: feed.events)
+                        if items.isEmpty {
+                            emptyTabPlaceholder(for: .feeds)
+                        } else {
+                            ForEach(items) { entry in
+                                renderEntry(entry, isLast: entry.id == items.last?.id)
+                            }
+                        }
+                        loadMoreFooter
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .frame(width: geo.size.width)
+
+                // Merge tab
+                feedScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        let items = agentFeed.mergeTimeline(github: feed.events)
+                        if items.isEmpty {
+                            emptyTabPlaceholder(for: .merge)
+                        } else {
+                            ForEach(items) { entry in
+                                renderEntry(entry, isLast: entry.id == items.last?.id)
+                            }
+                        }
+                        loadMoreFooter
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .frame(width: geo.size.width)
+
+                // Posts tab
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        postNoteButton
+                        if showNoteComposer {
+                            NoteComposer(isPresented: $showNoteComposer) { body in
+                                agentFeed.createNote(body: body)
+                            }
+                            .padding(.bottom, 14)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
+                        let pinnedItems = agentFeed.pinnedPostsTimeline()
+                        if !pinnedItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(pinnedItems) { entry in
+                                    renderEntry(entry, isLast: entry.id == pinnedItems.last?.id)
+                                }
+
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.06))
+                                    .frame(height: 1)
+                                    .padding(.top, 2)
+                                    .padding(.bottom, 8)
+                            }
+                            .padding(.top, 10)
+                        }
+
+                        let items = agentFeed.postsTimeline()
+                        if items.isEmpty && pinnedItems.isEmpty {
+                            emptyTabPlaceholder(for: .posts)
+                        } else {
+                            ForEach(items) { entry in
+                                renderEntry(entry, isLast: entry.id == items.last?.id)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .scrollIndicators(.hidden)
+                .frame(width: geo.size.width)
+            }
+            .offset(x: -CGFloat(tabIndex) * geo.size.width)
+            .animation(.spring(response: 0.38, dampingFraction: 0.85), value: ws.selectedTab)
+        }
+    }
+
+    @ViewBuilder private func feedScrollView<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            // Overscroll-to-refresh: when pulled down past the top, refresh once.
+            GeometryReader { geo in
+                Color.clear
+                    .frame(height: 0)
+                    .onChange(of: geo.frame(in: .named("feed")).minY) { _, y in
+                        if y < 4 { pulled = false }
+                        if y > 64, !pulled { pulled = true; Task { await feed.refresh() } }
+                    }
+            }
+            .frame(height: 0)
+
+            content()
+        }
+        .scrollIndicators(.hidden)
+        .coordinateSpace(name: "feed")
+    }
+
+    @ViewBuilder private func renderEntry(_ entry: TimelineEntry, isLast: Bool) -> some View {
+        switch entry {
+        case let .github(event):
+            FeedRow(event: event, time: clock(event.date),
+                    isLast: isLast, repo: feed.repo)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        case let .agent(post):
+            AgentFeedRow(post: post, time: clock(post.date),
+                         isLast: isLast,
+                         agentFeed: agentFeed)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        case let .userNote(note):
+            UserNoteRow(note: note, time: clock(note.date),
+                        isLast: isLast,
+                        agentFeed: agentFeed)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private var loadMoreFooter: some View {
+        Group {
             if feed.canLoadMore, !feed.events.isEmpty {
                 Color.clear
                     .frame(height: 1)
@@ -236,48 +407,89 @@ struct LeftPane: View {
         }
     }
 
-    /// Shared scaffold for the real feed and the skeleton, so their caption and
-    /// paddings are *identical* (including the overscroll sentinel, whose presence
-    /// affects the top spacing — leaving it out made the skeleton caption ride up).
-    private func streamScaffold<Rows: View>(disabled: Bool, @ViewBuilder rows: () -> Rows) -> some View {
-        ScrollView {
-            // Overscroll-to-refresh: when pulled down past the top, refresh once.
-            GeometryReader { geo in
-                Color.clear
-                    .frame(height: 0)
-                    .onChange(of: geo.frame(in: .named("feed")).minY) { _, y in
-                        if y < 4 { pulled = false }
-                        if y > 64, !pulled { pulled = true; Task { await feed.refresh() } }
-                    }
+    // MARK: Post a Note button
+    private var postNoteButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { showNoteComposer.toggle() }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Post a Note")
+                    .font(.system(size: 12, weight: .medium))
             }
-            .frame(height: 0)
-
-            LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("WHAT YOUR TEAM'S BEEN HUSTLING, AS IT HAPPENS.")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.3))
-                        .tracking(0.8)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    TimelineView(.periodic(from: .now, by: 60)) { ctx in
-                        Text(dateClock(ctx.date))
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.2))
-                            .tracking(0.8)
-                            .fixedSize()
-                    }
-                }
-                .padding(.bottom, 18)
-                rows()
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            .padding(.bottom, 16)
+            .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.15), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .scrollDisabled(disabled)
-        .scrollIndicators(.hidden)
-        .coordinateSpace(name: "feed")
+        .buttonStyle(.plain)
+        .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+        .padding(.bottom, 6)
+    }
+
+    // MARK: Empty tab placeholder
+    @ViewBuilder private func emptyTabPlaceholder(for tab: FeedTab) -> some View {
+        switch tab {
+        case .feeds:
+            placeholderCard(icon: "tray", title: "No activity yet",
+                            subtitle: "Events from your team will appear here as they happen.")
+        case .merge:
+            placeholderCard(icon: "arrow.triangle.merge", title: "No merges yet",
+                            subtitle: "Merged pull requests will show up here.")
+        case .posts:
+            placeholderCard(icon: "sparkles", title: "Posts will appear here",
+                            subtitle: "Your agents can be automated to post updates here for any of your needs — build reports, deployment status, daily recaps, and more.\n\nYou can also post your own notes above.")
+        }
+    }
+
+    private func placeholderCard(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(Color.white.opacity(0.15))
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.4))
+            Text(subtitle)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color.white.opacity(0.25))
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 36)
+    }
+
+    private var feedTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(FeedTab.allCases, id: \.rawValue) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { ws.selectedTab = tab }
+                } label: {
+                    Text(tab.rawValue)
+                        .font(.system(size: 10, weight: ws.selectedTab == tab ? .semibold : .medium, design: .monospaced))
+                        .foregroundStyle(ws.selectedTab == tab ? Color.white.opacity(0.9) : Color.white.opacity(0.35))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(ws.selectedTab == tab ? Color.white.opacity(0.1) : Color.clear)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 
     // MARK: Skeletons (initial load — same shape as the real content)
@@ -302,11 +514,30 @@ struct LeftPane: View {
     }
 
     private var skeletonStream: some View {
-        streamScaffold(disabled: true) {
-            ForEach(0..<7, id: \.self) { i in
-                SkeletonRow(isLast: i == 6, seed: i)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(displayedTagline)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                        .tracking(0.8)
+                        .lineLimit(1)
+                        .opacity(taglineOpacity)
+                    Spacer(minLength: 8)
+                    feedTabs
+                }
+                .padding(.bottom, 18)
+                
+                ForEach(0..<7, id: \.self) { i in
+                    SkeletonRow(isLast: i == 6, seed: i)
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
         }
+        .scrollDisabled(true)
+        .scrollIndicators(.hidden)
     }
 
     /// Smart clock: today → "10.12", yesterday → "Yesterday 10.12",
@@ -337,11 +568,7 @@ struct LeftPane: View {
         let f = DateFormatter(); f.dateFormat = "d MMM"; return f
     }()
 
-    /// Full date + clock for the caption, e.g. "FRI 26 JUN 21.02".
-    private func dateClock(_ date: Date) -> String { Self.dateClockFormatter.string(from: date).uppercased() }
-    private static let dateClockFormatter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEE d MMM HH.mm"; return f
-    }()
+
 
     /// Relative duration, used for "idle 3h" in the presence strip.
     private func ago(_ date: Date) -> String {
@@ -349,5 +576,33 @@ struct LeftPane: View {
         if s < 3600 { return "\(max(s / 60, 1))m" }
         if s < 86400 { return "\(s / 3600)h" }
         return "\(s / 86400)d"
+    }
+
+    // MARK: Tagline rotation
+
+    private func rotateTagline() {
+        isTyping = true
+        // Fade out
+        withAnimation(.easeOut(duration: 0.25)) { taglineOpacity = 0 }
+        // After fade out, pick next tagline and type it in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            taglineIndex = (taglineIndex + 1) % Self.taglines.count
+            let target = Self.taglines[taglineIndex]
+            displayedTagline = ""
+            taglineOpacity = 1.0
+            typeIn(target, at: 0)
+        }
+    }
+
+    private func typeIn(_ target: String, at index: Int) {
+        guard index < target.count else {
+            isTyping = false
+            return
+        }
+        let charIndex = target.index(target.startIndex, offsetBy: index)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) {
+            displayedTagline.append(target[charIndex])
+            typeIn(target, at: index + 1)
+        }
     }
 }

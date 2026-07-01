@@ -3,9 +3,9 @@ import SwiftUI
 import AppKit
 import UserNotifications
 
-/// Native macOS notification center (replaces in-app toasts).
-@MainActor @Observable final class ToastCenter {
-    static let shared = ToastCenter()
+/// Native macOS notification center.
+@MainActor @Observable final class RunwayNotificationManager {
+    static let shared = RunwayNotificationManager()
 
     private init() {
         requestNotificationPermission()
@@ -15,9 +15,12 @@ import UserNotifications
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    /// Show a native macOS notification. Optionally play the system alert sound.
-    func show(_ title: String, icon: String = "bell.fill", tint: Color = .white, sound: Bool = false) {
+    /// Show a native macOS notification ONLY if the app is not currently active (unfocused).
+    func show(_ title: String, sound: Bool = false) {
         if sound, UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) { Self.playSelectedSound() }
+        
+        // Only trigger the OS notification banner when the app is unfocused (background).
+        guard !NSApp.isActive else { return }
         
         let content = UNMutableNotificationContent()
         content.title = title
@@ -26,7 +29,11 @@ import UserNotifications
             content.sound = nil
         }
         
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        )
         UNUserNotificationCenter.current().add(request) { _ in }
     }
 

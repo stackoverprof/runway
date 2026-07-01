@@ -17,6 +17,9 @@ struct ResizableBox: View {
     @State private var isEditingName = false
     @State private var isEditingDetail = false
     @State private var isHoveringHeader = false
+    @State private var isPulsing = false
+    @State private var shimmerOffset: CGFloat = -0.8
+    @State private var pulseTask: Task<Void, Never>? = nil
 
     private let maxDetail = 40
 
@@ -27,7 +30,26 @@ struct ResizableBox: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .background(RunwayTerminal.headerBar)   // slightly lighter header bar
+                .background(
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RunwayTerminal.headerBar
+                            if isPulsing {
+                                LinearGradient(
+                                    gradient: Gradient(colors: [
+                                        Color.clear,
+                                        Color(red: 0.91, green: 0.62, blue: 0.20).opacity(0.10),
+                                        Color.clear
+                                    ]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: geo.size.width * 0.8)
+                                .offset(x: geo.size.width * shimmerOffset)
+                            }
+                        }
+                    }
+                )
             TerminalSurfaceView(boxID: id, workspace: workspace, config: config)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 10)   // + 2 window-padding ≈ 12, aligns with the header
@@ -46,6 +68,32 @@ struct ResizableBox: View {
                 radius: isFocused ? 11 : 0)
         .overlay(alignment: .bottom) {
             if fixedHeight == nil { bottomEdgeHandle }   // no resize in accordion mode
+        }
+        .onChange(of: state) { old, new in
+            if new == .needsAction {
+                pulseTask?.cancel()
+                shimmerOffset = -0.8
+                pulseTask = Task {
+                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                        shimmerOffset = 1.0
+                    }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isPulsing = false
+                        shimmerOffset = -0.8
+                    }
+                }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isPulsing = true
+                }
+            } else {
+                pulseTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isPulsing = false
+                    shimmerOffset = -0.8
+                }
+            }
         }
     }
 

@@ -1,11 +1,14 @@
 import SwiftUI
 import AppKit
 import GhosttyKit
+import UniformTypeIdentifiers
 
 /// A persistent "quick" terminal overlaid on the bottom-left of the left pane.
 /// Toggled with ⌘⌥Q or by hovering/peeking the bottom-left corner of the window.
 /// It stays mounted while hidden (shid-off/shrunk) so its shell keeps running.
 struct QuickTerminal: View {
+    static let quickBoxID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
     @Bindable var ws: Workspace
     let width: CGFloat            // left-pane width
     let availableHeight: CGFloat  // full pane height
@@ -15,18 +18,38 @@ struct QuickTerminal: View {
     @State private var isHovered = false
     @State private var hideTask: Task<Void, Never>? = nil
     @State private var allowExpandOnHover = true
+    @State private var isPulsing = false
+    @State private var shimmerOffset: CGFloat = -0.8
+    @State private var pulseTask: Task<Void, Never>? = nil
+    @State private var isHoveringHeader = false
 
     /// The quick terminal also runs the configured command on launch (it uses the
     /// Runway ZDOTDIR so the .zshrc autorun block fires).
     static func startupConfig() -> TerminalConfig {
         let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let binPath = home.appendingPathComponent(".runway/bin").path
+        let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        
+        let cwdPath: String?
+        if let cwdData = try? Data(contentsOf: AgentControl.cwdFile(for: QuickTerminal.quickBoxID)),
+           let dir = String(data: cwdData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !dir.isEmpty {
+            cwdPath = dir
+        } else {
+            cwdPath = nil
+        }
+        
         var env = [
             "ZDOTDIR": AgentControl.zdotdir.path,
             "RUNWAY_FEED": AgentControl.feedInbox.path,
+            "RUNWAY_CONTROL": AgentControl.file(for: QuickTerminal.quickBoxID).path,
+            "RUNWAY_CWD_FILE": AgentControl.cwdFile(for: QuickTerminal.quickBoxID).path,
+            "PATH": "\(binPath):\(systemPath)",
         ]
         if !cmd.isEmpty { env["RUNWAY_AUTORUN"] = cmd }
-        return TerminalConfig(environment: env)
+        return TerminalConfig(workingDirectory: cwdPath, environment: env)
     }
 
     private let margin: CGFloat = 8
@@ -63,6 +86,29 @@ struct QuickTerminal: View {
                     .onAppear {
                         applyRunwayTheme(to: session)
                         ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                        Task { @MainActor in
+                            for _ in 0..<100 {
+                                if let view = session.view {
+                                    for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
+                                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                                        if view.window != nil {
+                                            forceTerminalLayoutUpdate(for: session)
+                                        }
+                                    }
+                                    break
+                                }
+                                try? await Task.sleep(nanoseconds: 50_000_000)
+                            }
+                        }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in
+                        forceTerminalLayoutUpdate(for: session)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
+                        forceTerminalLayoutUpdate(for: session)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
+                        forceTerminalLayoutUpdate(for: session)
                     }
             }
             .opacity(ws.quickVisible ? 1 : 0)
@@ -106,11 +152,9 @@ struct QuickTerminal: View {
             if ws.quickVisible { resizeHandle }
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
-        .dropDestination(for: URL.self) { urls, _ in
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             guard ws.quickVisible else { return false }
-            let text = urls.map { runwayShellEscape($0.path) }.joined(separator: " ")
-            guard !text.isEmpty else { return false }
-            session.insertText(text + " ")
+            handleDropProviders(providers, session: session)
             return true
         }
         .padding(margin)
@@ -143,6 +187,42 @@ struct QuickTerminal: View {
                 triggerAutoHide()
             }
         }
+        .onChange(of: ws.quickState) { old, new in
+            if new == .needsAction {
+                pulseTask?.cancel()
+                shimmerOffset = -0.8
+                pulseTask = Task {
+                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                        shimmerOffset = 1.0
+                    }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isPulsing = false
+                        shimmerOffset = -0.8
+                    }
+                    
+                    // Auto-hide after 3 seconds if not pinned, hovered, or focused
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    guard !isHovered else { return }
+                    guard !isFocused else { return }
+                    guard !ws.quickPinned else { return }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        ws.quickVisible = false
+                    }
+                }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isPulsing = true
+                }
+            } else {
+                pulseTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isPulsing = false
+                    shimmerOffset = -0.8
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -155,20 +235,44 @@ struct QuickTerminal: View {
                 .foregroundStyle(Color.white.opacity(0.8))
             Spacer()
             
-            // Pin button
-            Button {
-                ws.quickPinned.toggle()
-            } label: {
-                Image(systemName: ws.quickPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(ws.quickPinned ? Color(red: 0.45, green: 0.82, blue: 0.78) : Color.white.opacity(0.4))
+            // Pin button (only show on hover or when pinned)
+            if isHoveringHeader || ws.quickPinned {
+                Button {
+                    ws.quickPinned.toggle()
+                } label: {
+                    Image(systemName: ws.quickPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(ws.quickPinned ? Color(red: 0.45, green: 0.82, blue: 0.78) : Color.white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
             }
-            .buttonStyle(.plain)
-            .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(RunwayTerminal.headerBar)
+        .onHover { hovering in
+            isHoveringHeader = hovering
+        }
+        .background(
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RunwayTerminal.headerBar
+                    if isPulsing {
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.clear,
+                                Color(red: 0.91, green: 0.62, blue: 0.20).opacity(0.10),
+                                Color.clear
+                            ]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width * 0.8)
+                        .offset(x: geo.size.width * shimmerOffset)
+                    }
+                }
+            }
+        )
     }
 
     /// Drag the top edge to resize (the panel is bottom-anchored, so dragging up
