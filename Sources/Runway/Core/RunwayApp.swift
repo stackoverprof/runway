@@ -109,6 +109,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ws.focus(index: d - 1); return true
         }
 
+        // Option-Command-1/2/3 jumps to Feeds/Merge/Posts tab.
+        if mods == [.command, .option], let key = ev.charactersIgnoringModifiers,
+           let d = Int(key), (1...3).contains(d) {
+            let tabs: [FeedTab] = [.feeds, .merge, .posts]
+            ws.selectedTab = tabs[d - 1]
+            return true
+        }
+
+        // Shift-Command-[ and Shift-Command-] to cycle tabs.
+        if mods == [.command, .shift], let key = ev.charactersIgnoringModifiers {
+            let tabs: [FeedTab] = [.feeds, .merge, .posts]
+            if let idx = tabs.firstIndex(of: ws.selectedTab) {
+                if key == "[" {
+                    let prevIdx = (idx - 1 + tabs.count) % tabs.count
+                    ws.selectedTab = tabs[prevIdx]
+                    return true
+                } else if key == "]" {
+                    let nextIdx = (idx + 1) % tabs.count
+                    ws.selectedTab = tabs[nextIdx]
+                    return true
+                }
+            }
+        }
+
         // While the quick terminal is open: ⌘⌥← / ⌘⌥→ jump between it (left) and
         // the focused agent (right).
         if ws.quickVisible, mods == [.command, .option] {

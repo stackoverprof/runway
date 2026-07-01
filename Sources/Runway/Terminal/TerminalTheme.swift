@@ -36,6 +36,7 @@ enum RunwayTerminal {
     # Runway embedded-terminal theme: neutral near-black, opaque, flat.
     # Default ~2 zoom levels smaller than 11 so sessions fit comfortably.
     font-size = 9
+    font-family = SF Mono
     # Tame trackpad scroll in TUIs (claude, etc.); Ghostty's default (3) jumps.
     mouse-scroll-multiplier = 1
     background = 0e1012
