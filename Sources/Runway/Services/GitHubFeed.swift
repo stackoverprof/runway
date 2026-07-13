@@ -98,17 +98,6 @@ struct Presence: Identifiable {
         Task { await shared.refresh() }
     }
 
-    /// Inject synthetic feed events for local testing. This does not touch the
-    /// on-disk cache, so a real poll will replace the mock data.
-    func injectSyntheticEvents() {
-        guard !repo.isEmpty else { return }
-        let count = Int.random(in: 1...3)
-        let incoming = (0..<count).map { index in makeSyntheticEvent(offset: index) }
-        merge(incoming, staggerNew: true, persistCache: false, animateFromEmpty: true)
-        lastError = nil
-        didLoad = true
-    }
-
     private func saveCache(_ list: [FeedEvent]) {
         guard !repo.isEmpty else { return }
         var byRepo = (try? Data(contentsOf: Self.cacheFile))
@@ -355,96 +344,6 @@ struct Presence: Identifiable {
         }
     }
 
-    private func makeSyntheticEvent(offset: Int) -> FeedEvent {
-        let samples: [(actor: String, avatarURL: String?, kind: FeedKind)] = [
-            ("alex", nil, .push(
-                branch: "feature/live-feed-\(Int.random(in: 12...98))",
-                count: Int.random(in: 1...4),
-                commits: [
-                    .init(sha: randomSHA(), message: randomCommitMessage()),
-                    .init(sha: randomSHA(), message: randomCommitMessage())
-                ]
-            )),
-            ("maria", nil, .prOpened(
-                number: Int.random(in: 180...999),
-                title: randomPRTitle(),
-                branch: "feature/\(randomSlug())"
-            )),
-            ("sam", nil, .issueOpened(
-                number: Int.random(in: 120...899),
-                title: randomIssueTitle()
-            )),
-            ("devon", nil, .branchCreated("wip/\(randomSlug())")),
-            ("jordan", nil, .review(
-                number: Int.random(in: 180...999),
-                title: randomPRTitle(),
-                state: ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"].randomElement() ?? "COMMENTED"
-            )),
-            ("taylor", nil, .prMerged(
-                number: Int.random(in: 180...999),
-                title: randomPRTitle(),
-                base: ["main", "develop", "release"].randomElement() ?? "main",
-                branch: "feature/\(randomSlug())",
-                additions: Int.random(in: 5...240),
-                deletions: Int.random(in: 0...180),
-                commits: Int.random(in: 1...12),
-                duration: TimeInterval(Int.random(in: 600...86400 * 3))
-            )),
-            ("casey", nil, .issueClosed(
-                number: Int.random(in: 120...899),
-                title: randomIssueTitle()
-            )),
-            ("rowan", nil, .branchDeleted("old/\(randomSlug())"))
-        ]
-        let sample = samples.randomElement()!
-        return FeedEvent(
-            id: "synthetic-\(Date().timeIntervalSince1970)-\(offset)-\(UUID().uuidString)",
-            actor: sample.actor,
-            avatarURL: sample.avatarURL,
-            date: Date().addingTimeInterval(-Double(offset) * 45),
-            kind: sample.kind
-        )
-    }
-
-    private func randomSlug() -> String {
-        ["alpha", "beta", "gamma", "delta", "ember", "flux", "orbit", "pulse", "quartz", "signal"].randomElement()! + "-\(Int.random(in: 10...99))"
-    }
-
-    private func randomSHA() -> String {
-        let digits = Array("0123456789abcdef")
-        return String((0..<7).map { _ in digits.randomElement()! })
-    }
-
-    private func randomCommitMessage() -> String {
-        [
-            "Tighten feed animation timing",
-            "Polish row entrance transitions",
-            "Refine feed preview spacing",
-            "Adjust timeline card layout",
-            "Make the feed feel more alive",
-            "Fix the insert cascade"
-        ].randomElement()!
-    }
-
-    private func randomPRTitle() -> String {
-        [
-            "Improve feed motion",
-            "Ship the timeline polish",
-            "Smooth the incoming card cascade",
-            "Reduce visual jump on refresh",
-            "Tune feed reveal timing"
-        ].randomElement()!
-    }
-
-    private func randomIssueTitle() -> String {
-        [
-            "Feed rows should animate when new data lands",
-            "Timeline reveal needs a clearer cue",
-            "Add a quick way to simulate incoming events",
-            "Test the activity pane with synthetic data"
-        ].randomElement()!
-    }
-
     // MARK: parsing
 
     private func date(_ any: Any?) -> Date? {
@@ -526,6 +425,7 @@ struct Presence: Identifiable {
         let now = Date()
         let window = TimeInterval(max(1, UserDefaults.standard.integer(forKey: SettingsKey.officeHours))) * 3600
         let visible = AgentFeed.filterNoise(events)
+        let threshold = max(2, UserDefaults.standard.integer(forKey: SettingsKey.fireThreshold))
         let byActor = Dictionary(grouping: visible, by: \.actor)
         return byActor.map { login, evs in
             let last = evs.map(\.date).max() ?? .distantPast
@@ -534,9 +434,9 @@ struct Presence: Identifiable {
                             recentCount: recent, idle: now.timeIntervalSince(last) > idleThreshold)
         }
         .filter { now.timeIntervalSince($0.lastActive) < window }   // within the configured window
-        // "On fire" (>= 5 events / 30m) first, then most-recently-active.
+        // "On fire" (>= threshold events / 30m) first, then most-recently-active.
         .sorted { a, b in
-            let aFire = a.recentCount >= 5, bFire = b.recentCount >= 5
+            let aFire = a.recentCount >= threshold, bFire = b.recentCount >= threshold
             if aFire != bFire { return aFire }
             return a.lastActive > b.lastActive
         }

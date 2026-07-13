@@ -10,19 +10,41 @@ enum SettingsKey {
     static let soundEnabled  = "runway.soundEnabled"
     static let alertSound    = "runway.alertSound"
     static let confirmQuit   = "runway.confirmQuit"
+    static let fireThreshold = "runway.fireThreshold"
     static let initialCommand = "runway.initialCommand"   // run on each new agent
     static let agentCommandEnabled = "runway.agentCommandEnabled"
     static let agentCommand  = "runway.agentCommand"
     static let personProfiles = "runway.personProfiles"
 
+    static var configuredAgentCommand: String {
+        guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
+        return (UserDefaults.standard.string(forKey: agentCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func registerDefaults() {
-        UserDefaults.standard.register(defaults: [
+        let defaults = UserDefaults.standard
+        let legacyCommand = (defaults.string(forKey: initialCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasNewAgentPreference = defaults.object(forKey: agentCommandEnabled) != nil
+            || defaults.object(forKey: agentCommand) != nil
+
+        defaults.register(defaults: [
             pollInterval: 45, idleMinutes: 30, officeHours: 6,
             hideBots: true, soundEnabled: true,
-            alertSound: "Glass", confirmQuit: true, initialCommand: "",
-            agentCommandEnabled: true, agentCommand: "claude",
+            alertSound: "Glass", confirmQuit: true, fireThreshold: 5, initialCommand: "",
+            // Preserve the app's historical effective behavior: a plain shell
+            // until the user explicitly enables an agent command.
+            agentCommandEnabled: false, agentCommand: "claude",
             personProfiles: [],
         ])
+
+        // Older builds used `initialCommand` at runtime while exposing different
+        // keys in Settings. Carry an existing command forward exactly once.
+        if !hasNewAgentPreference, !legacyCommand.isEmpty {
+            defaults.set(true, forKey: agentCommandEnabled)
+            defaults.set(legacyCommand, forKey: agentCommand)
+        }
     }
 }
 

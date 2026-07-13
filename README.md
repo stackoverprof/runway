@@ -57,7 +57,7 @@ Claude Code, Codex, or any shell, one agent per card.
 ### Global settings & profiles pane (⌘,)
 
 A dedicated preferences window offering two main areas of configuration:
-- **General Settings**: Customize alert sounds (e.g. Glass, Ping, Submarine), toggle sound effects, enable/disable native macOS notifications, and manage autostart command preferences (select from pre-set CLI configurations like Claude, Gemini, Cursor, Copilot, etc.).
+- **General Settings**: Customize alert sounds (e.g. Glass, Ping, Submarine), toggle sound effects, enable/disable native macOS notifications, and optionally run any command-line agent automatically.
 - **People Profiles**: Manage profiles of teammates who appear in the office presence list. Assign custom display names and upload custom profile photos to personalize your timeline feed.
 
 ### Native macOS notifications
@@ -84,11 +84,13 @@ echo '{"state":"running"}' > "$RUNWAY_CONTROL"
   agents apart at a glance instead of staring at four identical `agentN` boxes.
 - `state` — the header dot: `idle`, `running`, or `needs-action`.
 
-For **Claude Code**, `state` is reported automatically with zero setup: Runway
-points each card's shell at a private `ZDOTDIR` that sources your real zsh config
-and wraps `claude` to inject state-reporting hooks. Your `~/.claude` and
-`~/.zshrc` are never modified. (You can have the agent set its own `name` /
-`description` the same way — just ask it to write to `$RUNWAY_CONTROL`.)
+Run `runway-help` inside any card to show a portable integration guide for
+Claude Code, Codex, Gemini, Cursor, Copilot, custom agents, and ordinary shell
+scripts. `runway-agent <command>` adds automatic running/idle state to any CLI
+agent. Claude Code receives richer attention-state hooks automatically through a
+Runway-scoped PATH wrapper. Runway keeps these helpers in its own Application
+Support directory and does not install files into agent-specific configuration
+folders. Your shell and agent configuration files are never modified.
 
 ## Keyboard
 
@@ -107,9 +109,9 @@ and wraps `claude` to inject state-reporting hooks. Your `~/.claude` and
 ## Install
 
 Grab the latest [**release**](https://github.com/stackoverprof/runway/releases/latest)
-(`Runway-v…-arm64.zip`), then:
+(`Runway-1.0.0-arm64.dmg`), then:
 
-1. Unzip and move `Runway.app` to `/Applications`.
+1. Open the DMG and drag `Runway.app` onto the Applications shortcut.
 2. The app is ad-hoc signed, so macOS flags it as "damaged"/unverified on first
    launch. Clear the download quarantine once, then open it normally:
    ```sh
@@ -126,8 +128,9 @@ This machine targets the Command Line Tools toolchain, so Runway builds as a
 Swift Package — no Xcode project required.
 
 ```sh
-./run.sh                 # quick: swift run, launches the window
+./run.sh                 # rebuild and relaunch /Applications/Runway.app
 ./build-app.sh           # assemble a self-contained dist/Runway.app
+./package-dmg.sh         # create a drag-to-install release DMG
 open dist/Runway.app
 ./watch.sh               # rebuild + relaunch on every save (~3s; state resets)
 ```
@@ -148,7 +151,7 @@ Sources/Runway/
   LeftPane.swift         Activity feed UI: header, presence, timeline, skeletons
   GitHubFeed.swift       Data layer — polls the `gh` CLI, parses events & presence
   Workspace.swift        App state: cards, focus, accordion/solo, persistence
-  AgentControl.swift     Agent status channel + zero-setup Claude Code hooks
+  AgentControl.swift     Portable agent guide, status channel, and CLI helpers
   QuickTerminal.swift    The ⌘⌥Q background terminal overlay
   TerminalSurface.swift  Swappable terminal protocol + the GhosttyKit backing
   TerminalTheme.swift    Terminal theme/colors applied to every surface

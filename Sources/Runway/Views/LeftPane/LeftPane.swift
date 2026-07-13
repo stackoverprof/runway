@@ -9,6 +9,7 @@ struct LeftPane: View {
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
     @State private var showNoteComposer = false
+    @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
 
     private static let taglines = [
         "WHAT HAS BEEN HAPPENING",
@@ -153,7 +154,7 @@ struct LeftPane: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.3))
                     } else {
-                        Text(p.recentCount >= 5 ? "🔥 on fire" : "active")
+                        Text(p.recentCount >= fireThreshold ? "🔥 on fire" : "active")
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(intensityColor(p.recentCount))
                     }

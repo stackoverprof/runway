@@ -189,33 +189,6 @@ enum TimelineEntry: Identifiable {
         }
     }
 
-    /// Inject a sample post for local testing.
-    func injectSample() {
-        let post = AgentPost(
-            id: UUID().uuidString,
-            author: "recap",
-            title: "15-min recap",
-            body: """
-            ## Shipped
-            - **Auth refactor** — migrated session handling to JWT
-            - Fixed the *race condition* in `TokenStore.refresh()`
-            - Closed PR `#1842` after review
-
-            ### Blockers
-            - CI flaky on `integration-tests` — investigating
-
-            ```swift
-            let feed = AgentFeed.shared
-            feed.startWatching()
-            ```
-
-            **Status:** on track · *ETA Friday*
-            """,
-            date: Date()
-        )
-        append([post], animate: true)
-    }
-
     /// Remove one local agent post and persist the updated list.
     func deletePost(id: String) {
         guard posts.contains(where: { $0.id == id }) else { return }

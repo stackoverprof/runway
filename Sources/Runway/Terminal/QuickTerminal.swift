@@ -23,13 +23,10 @@ struct QuickTerminal: View {
     @State private var pulseTask: Task<Void, Never>? = nil
     @State private var isHoveringHeader = false
 
-    /// The quick terminal also runs the configured command on launch (it uses the
-    /// Runway ZDOTDIR so the .zshrc autorun block fires).
+    /// The quick terminal also runs the configured command on launch.
     static func startupConfig() -> TerminalConfig {
-        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let binPath = home.appendingPathComponent(".runway/bin").path
+        let cmd = SettingsKey.configuredAgentCommand
+        let binPath = AgentControl.binDir.path
         let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         
         let cwdPath: String?
@@ -55,10 +52,17 @@ struct QuickTerminal: View {
     private let margin: CGFloat = 8
     private let minHeight: CGFloat = 140
 
+    /// Keep a maximized quick terminal below the window controls. The overlay is
+    /// bottom-anchored and its outer padding already accounts for both margins.
+    private var maxHeight: CGFloat {
+        let windowControlsClearance: CGFloat = ws.isFullScreen ? 0 : 44
+        return max(minHeight, availableHeight - margin * 2 - windowControlsClearance)
+    }
+
     private var height: CGFloat {
         let fallback = availableHeight * 0.5
         let h = ws.quickHeight == 0 ? fallback : ws.quickHeight
-        return min(max(h, minHeight), availableHeight - margin * 2)
+        return min(max(h, minHeight), maxHeight)
     }
 
     private var actualWidth: CGFloat {
@@ -290,8 +294,7 @@ struct QuickTerminal: View {
                     .onChanged { value in
                         if dragStartHeight == nil { dragStartHeight = height }
                         let base = dragStartHeight ?? height
-                        ws.quickHeight = min(max(base - value.translation.height, minHeight),
-                                             availableHeight - margin * 2)
+                        ws.quickHeight = min(max(base - value.translation.height, minHeight), maxHeight)
                     }
                     .onEnded { _ in dragStartHeight = nil }
             )

@@ -8,17 +8,19 @@ cd "$(dirname "$0")"
 sig() { find Sources -name '*.swift' -exec stat -f '%m %N' {} + | sort; }
 
 reload() {
-  echo "▸ building…"
-  if swift build 2>&1 | tail -3; then
-    pkill -x Runway 2>/dev/null || true
-    "$(swift build --show-bin-path)/Runway" >/dev/null 2>&1 &
-    echo "▸ relaunched $(date +%H:%M:%S)"
+  if osascript - "$PWD/relaunch.sh" <<'APPLESCRIPT'
+on run argv
+  do shell script quoted form of (item 1 of argv)
+end run
+APPLESCRIPT
+  then
+    echo "▸ app bundle rebuilt and relaunched $(date +%H:%M:%S)"
   else
     echo "✗ build failed — fix and save again (app left running)"
   fi
 }
 
-trap 'pkill -x Runway 2>/dev/null; exit 0' INT TERM
+trap 'exit 0' INT TERM
 
 reload
 last="$(sig)"

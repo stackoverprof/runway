@@ -1,15 +1,14 @@
 import SwiftUI
 import Foundation
 
-/// The agent control channel + automatic Claude Code state reporting.
+/// The agent control channel + portable integration helpers for coding agents.
 ///
 /// - Any agent/script in a box can set its name/description/state by writing JSON
 ///   to `$RUNWAY_CONTROL`:  echo '{"state":"running"}' > "$RUNWAY_CONTROL"
-/// - For Claude Code specifically, state updates automatically with **zero user
-///   setup**: each box's zsh is pointed at a Runway `ZDOTDIR` that sources the
-///   user's real config and then defines a `claude` function adding
-///   `--settings <runway-hooks>`. The hooks report state to `$RUNWAY_CONTROL`.
-///   Nothing in the user's `~/.claude` or `~/.zshrc` is modified.
+/// - Every agent can discover the integration through `runway-help` and
+///   `$RUNWAY_SKILL_PATH`; `runway-agent` adds coarse status to any CLI.
+/// - Claude receives richer automatic hooks from a Runway-scoped PATH wrapper.
+///   No agent-specific configuration or user shell files are modified.
 enum AgentControl {
     static let supportDir: URL = {
         let base = FileManager.default
@@ -30,9 +29,9 @@ enum AgentControl {
     static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
     static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
     static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
-    static var binDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".runway/bin", isDirectory: true)
-    }
+    static var binDir: URL { supportDir.appendingPathComponent("bin", isDirectory: true) }
+    static var integrationDir: URL { supportDir.appendingPathComponent("integration", isDirectory: true) }
+    static var integrationGuide: URL { integrationDir.appendingPathComponent("SKILL.md") }
 
     static func file(for id: UUID) -> URL {
         controlDir.appendingPathComponent("\(id.uuidString).json")
@@ -43,12 +42,10 @@ enum AgentControl {
         controlDir.appendingPathComponent("\(id.uuidString).cwd")
     }
 
-    /// Environment for a box's terminal: where to report state, plus the zsh
-    /// wrapper that auto-injects Claude Code hooks.
+    /// Environment for a box's terminal: control paths, the portable guide, and
+    /// Runway-scoped command helpers.
     static func environment(for id: UUID, autorun: String? = nil) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let skillDir = home.appendingPathComponent(".gemini/config/skills/runway_api")
         let binPath = binDir.path
         let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         var env = [
@@ -58,7 +55,8 @@ enum AgentControl {
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
-            "RUNWAY_SKILL_PATH": skillDir.path,
+            "RUNWAY_SKILL_PATH": integrationGuide.path,
+            "RUNWAY_AGENT_GUIDE": "Run runway-help to learn Runway's terminal integration features.",
             "PATH": "\(binPath):\(systemPath)",
         ]
         if let autorun, !autorun.isEmpty { env["RUNWAY_AUTORUN"] = autorun }
@@ -81,13 +79,15 @@ enum AgentControl {
     // MARK: One-time install (idempotent; call at launch)
 
     static func install() {
+        try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: integrationDir, withIntermediateDirectories: true)
         writeHooks()
         writeFeedPostScript()
         writeZshWrapper()
         ensureFeedInbox()
-        writeGlobalSkill()
-        try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        writeIntegrationGuide()
         writeBinScripts()
+        cleanupLegacyGlobalInstall()
     }
 
     private static func writeBinScripts() {
@@ -95,6 +95,9 @@ enum AgentControl {
         let delPath = binDir.appendingPathComponent("runway-delete")
         let pinPath = binDir.appendingPathComponent("runway-pin")
         let unpinPath = binDir.appendingPathComponent("runway-unpin")
+        let helpPath = binDir.appendingPathComponent("runway-help")
+        let agentPath = binDir.appendingPathComponent("runway-agent")
+        let claudePath = binDir.appendingPathComponent("claude")
 
         // 1. runway-post
         let postScript = """
@@ -215,6 +218,52 @@ enum AgentControl {
         """
         try? unpinScript.data(using: .utf8)?.write(to: unpinPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unpinPath.path)
+
+        // 5. runway-help: one discovery point that works for every coding agent.
+        let helpScript = """
+        #!/bin/zsh
+        exec /bin/cat "${RUNWAY_SKILL_PATH:-\(integrationGuide.path)}"
+        """
+        try? helpScript.data(using: .utf8)?.write(to: helpPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helpPath.path)
+
+        // 6. runway-agent: opt-in coarse status reporting for any command-line agent.
+        let agentScript = """
+        #!/bin/zsh
+        if [ "$#" -eq 0 ]; then
+          echo 'Usage: runway-agent <command> [arguments…]' >&2
+          exit 64
+        fi
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        exit $exit_code
+        """
+        try? agentScript.data(using: .utf8)?.write(to: agentPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agentPath.path)
+
+        // Preserve Claude's richer needs-action hooks without replacing a user's
+        // alias or shell function. This PATH wrapper is scoped to Runway terminals.
+        let claudeScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/claude" ]; then real="$dir/claude"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'claude: command not found' >&2
+          exit 127
+        fi
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        exit $exit_code
+        """
+        try? claudeScript.data(using: .utf8)?.write(to: claudePath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudePath.path)
     }
 
     private static func ensureFeedInbox() {
@@ -240,20 +289,18 @@ enum AgentControl {
         try? data.write(to: hooksFile)
     }
 
-    private static func writeGlobalSkill() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let skillDir = home.appendingPathComponent(".gemini/config/skills/runway_api", isDirectory: true)
-        try? FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
-        
+    private static func writeIntegrationGuide() {
         let markdown = """
         ---
         name: runway-app-integration
-        description: Harness Runway app terminal API features to post notes, delete notes, pin notes, change titles, or configure status indicators.
+        description: Harness Runway terminal features from any coding agent or shell.
         ---
 
         # Runway Integration Skill
 
-        This skill explains how agents running inside Runway terminal boxes can fully integrate with the app's visual features (the activity timeline, status dots, and card labels) via terminal command-line interfaces.
+        This portable guide is available to every coding agent and shell running
+        inside Runway. Run `runway-help` at any time to read it. No agent-specific
+        files are installed in your home directory.
 
         ## Environment Variables
 
@@ -262,7 +309,8 @@ enum AgentControl {
         - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
         - `RUNWAY_FEED`: Absolute path to the timeline feed inbox JSONL file.
         - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
-        - `RUNWAY_SKILL_PATH`: Path to this auto-discovered Runway API skill guide.
+        - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
+        - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
 
         ---
 
@@ -341,10 +389,38 @@ enum AgentControl {
         echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
         ```
         Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
+
+        ## 4. Run Any Agent With Automatic Status
+
+        Use `runway-agent` with any command-line coding agent to mark the card
+        running until the command exits:
+
+        ```bash
+        runway-agent codex
+        runway-agent gemini
+        runway-agent my-custom-agent --flag
+        ```
+
+        Claude receives richer automatic status hooks when launched normally as
+        `claude` inside Runway.
         """
-        
-        let fileURL = skillDir.appendingPathComponent("SKILL.md")
-        try? markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        try? markdown.write(to: integrationGuide, atomically: true, encoding: .utf8)
+    }
+
+    /// Remove only files written by older Runway builds. Parent directories are
+    /// removed only when empty, so unrelated user configuration is untouched.
+    private static func cleanupLegacyGlobalInstall() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let legacyBin = home.appendingPathComponent(".runway/bin", isDirectory: true)
+        for name in ["runway-post", "runway-delete", "runway-pin", "runway-unpin"] {
+            try? FileManager.default.removeItem(at: legacyBin.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: legacyBin)
+
+        let legacySkillDir = home.appendingPathComponent(".gemini/config/skills/runway_api", isDirectory: true)
+        try? FileManager.default.removeItem(at: legacySkillDir.appendingPathComponent("SKILL.md"))
+        try? FileManager.default.removeItem(at: legacySkillDir)
     }
 
     private static func writeFeedPostScript() {
@@ -406,22 +482,19 @@ enum AgentControl {
         try? FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
         let postScript = feedPostScript.path
         // zsh reads each startup file from $ZDOTDIR; source the user's real ones
-        // so their environment is preserved, then add the claude function.
+        // so their environment and prompt remain unchanged. Agent integration is
+        // provided by scoped PATH helpers instead of replacing shell functions.
         write(".zshenv", #"[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv""#)
         write(".zprofile", #"[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile""#)
         write(".zlogin", #"[ -f "$HOME/.zlogin" ] && source "$HOME/.zlogin""#)
         write(".zshrc", """
-        # Managed by Runway. Loads your real zsh config, then (only inside a Runway
-        # box) routes `claude` through state-reporting hooks. Shells outside Runway
-        # are unaffected; your ~/.zshrc and ~/.claude are never modified.
+        # Managed by Runway. Loads your real zsh config and adds only Runway's
+        # working-directory and autorun hooks. Your files are never modified.
         [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
-        if [ -n "$RUNWAY_CONTROL" ] && [ -n "$RUNWAY_CLAUDE_HOOKS" ]; then
-          claude() {
-            command claude --settings "$RUNWAY_CLAUDE_HOOKS" "$@"
-            # Back at the shell prompt: the agent is no longer running.
-            printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
-          }
-        fi
+        case ":$PATH:" in
+          *":\(binDir.path):"*) ;;
+          *) export PATH="\(binDir.path):$PATH" ;;
+        esac
         # Post a markdown card to the activity timeline.
         runway-post() {
           if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then

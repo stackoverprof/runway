@@ -97,9 +97,14 @@ struct TerminalSurfaceView: View {
             for _ in 0..<100 {
                 if let view = session.view {
                     TerminalRegistry.shared.register(view, id: boxID)
+                    var didApplyInitialFocus = false
                     for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         if view.window != nil {
+                            if !didApplyInitialFocus, workspace.focusedID == boxID {
+                                view.window?.makeFirstResponder(view)
+                                didApplyInitialFocus = true
+                            }
                             forceTerminalLayoutUpdate(for: session)
                         }
                     }
