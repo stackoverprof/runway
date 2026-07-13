@@ -23,20 +23,6 @@ once. It combines persistent GPU terminals with a live GitHub activity feed, so
 the work happening in your shells and the work landing in your repo stay in the
 same field of view.
 
-```text
-┌─────────────────────────────┬────────────────────────────────────┐
-│ Activity                    │ Agent terminals                    │
-│                             │                                    │
-│ RECENTLY IN THE OFFICE      │  ● auth-refactor        running   │
-│ ● alice  active now         │  ┌──────────────────────────────┐  │
-│ ● bob    idle 24m           │  │ Claude Code, Codex, or shell │  │
-│                             │  └──────────────────────────────┘  │
-│ pushed feature/live-feed    │                                    │
-│ opened PR #1234             │  ● release-check        waiting   │
-│ merged PR #1230 into main   │  ┌──────────────────────────────┐  │
-│                             │  │ Persistent GPU terminal      │  │
-└─────────────────────────────┴────────────────────────────────────┘
-```
 
 ## Install in a minute
 
