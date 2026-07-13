@@ -60,8 +60,7 @@ enum FeedTab: String, CaseIterable, Codable {
         focusedID = boxes.first?.id
         // Quitting kills the sessions, so reopen each restored agent into the
         // configured command (e.g. claude) too, not just ⌘N-created ones.
-        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd = SettingsKey.configuredAgentCommand
         if !cmd.isEmpty { for i in boxes.indices { boxes[i].autorun = cmd } }
     }
 
@@ -216,8 +215,7 @@ enum FeedTab: String, CaseIterable, Codable {
 
     func newBox() {
         var box = AgentBox(name: "agent\(boxes.count + 1)")
-        let cmd = (UserDefaults.standard.string(forKey: SettingsKey.initialCommand) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd = SettingsKey.configuredAgentCommand
         if !cmd.isEmpty { box.autorun = cmd }   // run it as the shell starts
         boxes.append(box)
         setFocus(box.id)

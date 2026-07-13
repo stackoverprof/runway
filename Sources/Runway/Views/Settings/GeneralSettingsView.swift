@@ -6,18 +6,16 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.idleMinutes)   private var idleMinutes = 30
     @AppStorage(SettingsKey.officeHours)   private var officeHours = 6
     @AppStorage(SettingsKey.hideBots)      private var hideBots = true
+    @AppStorage(SettingsKey.fireThreshold)  private var fireThreshold = 5
     @AppStorage(SettingsKey.soundEnabled)  private var soundEnabled = true
     @AppStorage(SettingsKey.alertSound)    private var alertSound = "Glass"
     @AppStorage(SettingsKey.confirmQuit)   private var confirmQuit = true
-    @AppStorage(SettingsKey.initialCommand) private var initialCommand = ""
-    @AppStorage(SettingsKey.agentCommandEnabled) private var agentCommandEnabled = true
+    @AppStorage(SettingsKey.agentCommandEnabled) private var agentCommandEnabled = false
     @AppStorage(SettingsKey.agentCommand)  private var agentCommand = "claude"
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
 
     private let sounds = ["Glass", "Ping", "Submarine", "Hero", "Pop", "Funk", "Blow"]
-    private let agentCommands = ["claude", "codex", "cursor", "copilot", "gemini"]
-
     var body: some View {
         Form {
             Section("Activity feed") {
@@ -29,6 +27,7 @@ struct GeneralSettings: View {
                     Text("2 minutes").tag(120)
                 }
                 Stepper("Active within: \(idleMinutes) min", value: $idleMinutes, in: 5...120, step: 5)
+                Stepper("On fire threshold: \(fireThreshold) events", value: $fireThreshold, in: 2...20)
                 Picker("Show people active in the last", selection: $officeHours) {
                     Text("3 hours").tag(3)
                     Text("6 hours").tag(6)
@@ -52,14 +51,8 @@ struct GeneralSettings: View {
 
             Section("Agents") {
                 Toggle("Run command in each agent", isOn: $agentCommandEnabled)
-                HStack {
-                    Picker("Command", selection: $agentCommand) {
-                        ForEach(agentCommands, id: \.self) { cmd in
-                            Text(cmd.capitalized).tag(cmd)
-                        }
-                    }
+                TextField("Command", text: $agentCommand)
                     .disabled(!agentCommandEnabled)
-                }
                 Text("Runs automatically when an agent opens — new ones (⌘N), every agent when you reopen the app, and the quick terminal. Leave unchecked for a plain shell.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
