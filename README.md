@@ -40,7 +40,7 @@ same field of view.
 
 ## Install in a minute
 
-1. Download the latest **`Runway-1.0.0-arm64.dmg`** from
+1. Download the latest **`Runway-1.0.1-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.

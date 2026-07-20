@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AgentFeedRow: View {
@@ -33,6 +34,7 @@ struct AgentFeedRow: View {
                         .font(.system(size: 12.5))
                         .foregroundStyle(Color.white.opacity(0.55))
                     Spacer(minLength: 6)
+                    copyButton
                     deleteButton
                     pinButton
                     Text(time)
@@ -56,6 +58,28 @@ struct AgentFeedRow: View {
             }
             .padding(.bottom, 10)
         }
+    }
+
+    private var copyButton: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(copyText, forType: .string)
+        } label: {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .frame(width: 18, height: 18)
+                .opacity(hovering ? 1 : 0)
+        }
+        .buttonStyle(.plain)
+        .help("Copy post")
+        .allowsHitTesting(hovering)
+        .accessibilityHidden(!hovering)
+    }
+
+    private var copyText: String {
+        guard let title = post.title, !title.isEmpty else { return post.body }
+        return "\(title)\n\n\(post.body)"
     }
 
     private var pinButton: some View {
