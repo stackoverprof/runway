@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A feed row for user-authored markdown notes.
@@ -42,6 +43,7 @@ struct UserNoteRow: View {
                         .font(.system(size: 12.5))
                         .foregroundStyle(Color.white.opacity(0.55))
                     Spacer(minLength: 6)
+                    copyButton
                     deleteButton
                     pinButton
                     Text(time)
@@ -60,6 +62,23 @@ struct UserNoteRow: View {
             }
             .padding(.bottom, 10)
         }
+    }
+
+    private var copyButton: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(note.body, forType: .string)
+        } label: {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .frame(width: 18, height: 18)
+                .opacity(hovering ? 1 : 0)
+        }
+        .buttonStyle(.plain)
+        .help("Copy note")
+        .allowsHitTesting(hovering)
+        .accessibilityHidden(!hovering)
     }
 
     private var pinButton: some View {
