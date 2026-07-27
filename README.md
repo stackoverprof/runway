@@ -26,7 +26,7 @@ same field of view.
 
 ## Install in a minute
 
-1. Download the latest **`Runway-1.0.2-arm64.dmg`** from
+1. Download the latest **`Runway-1.0.3-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -58,6 +58,7 @@ needs it.
 | 🟢 | **Agent-aware status** | Cards can report `idle`, `running`, or `needs-action`, plus their current task and description. |
 | 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
 | 💾 | **Workspace memory** | Card names, sizes, working directories, layout mode, and pane position survive relaunches. |
+| 🎨 | **Custom branding** | Replace the Activity heading with your own text or a persistent SVG, PNG, JPEG, or other macOS-supported image. |
 | 👥 | **People profiles** | Give teammates friendly names and custom avatars in the activity view. |
 
 ### The activity side

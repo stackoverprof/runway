@@ -15,6 +15,9 @@ enum SettingsKey {
     static let agentCommandEnabled = "runway.agentCommandEnabled"
     static let agentCommand  = "runway.agentCommand"
     static let personProfiles = "runway.personProfiles"
+    static let brandHeaderStyle = "runway.brandHeaderStyle"
+    static let brandTitle = "runway.brandTitle"
+    static let brandLogoFilename = "runway.brandLogoFilename"
 
     static var configuredAgentCommand: String {
         guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
@@ -37,6 +40,9 @@ enum SettingsKey {
             // until the user explicitly enables an agent command.
             agentCommandEnabled: false, agentCommand: "claude",
             personProfiles: [],
+            brandHeaderStyle: "text",
+            brandTitle: "Activity",
+            brandLogoFilename: "",
         ])
 
         // Older builds used `initialCommand` at runtime while exposing different

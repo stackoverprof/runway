@@ -10,6 +10,9 @@ struct LeftPane: View {
     @State private var showAllPresence = false
     @State private var showNoteComposer = false
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
+    @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
+    @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
+    @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
 
     private static let taglines = [
         "WHAT HAS BEEN HAPPENING",
@@ -91,9 +94,7 @@ struct LeftPane: View {
     // MARK: Header
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text("Activity")
-                .font(.system(size: 27, weight: .bold))
-                .foregroundStyle(Color.white.opacity(0.95))
+            brandingTitle
             Spacer(minLength: 8)
             repoButton
         }
@@ -101,6 +102,31 @@ struct LeftPane: View {
         // Clear the traffic lights when windowed; tighten to the top in full screen.
         .padding(.top, ws.isFullScreen ? 18 : 50)
         .padding(.bottom, 22)
+    }
+
+    @ViewBuilder
+    private var brandingTitle: some View {
+        if brandHeaderStyle == "image",
+           let image = BrandingManager.image(named: brandLogoFilename) {
+            let imageSize = image.size
+            let aspectRatio = imageSize.height > 0 ? imageSize.width / imageSize.height : 1
+            let height: CGFloat = 34
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: min(180, height * aspectRatio), height: height)
+                .accessibilityLabel("Activity")
+        } else {
+            Text(resolvedBrandTitle)
+                .font(.system(size: 27, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.95))
+                .lineLimit(1)
+        }
+    }
+
+    private var resolvedBrandTitle: String {
+        let title = brandTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Activity" : title
     }
 
     /// Rounded-rectangle repo selector with a repo glyph; opens a searchable picker.
