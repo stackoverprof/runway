@@ -75,7 +75,7 @@ struct TerminalSurfaceView: View {
             .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
                 handleDropProviders(providers, session: session) {
                     Task { @MainActor in
-                        workspace.focusedID = boxID
+                        workspace.setFocus(boxID)
                     }
                 }
                 return true
