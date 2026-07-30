@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="Resources/AppIcon.png" width="112" alt="Runway app icon">
+  <img src="https://raw.githubusercontent.com/stackoverprof/runway/main/Resources/AppIcon.png?runway-v2" width="112" alt="Runway app icon">
   <h1>Runway</h1>
-  <p><strong>Your coding agents, your team, and your repo in one native macOS workspace.</strong></p>
+  <p><strong>Your GitHub issues, coding agents, and terminals in one native macOS workspace.</strong></p>
 
   <p>
     <a href="https://github.com/stackoverprof/runway/releases/latest"><img src="https://img.shields.io/github/v/release/stackoverprof/runway?style=flat-square" alt="Latest release"></a>
