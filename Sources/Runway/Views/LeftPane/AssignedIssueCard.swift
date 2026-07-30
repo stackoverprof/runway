@@ -37,7 +37,7 @@ struct AssignedIssueCard: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(hovering ? 0.06 : 0.035))
+                .fill(Color(white: hovering ? 0.09 : 0.075))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9)
@@ -49,8 +49,8 @@ struct AssignedIssueCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onHover { isHovering in
             hovering = isHovering
-            if isHovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
         }
+        .pointerCursor()
         .onTapGesture {
             NSWorkspace.shared.open(issue.url)
         }

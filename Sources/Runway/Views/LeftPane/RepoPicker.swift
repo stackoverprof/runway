@@ -46,6 +46,7 @@ struct RepoPicker: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .pointerCursor()
                     }
                     ForEach(filtered, id: \.self) { r in
                         Button { onPick(r) } label: {
@@ -65,6 +66,7 @@ struct RepoPicker: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .pointerCursor()
                     }
                     if filtered.isEmpty, freeform == nil {
                         Text(repos.isEmpty ? "Loading repos…" : "No matches. Type owner/repo to open any repo.")

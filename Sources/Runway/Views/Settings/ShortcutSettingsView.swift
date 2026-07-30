@@ -10,7 +10,11 @@ struct ShortcutSettings: View {
             } header: {
                 Text("Click a shortcut, then press the new keys (Esc to cancel). ⌘1–9 jump to a card.")
             } footer: {
-                HStack { Spacer(); Button("Reset all to defaults") { bindings.resetAll() } }
+                HStack {
+                    Spacer()
+                    Button("Reset all to defaults") { bindings.resetAll() }
+                        .pointerCursor()
+                }
             }
         }
         .formStyle(.grouped)

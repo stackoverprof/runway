@@ -5,6 +5,8 @@ struct AssignedIssue: Codable, Identifiable, Sendable {
     let title: String
     var state: String
     var closedAt: Date?
+    let createdAt: Date?
+    let updatedAt: Date?
     let url: URL
 
     var id: Int { number }
@@ -83,6 +85,7 @@ extension Notification.Name {
         closedIssueNumbers = savedOrder?.closed ?? []
         if let snapshot {
             reconcileOrders(with: snapshot.issues)
+            FocusActivityLog.seedCurrentFocus(repository: repository, issues: focused)
         }
         error = nil
     }
@@ -110,14 +113,26 @@ extension Notification.Name {
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            let data = await GH.run([
+            let previousSnapshot = snapshots[repository]
+            let now = Date()
+            let needsFullRefresh = previousSnapshot == nil
+                || previousSnapshot?.lastFullFetchedAt == nil
+                || now.timeIntervalSince(previousSnapshot?.lastFullFetchedAt ?? .distantPast) > 6 * 3_600
+            var arguments = [
                 "issue", "list",
                 "--repo", repository,
                 "--assignee", "@me",
                 "--state", "all",
                 "--limit", "1000",
-                "--json", "number,title,state,closedAt,url",
-            ])
+                "--json", "number,title,state,closedAt,createdAt,updatedAt,url",
+            ]
+            if !needsFullRefresh, let fetchedAt = previousSnapshot?.fetchedAt {
+                arguments.append(contentsOf: [
+                    "--search",
+                    "updated:>=\(Self.iso8601.string(from: fetchedAt.addingTimeInterval(-300)))",
+                ])
+            }
+            let data = await GH.query(arguments, cacheFor: 20)
             guard !Task.isCancelled, loadedRepository == repository else { return }
             guard let data else {
                 error = GitHubFeed.ghHint
@@ -131,10 +146,50 @@ extension Notification.Name {
                 loading = false
                 return
             }
-            issues = fetched
+            let previousNumbers = Set(previousSnapshot?.issues.map(\.number) ?? [])
+            let orderingCutoff = previousSnapshot?.orderedThrough
+                ?? previousSnapshot?.lastFullFetchedAt
+                ?? previousSnapshot?.fetchedAt
+                ?? .distantPast
+            let newlyDiscovered = Set(fetched.compactMap { issue -> Int? in
+                if !previousNumbers.contains(issue.number) { return issue.number }
+                if let createdAt = issue.createdAt, createdAt > orderingCutoff {
+                    return issue.number
+                }
+                return nil
+            })
+            if needsFullRefresh {
+                let fetchedNumbers = Set(fetched.map(\.number))
+                for issueNumber in focusedIssueNumbers where !fetchedNumbers.contains(issueNumber) {
+                    guard let issue = issues.first(where: { $0.number == issueNumber }) else { continue }
+                    FocusActivityLog.record(
+                        action: .exitedFocus,
+                        repository: repository,
+                        issue: issue,
+                        from: .focus,
+                        to: issue.isClosed ? .closed : .open,
+                        cause: "revalidation"
+                    )
+                }
+                issues = fetched
+            } else {
+                var merged = Dictionary(uniqueKeysWithValues: issues.map { ($0.number, $0) })
+                for issue in fetched { merged[issue.number] = issue }
+                issues = merged.values.sorted {
+                    ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+                }
+            }
             hasSnapshot = true
-            reconcileOrders(with: fetched)
-            saveSnapshot(for: repository, fetchedAt: Date())
+            reconcileOrders(with: issues, prioritizing: newlyDiscovered)
+            FocusActivityLog.seedCurrentFocus(repository: repository, issues: focused)
+            saveSnapshot(
+                for: repository,
+                fetchedAt: now,
+                lastFullFetchedAt: needsFullRefresh
+                    ? now
+                    : previousSnapshot?.lastFullFetchedAt,
+                orderedThrough: now
+            )
             saveFocus(for: repository)
             saveBacklogOrder(for: repository)
             loading = false
@@ -148,14 +203,28 @@ extension Notification.Name {
         }
     }
 
-    private func reconcileOrders(with availableIssues: [AssignedIssue]) {
-        let defaultOpen = availableIssues.filter { !$0.isClosed }.map(\.number)
+    private func reconcileOrders(
+        with availableIssues: [AssignedIssue],
+        prioritizing issueNumbers: Set<Int> = []
+    ) {
+        let defaultOpen = availableIssues
+            .filter { !$0.isClosed }
+            .sorted { $0.number > $1.number }
+            .map(\.number)
         let defaultClosed = availableIssues
             .filter(\.isClosed)
             .sorted { ($0.closedAt ?? .distantPast) > ($1.closedAt ?? .distantPast) }
             .map(\.number)
-        openIssueNumbers = Self.mergedOrder(openIssueNumbers, available: defaultOpen)
-        closedIssueNumbers = Self.mergedOrder(closedIssueNumbers, available: defaultClosed)
+        openIssueNumbers = Self.mergedOrder(
+            openIssueNumbers,
+            available: defaultOpen,
+            prioritizing: issueNumbers
+        )
+        closedIssueNumbers = Self.mergedOrder(
+            closedIssueNumbers,
+            available: defaultClosed,
+            prioritizing: issueNumbers
+        )
         focusedIssueNumbers = Array(focusedIssueNumbers.filter { number in
             availableIssues.contains { $0.number == number }
         }.prefix(5))
@@ -168,7 +237,10 @@ extension Notification.Name {
 
     func resetBacklogOrder() {
         guard let repository = loadedRepository else { return }
-        openIssueNumbers = issues.filter { !$0.isClosed }.map(\.number)
+        openIssueNumbers = issues
+            .filter { !$0.isClosed }
+            .sorted { $0.number > $1.number }
+            .map(\.number)
         closedIssueNumbers = issues
             .filter(\.isClosed)
             .sorted { ($0.closedAt ?? .distantPast) > ($1.closedAt ?? .distantPast) }
@@ -183,12 +255,30 @@ extension Notification.Name {
               focusedIssueNumbers.count < 5 else { return }
         focusedIssueNumbers.append(issueNumber)
         saveFocus(for: repository)
+        if let issue = issues.first(where: { $0.number == issueNumber }) {
+            FocusActivityLog.record(
+                action: .enteredFocus,
+                repository: repository,
+                issue: issue,
+                from: issue.isClosed ? .closed : .open,
+                to: .focus
+            )
+        }
     }
 
     func removeFromFocus(issueNumber: Int) {
-        guard let repository = loadedRepository else { return }
+        guard let repository = loadedRepository,
+              let issue = issues.first(where: { $0.number == issueNumber }),
+              focusedIssueNumbers.contains(issueNumber) else { return }
         focusedIssueNumbers.removeAll { $0 == issueNumber }
         saveFocus(for: repository)
+        FocusActivityLog.record(
+            action: .exitedFocus,
+            repository: repository,
+            issue: issue,
+            from: .focus,
+            to: issue.isClosed ? .closed : .open
+        )
     }
 
     func moveFocused(issueNumber: Int, toTarget targetNumber: Int) {
@@ -239,6 +329,13 @@ extension Notification.Name {
                   focusedIssueNumbers.count < 5 else { return false }
             insert(issueNumber, before: targetNumber, in: &focusedIssueNumbers)
             saveFocus(for: repository)
+            FocusActivityLog.record(
+                action: .enteredFocus,
+                repository: repository,
+                issue: issue,
+                from: source,
+                to: .focus
+            )
             return true
 
         case (.focus, .open), (.focus, .closed):
@@ -248,7 +345,8 @@ extension Notification.Name {
                 issue: issue,
                 focusIndex: focusedIssueNumbers.firstIndex(of: issueNumber),
                 openIndex: openIssueNumbers.firstIndex(of: issueNumber),
-                closedIndex: closedIssueNumbers.firstIndex(of: issueNumber)
+                closedIndex: closedIssueNumbers.firstIndex(of: issueNumber),
+                attemptedDestination: destination
             )
 
             focusedIssueNumbers.removeAll { $0 == issueNumber }
@@ -267,6 +365,13 @@ extension Notification.Name {
             }
             saveFocus(for: repository)
             saveBacklogOrder(for: repository)
+            FocusActivityLog.record(
+                action: .exitedFocus,
+                repository: repository,
+                issue: issue,
+                from: .focus,
+                to: destination
+            )
 
             if needsGitHubMutation {
                 mutateGitHubState(
@@ -343,6 +448,16 @@ extension Notification.Name {
             saveSnapshot(for: repository)
             saveFocus(for: repository)
             saveBacklogOrder(for: repository)
+            if rollback.focusIndex != nil {
+                FocusActivityLog.record(
+                    action: .enteredFocus,
+                    repository: repository,
+                    issue: rollback.issue,
+                    from: rollback.attemptedDestination,
+                    to: .focus,
+                    cause: "github_rollback"
+                )
+            }
         }
     }
 
@@ -368,13 +483,22 @@ extension Notification.Name {
         UserDefaults.standard.set(data, forKey: Self.backlogOrderKey)
     }
 
-    private func saveSnapshot(for repository: String, fetchedAt: Date? = nil) {
+    private func saveSnapshot(
+        for repository: String,
+        fetchedAt: Date? = nil,
+        lastFullFetchedAt: Date? = nil,
+        orderedThrough: Date? = nil
+    ) {
         let validationDate = fetchedAt
             ?? snapshots[repository]?.fetchedAt
             ?? .distantPast
         snapshots[repository] = CachedRepository(
             issues: issues,
-            fetchedAt: validationDate
+            fetchedAt: validationDate,
+            lastFullFetchedAt: lastFullFetchedAt
+                ?? snapshots[repository]?.lastFullFetchedAt,
+            orderedThrough: orderedThrough
+                ?? snapshots[repository]?.orderedThrough
         )
         guard let data = try? JSONEncoder().encode(snapshots) else { return }
         try? FileManager.default.createDirectory(
@@ -402,12 +526,17 @@ extension Notification.Name {
         let focusIndex: Int?
         let openIndex: Int?
         let closedIndex: Int?
+        let attemptedDestination: AssignedIssueLane
     }
 
     private struct CachedRepository: Codable {
         let issues: [AssignedIssue]
         let fetchedAt: Date
+        let lastFullFetchedAt: Date?
+        let orderedThrough: Date?
     }
+
+    private static let iso8601 = ISO8601DateFormatter()
 
     private static func readSnapshots() -> [String: CachedRepository] {
         guard let data = try? Data(contentsOf: snapshotFile),
@@ -429,10 +558,21 @@ extension Notification.Name {
         return saved
     }
 
-    private static func mergedOrder(_ saved: [Int], available: [Int]) -> [Int] {
+    private static func mergedOrder(
+        _ saved: [Int],
+        available: [Int],
+        prioritizing issueNumbers: Set<Int>
+    ) -> [Int] {
         let availableSet = Set(available)
-        let retained = saved.filter(availableSet.contains)
+        let prioritized = available.filter(issueNumbers.contains)
+        let prioritizedSet = Set(prioritized)
+        let retained = saved.filter {
+            availableSet.contains($0) && !prioritizedSet.contains($0)
+        }
         let retainedSet = Set(retained)
-        return retained + available.filter { !retainedSet.contains($0) }
+        let additions = available.filter {
+            !prioritizedSet.contains($0) && !retainedSet.contains($0)
+        }
+        return prioritized + additions + retained
     }
 }

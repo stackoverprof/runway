@@ -4,7 +4,6 @@ import AppKit
 @MainActor @Observable final class RunwayWindowContext {
     let workspace = Workspace()
     let githubFeed = GitHubFeed()
-    let agentFeed = AgentFeed()
     private var started = false
 
     func startIfNeeded() {
@@ -12,7 +11,10 @@ import AppKit
         started = true
         workspace.startAgentWatch()
         githubFeed.startPolling()
-        agentFeed.startWatching()
+    }
+
+    func stop() {
+        githubFeed.stopPolling()
     }
 }
 
@@ -74,6 +76,7 @@ final class WindowRegistrationNSView: NSView {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
+                self.context?.stop()
                 RunwayWindowRegistry.shared.unregister(for: self.window)
             }
         }

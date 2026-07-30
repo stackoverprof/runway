@@ -51,12 +51,12 @@ enum AgentControl {
         var env = [
             "RUNWAY_BOX": id.uuidString,
             "RUNWAY_CONTROL": file(for: id).path,
-            "RUNWAY_FEED": feedInbox.path,
+            "RUNWAY_FOCUS_LOG": FocusActivityLog.file.path,
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
             "RUNWAY_SKILL_PATH": integrationGuide.path,
-            "RUNWAY_AGENT_GUIDE": "Run runway-help to learn Runway's terminal integration features.",
+            "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
             "PATH": "\(binPath):\(systemPath)",
         ]
         if let autorun, !autorun.isEmpty { env["RUNWAY_AUTORUN"] = autorun }
@@ -81,13 +81,20 @@ enum AgentControl {
     static func install() {
         try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: integrationDir, withIntermediateDirectories: true)
+        FocusActivityLog.ensureFile()
         writeHooks()
-        writeFeedPostScript()
         writeZshWrapper()
-        ensureFeedInbox()
         writeIntegrationGuide()
         writeBinScripts()
+        removeNotesHelpers()
         cleanupLegacyGlobalInstall()
+    }
+
+    private static func removeNotesHelpers() {
+        for name in ["runway-post", "runway-delete", "runway-pin", "runway-unpin"] {
+            try? FileManager.default.removeItem(at: binDir.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: feedPostScript)
     }
 
     private static func writeBinScripts() {
@@ -96,6 +103,7 @@ enum AgentControl {
         let pinPath = binDir.appendingPathComponent("runway-pin")
         let unpinPath = binDir.appendingPathComponent("runway-unpin")
         let helpPath = binDir.appendingPathComponent("runway-help")
+        let focusLogPath = binDir.appendingPathComponent("runway-focus-log")
         let agentPath = binDir.appendingPathComponent("runway-agent")
         let claudePath = binDir.appendingPathComponent("claude")
 
@@ -227,6 +235,13 @@ enum AgentControl {
         try? helpScript.data(using: .utf8)?.write(to: helpPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helpPath.path)
 
+        let focusLogScript = """
+        #!/bin/zsh
+        exec /bin/cat "${RUNWAY_FOCUS_LOG:-\(FocusActivityLog.file.path)}"
+        """
+        try? focusLogScript.data(using: .utf8)?.write(to: focusLogPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: focusLogPath.path)
+
         // 6. runway-agent: opt-in coarse status reporting for any command-line agent.
         let agentScript = """
         #!/bin/zsh
@@ -307,59 +322,14 @@ enum AgentControl {
         Each Runway terminal box exposes the following environment variables to its shell:
         - `RUNWAY_BOX`: The unique UUID of the terminal card.
         - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
-        - `RUNWAY_FEED`: Absolute path to the timeline feed inbox JSONL file.
+        - `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
         - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
 
         ---
 
-        ## 1. Post to the Activity Feed
-
-        You can post markdown updates, build reports, deployment logs, or daily recaps directly to the **Notes** tab using the built-in shell helper `runway-post`.
-
-        ### Usage
-        ```bash
-        # Post a simple note (author defaults to "agent")
-        runway-post "Auth migration complete"
-
-        # Post with a custom author name
-        runway-post "deploy-bot" "Production deployed successfully! :rocket:"
-
-        # Post with custom author and title
-        runway-post "linter" "Found 2 warning highlights" "Style Check"
-
-        # Post a multiline markdown document from standard input
-        runway-post "analyzer" "Security Audit" - <<'EOF'
-        ## Shipped Checks
-        - Code injection check: **Passed**
-        - Dependency audit: *0 vulnerabilities*
-
-        Check logs for details.
-        EOF
-        ```
-
-        ---
-
-        ## 2. Delete, Pin, and Unpin Posts
-
-        You can delete, pin, or unpin any timeline note or post by its `id` (e.g. `note-1234` or `agent-abcd`).
-
-        ### Usage
-        ```bash
-        # Delete a post or note by ID
-        runway-delete "note-1234"
-
-        # Pin a post or note to the top of the Notes tab
-        runway-pin "agent-5678"
-
-        # Unpin a post or note
-        runway-unpin "agent-5678"
-        ```
-
-        ---
-
-        ## 3. Update Card Status and Metadata
+        ## 1. Update Card Status and Metadata
 
         You can dynamically update the card's **State Dot (color)**, **Title**, and **Description** at any time.
 
@@ -390,7 +360,28 @@ enum AgentControl {
         ```
         Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
 
-        ## 4. Run Any Agent With Automatic Status
+        ## 2. Read Focus Work History
+
+        Runway appends one JSON object to `$RUNWAY_FOCUS_LOG` whenever an issue
+        enters or leaves the Focus board. Reordering within Focus is not logged.
+        Each event includes an ISO-8601 `timestamp`, IANA `timeZone`, `action`, `repository`,
+        `issueNumber`, `issueTitle`, `issueState`, `fromLane`, `toLane`, and `cause`.
+
+        ```bash
+        # Read the complete journal
+        runway-focus-log
+
+        # Select an exact UTC time range
+        jq -c 'select(.timestamp >= "2026-07-29T08:43:00Z" and .timestamp <= "2026-07-30T05:00:00Z")' "$RUNWAY_FOCUS_LOG"
+        ```
+
+        Pair `entered_focus` and `exited_focus` events by repository and issue
+        number to reconstruct work sessions. An entry with
+        `cause: "initial_snapshot"` marks an issue that was already focused when
+        logging began. `cause: "github_rollback"` compensates for a move that
+        GitHub rejected.
+
+        ## 3. Run Any Agent With Automatic Status
 
         Use `runway-agent` with any command-line coding agent to mark the card
         running until the command exits:

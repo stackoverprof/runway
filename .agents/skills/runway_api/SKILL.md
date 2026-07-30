@@ -12,6 +12,7 @@ This skill explains how agents running inside Runway terminal boxes can fully in
 Each Runway terminal box exposes the following environment variables to its shell:
 - `RUNWAY_BOX`: The unique UUID of the terminal card.
 - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
+- `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
 - `RUNWAY_FEED`: Absolute path to the timeline feed inbox JSONL file.
 - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
 
@@ -74,3 +75,20 @@ echo '{"description":"Building release 1.0.0-beta..."}' > "$RUNWAY_CONTROL"
 echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
 ```
 Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
+
+---
+
+## 3. Read Focus Work History
+
+Runway appends an immutable JSON object to `$RUNWAY_FOCUS_LOG` whenever an issue
+enters or leaves the Focus board. Reordering cards inside Focus is not logged.
+
+```bash
+runway-focus-log
+jq -c 'select(.timestamp >= "2026-07-29T08:43:00Z" and .timestamp <= "2026-07-30T05:00:00Z")' "$RUNWAY_FOCUS_LOG"
+```
+
+Events contain `timestamp`, `timeZone`, `action`, `repository`, `issueNumber`, `issueTitle`,
+`issueState`, `fromLane`, `toLane`, and `cause`. Pair `entered_focus` and
+`exited_focus` by repository and issue number to reconstruct work sessions.
+`cause: "initial_snapshot"` marks a card that was already focused when logging began.

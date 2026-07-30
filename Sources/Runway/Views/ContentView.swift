@@ -14,7 +14,7 @@ struct ContentView: View {
 
             ZStack(alignment: .bottomLeading) {
                 HStack(spacing: 0) {
-                    LeftPane(ws: context.workspace, feed: context.githubFeed, agentFeed: context.agentFeed)     // GitHub activity feed
+                    LeftPane(ws: context.workspace, feed: context.githubFeed)
                         .frame(width: left)
                         .zIndex(context.workspace.isFocusCardDragging ? 2 : 0)
 
@@ -52,5 +52,6 @@ struct ContentView: View {
         .background(WindowConfigurator())
         .background(WindowRegistrationView(context: context))
         .onAppear { context.startIfNeeded() }
+        .onDisappear { context.stop() }
     }
 }

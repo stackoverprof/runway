@@ -5,11 +5,10 @@ import AppKit
 struct LeftPane: View {
     @Bindable var ws: Workspace
     @Bindable var feed: GitHubFeed
-    @Bindable var agentFeed: AgentFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
-    @State private var showNoteComposer = false
     @State private var assignedIssues = AssignedIssues()
+    @State private var pullRequests = PullRequests.shared
     @State private var focusIssueDrag = FocusIssueDrag()
     @State private var runwayIssueTab: RunwayIssueTab = .open
     @State private var showMergesOnly = false
@@ -17,8 +16,11 @@ struct LeftPane: View {
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
     @State private var feedSearchQuery = ""
-    @State private var postSearchVisible = false
-    @State private var postSearchQuery = ""
+    @State private var prSearchVisible = false
+    @State private var prSearchQuery = ""
+    @State private var expandedPRAuthor: String?
+    @State private var prVisibleCounts: [PRPageKey: Int] = [:]
+    @State private var prTimeframe: PRTimeframe = .thirtyDays
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
@@ -97,11 +99,21 @@ struct LeftPane: View {
                 assignedIssues.resetBacklogOrder()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await feed.refresh(minimumAge: 15) }
+        }
         .onChange(of: ws.selectedTab) { previousTab, tab in
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
             if tab == .feeds {
-                Task { await feed.refresh() }
+                Task { await feed.refresh(minimumAge: 15) }
+            } else if tab == .pullRequests {
+                Task {
+                    await pullRequests.revalidate(
+                        repository: feed.repo,
+                        minimumAge: 15
+                    )
+                }
             }
         }
         .onChange(of: ws.findRequestID) { _, _ in
@@ -113,8 +125,8 @@ struct LeftPane: View {
         .task(id: emptySearchIsOpen(for: .feeds)) {
             await closeSearchAfterIdle(for: .feeds)
         }
-        .task(id: emptySearchIsOpen(for: .posts)) {
-            await closeSearchAfterIdle(for: .posts)
+        .task(id: emptySearchIsOpen(for: .pullRequests)) {
+            await closeSearchAfterIdle(for: .pullRequests)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(white: 0.035))
@@ -223,7 +235,7 @@ struct LeftPane: View {
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+        .pointerCursor()
         .popover(isPresented: $showRepoPicker, arrowEdge: .bottom) {
             RepoPicker(repos: feed.availableRepos, current: feed.repo) { picked in
                 feed.setRepo(picked)
@@ -242,7 +254,7 @@ struct LeftPane: View {
             ForEach(showAllPresence ? feed.presence : Array(feed.presence.prefix(5))) { p in
                 HStack(spacing: 8) {
                     Avatar(login: p.login, url: p.avatarURL, size: 18)
-                    Text(PersonProfileManager.shared.displayName(for: p.login))
+                    Text(PersonProfileManager.shared.username(for: p.login))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Color.white.opacity(p.idle ? 0.4 : 0.9))
                         .lineLimit(1)
@@ -285,7 +297,7 @@ struct LeftPane: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+                .pointerCursor()
                 .padding(.top, 2)
             }
         }
@@ -322,14 +334,6 @@ struct LeftPane: View {
     // MARK: Activity stream
     @State private var pulled = false
 
-    private var tabIndex: Int {
-        switch ws.selectedTab {
-        case .runway: return 0
-        case .feeds: return 1
-        case .posts: return 2
-        }
-    }
-
     private var subHeader: some View {
         HStack(alignment: .center, spacing: 8) {
             Text(subHeaderText)
@@ -359,139 +363,453 @@ struct LeftPane: View {
         switch ws.selectedTab {
         case .runway: "ON TODAY'S MISSIONS"
         case .feeds: displayedTagline
-        case .posts: "FROM THE LOGBOOK"
+        case .pullRequests: "PULL REQUESTS BY DEV"
         }
     }
 
     private var slidingTabContent: some View {
-        GeometryReader { geo in
-            HStack(spacing: 0) {
-                // Runway tab
+        ZStack {
+            switch ws.selectedTab {
+            case .runway:
                 runwayTab
-                    .frame(width: geo.size.width)
-
-                // Feeds tab, optionally filtered to merged pull requests only.
-                VStack(spacing: 0) {
-                    if feedSearchVisible {
-                        searchField(
-                            placeholder: "Search feeds",
-                            text: $feedSearchQuery,
-                            tab: .feeds
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    ZStack(alignment: .bottomTrailing) {
-                        feedScrollView {
-                            LazyVStack(alignment: .leading, spacing: 0) {
-                                let sourceItems = showMergesOnly
-                                    ? agentFeed.mergeTimeline(github: feed.events)
-                                    : agentFeed.timeline(github: feed.events)
-                                let items = filteredTimeline(
-                                    sourceItems,
-                                    query: feedSearchQuery,
-                                    isSearching: feedSearchVisible
-                                )
-                                if items.isEmpty {
-                                    if feedSearchVisible,
-                                       !feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                        searchEmptyPlaceholder("No matching feed activity")
-                                    } else if showMergesOnly {
-                                        mergeEmptyPlaceholder
-                                    } else {
-                                        emptyTabPlaceholder(for: .feeds)
-                                    }
-                                } else {
-                                    ForEach(items) { entry in
-                                        renderEntry(entry, isLast: entry.id == items.last?.id)
-                                    }
-                                }
-                                loadMoreFooter
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 64)
-                        }
-                        mergeFilterButton
-                            .padding(8)
-                    }
-                }
-                .frame(width: geo.size.width)
-
-                // Notes tab
-                VStack(spacing: 0) {
-                    if postSearchVisible {
-                        searchField(
-                            placeholder: "Search notes",
-                            text: $postSearchQuery,
-                            tab: .posts
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            postNoteButton
-                            if showNoteComposer {
-                                NoteComposer(isPresented: $showNoteComposer) { body in
-                                    agentFeed.createNote(body: body)
-                                }
-                                .padding(.bottom, 14)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-
-                            let pinnedItems = filteredTimeline(
-                                agentFeed.pinnedPostsTimeline(),
-                                query: postSearchQuery,
-                                isSearching: postSearchVisible
-                            )
-                            if !pinnedItems.isEmpty {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(pinnedItems) { entry in
-                                        renderEntry(entry, isLast: entry.id == pinnedItems.last?.id)
-                                    }
-
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.06))
-                                        .frame(height: 1)
-                                        .padding(.top, 2)
-                                        .padding(.bottom, 8)
-                                }
-                                .padding(.top, 10)
-                            }
-
-                            let items = filteredTimeline(
-                                agentFeed.postsTimeline(),
-                                query: postSearchQuery,
-                                isSearching: postSearchVisible
-                            )
-                            if items.isEmpty && pinnedItems.isEmpty {
-                                if postSearchVisible,
-                                   !postSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    searchEmptyPlaceholder("No matching notes")
-                                } else {
-                                    emptyTabPlaceholder(for: .posts)
-                                }
-                            } else {
-                                ForEach(items) { entry in
-                                    renderEntry(entry, isLast: entry.id == items.last?.id)
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                    }
-                    .contentMargins(.top, 0, for: .scrollContent)
-                    .scrollIndicators(.hidden)
-                }
-                .frame(width: geo.size.width)
+            case .feeds:
+                feedsTab
+            case .pullRequests:
+                pullRequestTab
             }
-            .offset(x: -CGFloat(tabIndex) * geo.size.width)
-            .animation(.spring(response: 0.38, dampingFraction: 0.85), value: ws.selectedTab)
         }
+        .id(ws.selectedTab)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.12), value: ws.selectedTab)
+    }
+
+    private var feedsTab: some View {
+        VStack(spacing: 0) {
+            if feedSearchVisible {
+                searchField(
+                    placeholder: "Search feeds",
+                    text: $feedSearchQuery,
+                    tab: .feeds
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            ZStack(alignment: .bottomTrailing) {
+                feedScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        let sourceItems = GitHubFeed.filterNoise(feed.events).filter { event in
+                            guard showMergesOnly else { return true }
+                            if case .prMerged = event.kind { return true }
+                            return false
+                        }
+                        let items = filteredFeedEvents(
+                            sourceItems,
+                            query: feedSearchQuery,
+                            isSearching: feedSearchVisible
+                        )
+                        if items.isEmpty {
+                            if feedSearchVisible,
+                               !feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                searchEmptyPlaceholder("No matching feed activity")
+                            } else if showMergesOnly {
+                                mergeEmptyPlaceholder
+                            } else {
+                                emptyTabPlaceholder(for: .feeds)
+                            }
+                        } else {
+                            ForEach(items) { event in
+                                FeedRow(
+                                    event: event,
+                                    time: clock(event.date),
+                                    isLast: event.id == items.last?.id,
+                                    repo: feed.repo
+                                )
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                        }
+                        loadMoreFooter
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 64)
+                }
+                mergeFilterButton
+                    .padding(8)
+            }
+        }
+    }
+
+    private enum PRTimeframe: String, CaseIterable, Identifiable {
+        case oneDay = "1d"
+        case sevenDays = "7d"
+        case thirtyDays = "30d"
+        case monthToDate = "MTD"
+        case yearToDate = "YTD"
+
+        var id: String { rawValue }
+
+        func startDate(now: Date = Date(), calendar: Calendar = .current) -> Date {
+            switch self {
+            case .oneDay:
+                return now.addingTimeInterval(-86_400)
+            case .sevenDays:
+                return now.addingTimeInterval(-7 * 86_400)
+            case .thirtyDays:
+                return now.addingTimeInterval(-30 * 86_400)
+            case .monthToDate:
+                return calendar.dateInterval(of: .month, for: now)?.start ?? now
+            case .yearToDate:
+                return calendar.dateInterval(of: .year, for: now)?.start ?? now
+            }
+        }
+    }
+
+    private var pullRequestTab: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                if prSearchVisible {
+                    searchField(
+                        placeholder: "Search developers or pull requests",
+                        text: $prSearchQuery,
+                        tab: .pullRequests
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                prTimeframeSelector
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+
+            if pullRequests.loading && !pullRequests.hasSnapshot {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = pullRequests.error, !pullRequests.hasSnapshot {
+                feedNotice(error, systemImage: "exclamationmark.triangle")
+            } else {
+                let developers = filteredPRDevelopers
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        if developers.isEmpty {
+                            placeholderCard(
+                                icon: prSearchQuery.isEmpty ? "arrow.triangle.pull" : "magnifyingglass",
+                                title: prSearchQuery.isEmpty
+                                    ? "No pull requests in this timeframe"
+                                    : "No matching pull requests",
+                                subtitle: prSearchQuery.isEmpty
+                                    ? "Try a wider timeframe."
+                                    : "Try a different search."
+                            )
+                        } else {
+                            ForEach(developers) { developer in
+                                pullRequestDeveloperCard(developer)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
+                .scrollIndicators(.hidden)
+                .id(prTimeframe)
+            }
+        }
+        .task(id: feed.repo) {
+            expandedPRAuthor = nil
+            prVisibleCounts.removeAll()
+            pullRequests.restore(repository: feed.repo)
+            await pullRequests.revalidate(repository: feed.repo, minimumAge: 30)
+        }
+        .task(id: ws.selectedTab) {
+            guard ws.selectedTab == .pullRequests else { return }
+            while !Task.isCancelled {
+                if NSApp.isActive {
+                    await pullRequests.revalidate(
+                        repository: feed.repo,
+                        minimumAge: 90
+                    )
+                }
+                do {
+                    try await Task.sleep(nanoseconds: 120_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            guard ws.selectedTab == .pullRequests else { return }
+            Task {
+                await pullRequests.revalidate(
+                    repository: feed.repo,
+                    minimumAge: 30
+                )
+            }
+        }
+    }
+
+    private var prTimeframeSelector: some View {
+        HStack(spacing: 2) {
+            ForEach(PRTimeframe.allCases) { timeframe in
+                Button {
+                    guard prTimeframe != timeframe else { return }
+                    expandedPRAuthor = nil
+                    prVisibleCounts.removeAll()
+                    prTimeframe = timeframe
+                } label: {
+                    Text(timeframe.rawValue)
+                        .font(.system(
+                            size: 9.5,
+                            weight: prTimeframe == timeframe ? .semibold : .medium,
+                            design: .monospaced
+                        ))
+                        .foregroundStyle(
+                            Color.white.opacity(prTimeframe == timeframe ? 0.88 : 0.35)
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 25)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(prTimeframe == timeframe ? Color.white.opacity(0.09) : .clear)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.035)))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.06), lineWidth: 1))
+    }
+
+    private var filteredPRDevelopers: [PullRequestDeveloper] {
+        let developers = pullRequests.developers(since: prTimeframe.startDate())
+        let query = prSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard prSearchVisible, !query.isEmpty else { return developers }
+
+        return developers.compactMap { developer in
+            let developerText = "\(developer.login) \(developer.displayName)"
+            if developerText.localizedCaseInsensitiveContains(query) {
+                return developer
+            }
+            let matches = developer.pullRequests.filter { pullRequest in
+                "#\(pullRequest.number) \(pullRequest.title) \(pullRequest.headRefName) \(pullRequest.baseRefName)"
+                    .localizedCaseInsensitiveContains(query)
+            }
+            guard !matches.isEmpty else { return nil }
+            return PullRequestDeveloper(
+                login: developer.login,
+                name: developer.name,
+                pullRequests: matches
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.mergedCount != rhs.mergedCount { return lhs.mergedCount > rhs.mergedCount }
+            if lhs.totalCount != rhs.totalCount { return lhs.totalCount > rhs.totalCount }
+            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        }
+    }
+
+    private func pullRequestDeveloperCard(_ developer: PullRequestDeveloper) -> some View {
+        let expanded = expandedPRAuthor == developer.login
+        return VStack(spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.88)) {
+                    expandedPRAuthor = expanded ? nil : developer.login
+                    if expanded {
+                        prVisibleCounts = prVisibleCounts.filter {
+                            $0.key.login != developer.login.lowercased()
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Avatar(login: developer.login, url: developer.avatarURL, size: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(developer.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.88))
+                            .lineLimit(1)
+                        Text("@\(developer.login)")
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.32))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    prCount("Open", developer.openCount, color: Self.prGreen)
+                    prCount("Merged", developer.mergedCount, color: Self.prPurple)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.30))
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }
+                .padding(11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+
+            if expanded {
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                    .frame(height: 1)
+                VStack(alignment: .leading, spacing: 10) {
+                    pullRequestSection(
+                        "OPEN",
+                        developerLogin: developer.login,
+                        pullRequests: developer.pullRequests.filter(\.isOpen),
+                        color: Self.prGreen
+                    )
+                    pullRequestSection(
+                        "MERGED",
+                        developerLogin: developer.login,
+                        pullRequests: developer.pullRequests.filter(\.isMerged),
+                        color: Self.prPurple
+                    )
+                    pullRequestSection(
+                        "CLOSED",
+                        developerLogin: developer.login,
+                        pullRequests: developer.pullRequests.filter { !$0.isOpen && !$0.isMerged },
+                        color: Color.white.opacity(0.38)
+                    )
+                }
+                .padding(11)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.075)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color.white.opacity(expanded ? 0.12 : 0.07), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private static let prGreen = Color(red: 0.18, green: 0.78, blue: 0.38)
+    private static let prPurple = Color(red: 0.64, green: 0.42, blue: 0.94)
+    private static let prPageSize = 20
+
+    private func prCount(_ label: String, _ count: Int, color: Color) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text("\(count)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(color.opacity(0.88))
+            Text(label)
+                .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.27))
+        }
+        .frame(minWidth: 32, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private func pullRequestSection(
+        _ title: String,
+        developerLogin: String,
+        pullRequests: [RepositoryPullRequest],
+        color: Color
+    ) -> some View {
+        if !pullRequests.isEmpty {
+            let pageKey = PRPageKey(login: developerLogin.lowercased(), section: title)
+            let visibleCount = min(
+                prVisibleCounts[pageKey] ?? Self.prPageSize,
+                pullRequests.count
+            )
+            let remainingCount = pullRequests.count - visibleCount
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 5) {
+                    Circle().fill(color).frame(width: 5, height: 5)
+                    Text("\(title)  \(pullRequests.count)")
+                        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.32))
+                    Spacer()
+                    if remainingCount > 0 {
+                        Text("SHOWING \(visibleCount)")
+                            .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.20))
+                    }
+                }
+                ForEach(Array(pullRequests.prefix(visibleCount))) { pullRequest in
+                    pullRequestRow(pullRequest, color: color)
+                }
+                if remainingCount > 0 {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            prVisibleCounts[pageKey] = min(
+                                visibleCount + Self.prPageSize,
+                                pullRequests.count
+                            )
+                        }
+                    } label: {
+                        HStack {
+                            Text("Show next \(min(Self.prPageSize, remainingCount))")
+                            Spacer()
+                            Text("\(remainingCount) remaining")
+                                .foregroundStyle(Color.white.opacity(0.24))
+                        }
+                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.45))
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.white.opacity(0.025))
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+            }
+        }
+    }
+
+    private func pullRequestRow(_ pullRequest: RepositoryPullRequest, color: Color) -> some View {
+        Button {
+            NSWorkspace.shared.open(pullRequest.url)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(verbatim: "#\(pullRequest.number)")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(color.opacity(0.82))
+                    if pullRequest.isDraft {
+                        Text("DRAFT")
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.38))
+                    }
+                    Text(pullRequest.title)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.70))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(pullRequestDurationText(pullRequest))
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.24))
+                }
+                HStack(spacing: 5) {
+                    Text(pullRequest.headRefName)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 7, weight: .semibold))
+                    Text(pullRequest.baseRefName)
+                }
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.27))
+                .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.025)))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+
+    private func pullRequestDurationText(_ pullRequest: RepositoryPullRequest) -> String {
+        let endDate = pullRequest.isMerged ? (pullRequest.mergedAt ?? pullRequest.closedAt ?? Date()) : Date()
+        return PullRequestDurationFormatter.string(endDate.timeIntervalSince(pullRequest.createdAt))
     }
 
     private enum RunwayIssueTab: String, CaseIterable {
@@ -523,12 +841,18 @@ struct LeftPane: View {
         .task(id: ws.selectedTab) {
             guard ws.selectedTab == .runway else { return }
             while !Task.isCancelled {
-                await assignedIssues.revalidate(
-                    repository: feed.repo,
-                    minimumAge: 15
-                )
-                syncFocusBoard()
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                if NSApp.isActive {
+                    await assignedIssues.revalidate(
+                        repository: feed.repo,
+                        minimumAge: 45
+                    )
+                    syncFocusBoard()
+                }
+                do {
+                    try await Task.sleep(nanoseconds: 60_000_000_000)
+                } catch {
+                    return
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -842,9 +1166,7 @@ struct LeftPane: View {
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .onHover { hovering in
-                    if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-                }
+                .pointerCursor()
             }
         }
         .frame(maxWidth: .infinity)
@@ -895,6 +1217,7 @@ struct LeftPane: View {
                         .foregroundStyle(Color.white.opacity(0.28))
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .help("Clear search")
             }
         }
@@ -927,10 +1250,10 @@ struct LeftPane: View {
                 feedSearchVisible.toggle()
                 willShow = feedSearchVisible
                 if !willShow { feedSearchQuery = "" }
-            case .posts:
-                postSearchVisible.toggle()
-                willShow = postSearchVisible
-                if !willShow { postSearchQuery = "" }
+            case .pullRequests:
+                prSearchVisible.toggle()
+                willShow = prSearchVisible
+                if !willShow { prSearchQuery = "" }
             }
         }
 
@@ -951,9 +1274,9 @@ struct LeftPane: View {
         case .feeds:
             return feedSearchVisible
                 && feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .posts:
-            return postSearchVisible
-                && postSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .pullRequests:
+            return prSearchVisible
+                && prSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -983,9 +1306,9 @@ struct LeftPane: View {
             case .feeds:
                 feedSearchVisible = false
                 feedSearchQuery = ""
-            case .posts:
-                postSearchVisible = false
-                postSearchQuery = ""
+            case .pullRequests:
+                prSearchVisible = false
+                prSearchQuery = ""
             }
         }
         if focusedSearchTab == tab {
@@ -993,51 +1316,43 @@ struct LeftPane: View {
         }
     }
 
-    private func filteredTimeline(
-        _ entries: [TimelineEntry],
+    private func filteredFeedEvents(
+        _ events: [FeedEvent],
         query: String,
         isSearching: Bool
-    ) -> [TimelineEntry] {
+    ) -> [FeedEvent] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isSearching, !normalized.isEmpty else { return entries }
-        return entries.filter {
-            timelineSearchText($0).localizedCaseInsensitiveContains(normalized)
+        guard isSearching, !normalized.isEmpty else { return events }
+        return events.filter {
+            feedEventSearchText($0).localizedCaseInsensitiveContains(normalized)
         }
     }
 
-    private func timelineSearchText(_ entry: TimelineEntry) -> String {
-        switch entry {
-        case let .github(event):
-            let actor = "\(event.actor) \(PersonProfileManager.shared.displayName(for: event.actor))"
-            let detail: String
-            switch event.kind {
-            case let .push(branch, count, commits):
-                detail = "push pushed \(branch) \(count.map(String.init) ?? "") "
-                    + commits.map { "\($0.sha) \($0.message)" }.joined(separator: " ")
-            case let .prOpened(number, title, branch):
-                detail = "pull request pr opened #\(number) \(title) \(branch)"
-            case let .prMerged(number, title, base, branch, additions, deletions, commits, _):
-                detail = "pull request pr merged merge #\(number) \(title) \(base) \(branch) "
-                    + "\(additions.map(String.init) ?? "") \(deletions.map(String.init) ?? "") "
-                    + "\(commits.map(String.init) ?? "")"
-            case let .branchCreated(name):
-                detail = "branch created \(name)"
-            case let .branchDeleted(name):
-                detail = "branch deleted \(name)"
-            case let .review(number, title, state):
-                detail = "review reviewed pull request pr #\(number) \(title) \(state)"
-            case let .issueOpened(number, title):
-                detail = "issue opened open #\(number) \(title)"
-            case let .issueClosed(number, title):
-                detail = "issue closed close #\(number) \(title)"
-            }
-            return "\(actor) \(detail)"
-        case let .agent(post):
-            return "\(post.author) \(PersonProfileManager.shared.displayName(for: post.author)) "
-                + "\(post.title ?? "") \(post.body)"
-        case let .userNote(note):
-            return note.body
+    private func feedEventSearchText(_ event: FeedEvent) -> String {
+        let actor = "\(event.actor) \(PersonProfileManager.shared.username(for: event.actor)) \(PersonProfileManager.shared.fullName(for: event.actor))"
+        let detail: String
+        switch event.kind {
+        case let .push(branch, count, commits):
+            detail = "push pushed \(branch) \(count.map(String.init) ?? "") "
+                + commits.map { "\($0.sha) \($0.message)" }.joined(separator: " ")
+        case let .prOpened(number, title, branch):
+            detail = "pull request pr opened #\(number) \(title) \(branch)"
+        case let .prMerged(number, title, base, branch, additions, deletions, commits, _):
+            detail = "pull request pr merged merge #\(number) \(title) \(base) \(branch) "
+                + "\(additions.map(String.init) ?? "") \(deletions.map(String.init) ?? "") "
+                + "\(commits.map(String.init) ?? "")"
+        case let .branchCreated(name):
+            detail = "branch created \(name)"
+        case let .branchDeleted(name):
+            detail = "branch deleted \(name)"
+        case let .review(number, title, state):
+            detail = "review reviewed pull request pr #\(number) \(title) \(state)"
+        case let .issueOpened(number, title):
+            detail = "issue opened open #\(number) \(title)"
+        case let .issueClosed(number, title):
+            detail = "issue closed close #\(number) \(title)"
         }
+        return "\(actor) \(detail)"
     }
 
     private func runwayIssueList(
@@ -1189,25 +1504,6 @@ struct LeftPane: View {
         .coordinateSpace(name: "feed")
     }
 
-    @ViewBuilder private func renderEntry(_ entry: TimelineEntry, isLast: Bool) -> some View {
-        switch entry {
-        case let .github(event):
-            FeedRow(event: event, time: clock(event.date),
-                    isLast: isLast, repo: feed.repo)
-                .transition(.move(edge: .top).combined(with: .opacity))
-        case let .agent(post):
-            AgentFeedRow(post: post, time: clock(post.date),
-                         isLast: isLast,
-                         agentFeed: agentFeed)
-                .transition(.move(edge: .top).combined(with: .opacity))
-        case let .userNote(note):
-            UserNoteRow(note: note, time: clock(note.date),
-                        isLast: isLast,
-                        agentFeed: agentFeed)
-                .transition(.move(edge: .top).combined(with: .opacity))
-        }
-    }
-
     private var loadMoreFooter: some View {
         Group {
             if feed.canLoadMore, !feed.events.isEmpty {
@@ -1233,30 +1529,6 @@ struct LeftPane: View {
         }
     }
 
-    // MARK: Post a Note button
-    private var postNoteButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { showNoteComposer.toggle() }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Post a Note")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.08)))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.15), lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
-        .padding(.bottom, 6)
-    }
-
     // MARK: Empty tab placeholder
     @ViewBuilder private func emptyTabPlaceholder(for tab: FeedTab) -> some View {
         switch tab {
@@ -1265,9 +1537,8 @@ struct LeftPane: View {
         case .feeds:
             placeholderCard(icon: "tray", title: "No activity yet",
                             subtitle: "Events from your team will appear here as they happen.")
-        case .posts:
-            placeholderCard(icon: "sparkles", title: "Notes will appear here",
-                            subtitle: "Your agents can be automated to post updates here for any of your needs — build reports, deployment status, daily recaps, and more.\n\nYou can also post your own notes above.")
+        case .pullRequests:
+            EmptyView()
         }
     }
 
@@ -1315,7 +1586,7 @@ struct LeftPane: View {
                     }
                 }
                 .frame(width: 14, height: 14)
-                Text("Show Merge")
+                Text("Only Merge")
             }
             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(Color.white.opacity(0.86))
@@ -1334,9 +1605,7 @@ struct LeftPane: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-        }
+        .pointerCursor()
     }
 
     private func placeholderCard(icon: String, title: String, subtitle: String) -> some View {
@@ -1378,7 +1647,7 @@ struct LeftPane: View {
                         .contentShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
-                .onHover { if $0 { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+                .pointerCursor()
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -1502,6 +1771,11 @@ struct LeftPane: View {
     }
 }
 
+private struct PRPageKey: Hashable {
+    let login: String
+    let section: String
+}
+
 private struct RunwayIssueCardKey: Hashable {
     let lane: AssignedIssueLane
     let issueNumber: Int
@@ -1560,14 +1834,17 @@ private struct RunwayIssueTabsFramePreferenceKey: PreferenceKey {
     private var lastTargetIssueNumber: Int?
 
     func updateCardFrames(_ frames: [RunwayIssueCardKey: CGRect]) {
+        guard cardFrames != frames else { return }
         cardFrames = frames
     }
 
     func updateLaneFrames(_ frames: [AssignedIssueLane: CGRect]) {
+        guard laneFrames != frames else { return }
         laneFrames = frames
     }
 
     func updateIssueTabsFrame(_ frame: CGRect) {
+        guard issueTabsFrame != frame else { return }
         issueTabsFrame = frame
     }
 

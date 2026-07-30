@@ -115,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ws.focus(index: d - 1); return true
         }
 
-        // Option-Command-1/2/3 jumps to Runway/Feeds/Notes tab.
+        // Option-Command-1/2/3 jumps to Runway/Feeds/PR tab.
         if mods == [.command, .option], let key = ev.charactersIgnoringModifiers,
            let d = Int(key), (1...3).contains(d) {
             let tabs = FeedTab.allCases

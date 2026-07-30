@@ -119,10 +119,12 @@ struct KeyRecorderRow: View {
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96)
                 .monospacedDigit()
+                .pointerCursor()
             Button { bindings.reset(action) } label: { Image(systemName: "arrow.uturn.backward") }
                 .buttonStyle(.borderless)
                 .help("Reset to default")
                 .disabled(!bindings.isCustom(action))
+                .pointerCursor()
         }
         .onDisappear(perform: stop)
     }

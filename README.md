@@ -26,7 +26,7 @@ same field of view.
 
 ## Install in a minute
 
-1. Download **`Runway-2.0.0-beta.1-arm64.dmg`** from
+1. Download **`Runway-2.0.0-beta.2-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -65,16 +65,21 @@ needs it.
 
 Runway polls the selected repository through your existing authenticated `gh`
 session. There is no separate token setup and no personal access token stored by
-the app.
+the app. Cached Feeds, issues, Pulls, and repository choices render immediately,
+then revalidate in the background. Identical requests are coalesced across
+windows, reads are concurrency-limited, failures back off automatically, and
+routine polling pauses while Runway is inactive.
 
 - A presence strip shows who has been active recently.
 - The timeline groups meaningful pushes, PR activity, reviews, issues, and
   branch changes.
-- **Runway**, **Feeds**, and **Notes** tabs separate focused work, repo motion,
-  and agent-authored updates. Feeds includes an optional merge-only filter.
+- **Runway**, **Feeds**, and **Pulls** tabs separate focused work, repo motion,
+  and pull request activity. Feeds includes an optional merge-only filter.
+- The PR view groups pull requests by developer, sorts developers by merged PRs,
+  and supports 1d, 7d, 30d, MTD, and YTD timeframes.
 - The Runway board shows assigned Open and Closed issues, supports local
   ordering, and can close or reopen issues on GitHub through drag and drop.
-- `⌘F` opens tab-specific search for issues, feed events, or notes.
+- `⌘F` opens tab-specific search for issues, feed events, or pull requests.
 - The searchable repo switcher can open any accessible `owner/repo`.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
   responsive.
@@ -118,6 +123,11 @@ Run this inside any card to discover everything an agent can do:
 runway-help
 ```
 
+Every issue entering or leaving the Focus board is appended to the machine-readable
+JSONL journal at `$RUNWAY_FOCUS_LOG`. Agents can filter it by timestamp to reconstruct
+what was in Focus during a time range, then enrich that history with git or session data.
+`runway-focus-log` prints the journal from any Runway terminal.
+
 Wrap any command-line agent for automatic running and idle status:
 
 ```sh
@@ -130,13 +140,6 @@ Claude Code gets richer automatic attention hooks when launched normally as
 `claude`. The guide and helper commands live inside Runway's Application Support
 directory. Runway does not edit your shell or agent configuration files.
 
-Agents can also post Markdown updates to the **Notes** timeline:
-
-```sh
-runway-post "Build passed on macOS 14 and 15"
-runway-post "release-bot" "Production deployment complete" "Deploy"
-```
-
 ## Keyboard map
 
 | Move | Shortcut | Action |
@@ -145,8 +148,8 @@ runway-post "release-bot" "Production deployment complete" "Deploy"
 | Jump | `⌘1` through `⌘9` | Focus a specific agent |
 | Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |
-| Find | `⌘F` | Search the active Runway, Feeds, or Notes tab |
-| Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Notes |
+| Find | `⌘F` | Search the active Runway, Feeds, or Pulls tab |
+| Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Pulls |
 | Settings | `⌘,` | Open settings and people profiles |
 
 Shortcuts can be customized from **Runway → Settings → Shortcuts**.

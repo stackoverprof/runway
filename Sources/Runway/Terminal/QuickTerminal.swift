@@ -40,8 +40,8 @@ struct QuickTerminal: View {
         
         var env = [
             "ZDOTDIR": AgentControl.zdotdir.path,
-            "RUNWAY_FEED": AgentControl.feedInbox.path,
             "RUNWAY_CONTROL": AgentControl.file(for: QuickTerminal.quickBoxID).path,
+            "RUNWAY_FOCUS_LOG": FocusActivityLog.file.path,
             "RUNWAY_CWD_FILE": AgentControl.cwdFile(for: QuickTerminal.quickBoxID).path,
             "PATH": "\(binPath):\(systemPath)",
         ]
@@ -126,6 +126,7 @@ struct QuickTerminal: View {
                     .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
+                    .pointerCursor()
                     .onTapGesture {
                         ws.quickVisible = true
                     }
@@ -249,6 +250,7 @@ struct QuickTerminal: View {
                         .foregroundStyle(ws.quickPinned ? Color(red: 0.45, green: 0.82, blue: 0.78) : Color.white.opacity(0.4))
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
             }
         }

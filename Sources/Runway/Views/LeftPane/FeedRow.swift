@@ -1,124 +1,6 @@
 import AppKit
 import SwiftUI
 
-struct AgentFeedRow: View {
-    let post: AgentPost
-    let time: String
-    let isLast: Bool
-    let agentFeed: AgentFeed
-    @State private var hovering = false
-
-    private static let accent = Color(red: 0.45, green: 0.82, blue: 0.78)
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            ZStack(alignment: .top) {
-                if !isLast {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .frame(width: 1.5)
-                        .frame(maxHeight: .infinity)
-                        .padding(.top, 18)
-                }
-                Avatar(login: post.author, size: 28)
-                    .padding(.top, 4)
-            }
-            .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(PersonProfileManager.shared.displayName(for: post.author))
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.9))
-                    Text("posted")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color.white.opacity(0.55))
-                    Spacer(minLength: 6)
-                    copyButton
-                    deleteButton
-                    pinButton
-                    Text(time)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.3))
-                }
-                if let title = post.title, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.78))
-                }
-                MarkdownBody(source: post.body)
-            }
-            .padding(11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.06 : 0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(hovering ? 0.12 : 0.06), lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .onHover { isHovering in
-                withAnimation(.easeInOut(duration: 0.12)) { hovering = isHovering }
-            }
-            .padding(.bottom, 10)
-        }
-    }
-
-    private var copyButton: some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(copyText, forType: .string)
-        } label: {
-            Image(systemName: "doc.on.doc")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.5))
-                .frame(width: 18, height: 18)
-                .opacity(hovering ? 1 : 0)
-        }
-        .buttonStyle(.plain)
-        .help("Copy post")
-        .allowsHitTesting(hovering)
-        .accessibilityHidden(!hovering)
-    }
-
-    private var copyText: String {
-        guard let title = post.title, !title.isEmpty else { return post.body }
-        return "\(title)\n\n\(post.body)"
-    }
-
-    private var pinButton: some View {
-        Button {
-            if post.pinned == true {
-                agentFeed.unpinPost(id: post.id)
-            } else {
-                agentFeed.pinPost(id: post.id)
-            }
-        } label: {
-            Image(systemName: post.pinned == true ? "pin.fill" : "pin")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(post.pinned == true ? Self.accent : Color.white.opacity(0.5))
-                .frame(width: 18, height: 18)
-                .opacity(hovering ? 1 : (post.pinned == true ? 0.7 : 0))
-        }
-        .buttonStyle(.plain)
-        .help(post.pinned == true ? "Unpin post" : "Pin post")
-        .allowsHitTesting(hovering || post.pinned == true)
-        .accessibilityHidden(!hovering && post.pinned != true)
-    }
-
-    private var deleteButton: some View {
-        Button {
-            agentFeed.deletePost(id: post.id)
-        } label: {
-            Image(systemName: "trash")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.5))
-                .frame(width: 18, height: 18)
-                .opacity(hovering ? 1 : 0)
-        }
-        .buttonStyle(.plain)
-        .help("Delete post")
-        .allowsHitTesting(hovering)
-        .accessibilityHidden(!hovering)
-    }
-}
-
 struct FeedRow: View {
     let event: FeedEvent
     let time: String
@@ -161,7 +43,7 @@ struct FeedRow: View {
             ZStack(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(PersonProfileManager.shared.displayName(for: event.actor))
+                        Text(PersonProfileManager.shared.username(for: event.actor))
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.9))
                         Text(verb)
@@ -205,8 +87,8 @@ struct FeedRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onHover { h in
                 hovering = h
-                if h, link != nil { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
             }
+            .pointerCursor(link != nil)
             .onTapGesture { if let link { NSWorkspace.shared.open(link) } }
             .padding(.bottom, 10)
         }
@@ -289,7 +171,7 @@ struct FeedRow: View {
                     }
                     if let dur = duration {
                         Text("•").font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.2))
-                        Text(formatPRDuration(dur)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
+                        Text(PullRequestDurationFormatter.string(dur)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
                     }
                 }
                 Text(title.isEmpty ? branch : title).font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.55)).lineLimit(1)
@@ -316,10 +198,14 @@ struct FeedRow: View {
 
     private var cardBackgroundColor: Color {
         if case .prMerged = event.kind {
-            return Color(red: 0.04, green: 0.02, blue: 0.10).opacity(hovering ? 0.95 : 0.85)
-        } else {
-            return Color.white.opacity(hovering ? 0.06 : 0.035)
+            // Opaque equivalent of the original translucent violet over the
+            // app background. This restores the special merge treatment while
+            // keeping every card fully solid.
+            return hovering
+                ? Color(red: 0.048, green: 0.027, blue: 0.112)
+                : Color(red: 0.039, green: 0.022, blue: 0.090)
         }
+        return Color(white: hovering ? 0.09 : 0.075)
     }
 
     private var cardBorderColor: Color {
@@ -338,23 +224,6 @@ struct FeedRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-    }
-
-    private func formatPRDuration(_ duration: TimeInterval) -> String {
-        let secs = Int(duration)
-        if secs < 60 { return "open \(secs)s" }
-        let mins = secs / 60
-        if mins < 60 { return "open \(mins)m" }
-        let hours = mins / 60
-        if hours < 24 {
-            let remMins = mins % 60
-            if remMins > 0 { return "open \(hours)h \(remMins)m" }
-            return "open \(hours)h"
-        }
-        let days = hours / 24
-        let remHours = hours % 24
-        if remHours > 0 { return "open \(days)d \(remHours)h" }
-        return "open \(days)d"
     }
 
     private var cardBorder: some View {

@@ -35,15 +35,20 @@ struct GeneralSettings: View {
                     Text("1 minute").tag(60)
                     Text("2 minutes").tag(120)
                 }
+                .pointerCursor()
                 Stepper("Active within: \(idleMinutes) min", value: $idleMinutes, in: 5...120, step: 5)
+                    .pointerCursor()
                 Stepper("On fire threshold: \(fireThreshold) events", value: $fireThreshold, in: 2...20)
+                    .pointerCursor()
                 Picker("Show people active in the last", selection: $officeHours) {
                     Text("3 hours").tag(3)
                     Text("6 hours").tag(6)
                     Text("12 hours").tag(12)
                     Text("24 hours").tag(24)
                 }
+                .pointerCursor()
                 Toggle("Hide bot accounts", isOn: $hideBots)
+                    .pointerCursor()
             }
 
             Section("Branding") {
@@ -52,6 +57,7 @@ struct GeneralSettings: View {
                     Text("Image").tag("image")
                 }
                 .pickerStyle(.segmented)
+                .pointerCursor()
 
                 if brandHeaderStyle == "text" {
                     TextField("Title", text: $brandTitle)
@@ -60,12 +66,14 @@ struct GeneralSettings: View {
                         Button(brandLogoFilename.isEmpty ? "Choose Logo…" : "Change Logo…") {
                             chooseLogo()
                         }
+                        .pointerCursor()
                         if !brandLogoFilename.isEmpty {
                             Button("Remove Logo", role: .destructive) {
                                 BrandingManager.removeLogo(named: brandLogoFilename)
                                 brandLogoFilename = ""
                                 brandingError = nil
                             }
+                            .pointerCursor()
                         }
                     }
                 }
@@ -85,6 +93,7 @@ struct GeneralSettings: View {
                         brandHeaderStyle = "text"
                         brandingError = nil
                     }
+                    .pointerCursor()
                 }
 
                 Text("Replaces the Activity title in the left pane with custom text or any image format macOS can open, including SVG, PNG, and JPEG.")
@@ -99,18 +108,22 @@ struct GeneralSettings: View {
 
             Section("Notifications") {
                 Toggle("Play a sound when an agent needs attention", isOn: $soundEnabled)
+                    .pointerCursor()
                 HStack {
                     Picker("Alert sound", selection: $alertSound) {
                         ForEach(sounds, id: \.self) { Text($0).tag($0) }
                     }
                     .disabled(!soundEnabled)
+                    .pointerCursor()
                     Button("Test") { RunwayNotificationManager.playSelectedSound() }
                         .disabled(!soundEnabled)
+                        .pointerCursor()
                 }
             }
 
             Section("Agents") {
                 Toggle("Run command in each agent", isOn: $agentCommandEnabled)
+                    .pointerCursor()
                 Picker("Command", selection: $agentCommandChoice) {
                     Text("Claude").tag("claude")
                     Text("Codex").tag("codex")
@@ -118,6 +131,7 @@ struct GeneralSettings: View {
                     Text("Custom…").tag("custom")
                 }
                     .disabled(!agentCommandEnabled)
+                    .pointerCursor()
 
                 if agentCommandChoice == "custom" {
                     TextField("Custom command", text: $agentCommand)
@@ -133,6 +147,7 @@ struct GeneralSettings: View {
                 HStack {
                     TextField("Starting directory", text: $focusTerminalDirectory)
                     Button("Choose…") { chooseFocusTerminalDirectory() }
+                        .pointerCursor()
                 }
                 Text("New terminals created from the Focus board start in this directory. You can use ~ for your home folder.")
                     .font(.caption)
@@ -145,6 +160,7 @@ struct GeneralSettings: View {
                         AssignedIssues.resetSavedBacklogOrder()
                         issueOrderReset = true
                     }
+                    .pointerCursor()
                     if issueOrderReset {
                         Text("Reset")
                             .font(.caption)
@@ -158,7 +174,9 @@ struct GeneralSettings: View {
 
             Section("General") {
                 Toggle("Confirm before quitting", isOn: $confirmQuit)
+                    .pointerCursor()
                 Toggle("Launch at login", isOn: $launchAtLogin)
+                    .pointerCursor()
                     .onChange(of: launchAtLogin) { _, on in
                         try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
                     }
@@ -167,6 +185,7 @@ struct GeneralSettings: View {
                         GitHubFeed.clearCache()
                         cacheCleared = true
                     }
+                    .pointerCursor()
                     if cacheCleared {
                         Text("Cleared").font(.caption).foregroundStyle(.secondary)
                     }

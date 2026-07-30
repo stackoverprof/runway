@@ -4,16 +4,16 @@ import AppKit
 enum FeedTab: String, CaseIterable, Codable {
     case runway = "Runway"
     case feeds = "Feeds"
-    case posts = "Notes"
+    case pullRequests = "Pulls"
 
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
-        // Preserve workspaces saved before Merge moved into Feeds and Posts was
-        // renamed to Notes.
+        // Preserve workspaces saved before Merge moved into Feeds and the old
+        // Posts or Notes tab was replaced by PR.
         if value == "Merge" {
             self = .feeds
-        } else if value == "Posts" {
-            self = .posts
+        } else if value == "Posts" || value == "Notes" || value == "PR" {
+            self = .pullRequests
         } else {
             self = FeedTab(rawValue: value) ?? .feeds
         }
@@ -311,7 +311,6 @@ enum FeedTab: String, CaseIterable, Codable {
                 $0.focusRepository == repository && $0.focusIssueNumber == issue.number
             }) {
                 existing.name = issue.title
-                existing.detail = ""
                 nextBoxes.append(existing)
                 usedIDs.insert(existing.id)
             } else {

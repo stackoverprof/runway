@@ -11,6 +11,7 @@ struct ResizableBox: View {
     @Binding var height: CGFloat
     var isFocused: Bool = false
     var isFocusManaged: Bool = false
+    var focusIssueNumber: Int?
     /// When non-nil (accordion mode) the box uses this height and the resize
     /// handle is disabled.
     var fixedHeight: CGFloat? = nil
@@ -21,6 +22,8 @@ struct ResizableBox: View {
     @State private var isPulsing = false
     @State private var shimmerOffset: CGFloat = -0.8
     @State private var pulseTask: Task<Void, Never>? = nil
+    @State private var didCopyIssueTitle = false
+    @State private var copyFeedbackTask: Task<Void, Never>?
 
     private let maxDetail = 40
 
@@ -115,6 +118,7 @@ struct ResizableBox: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHoveringHeader = $0 }
+        .pointerCursor()
         .onTapGesture { workspace.focusedID = id }
     }
 
@@ -122,10 +126,16 @@ struct ResizableBox: View {
     @ViewBuilder
     private var nameField: some View {
         if isFocusManaged {
-            Text(name)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.9))
-                .lineLimit(1)
+            Button(action: copyIssueTitle) {
+                Text(name)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(didCopyIssueTitle ? 0.42 : 0.9))
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Copy issue title and number")
         } else if isEditingName {
             InlineField(
                 text: $name,
@@ -140,10 +150,30 @@ struct ResizableBox: View {
                 .foregroundStyle(Color.white.opacity(0.9))
                 .lineLimit(1)
                 .contentShape(Rectangle())
+                .pointerCursor()
                 .onTapGesture { workspace.focusedID = id; isEditingName = true }
-                .onHover { hovering in
-                    if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-                }
+        }
+    }
+
+    private func copyIssueTitle() {
+        workspace.focusedID = id
+        guard let focusIssueNumber else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            "\(name) #\(focusIssueNumber)",
+            forType: .string
+        )
+
+        copyFeedbackTask?.cancel()
+        didCopyIssueTitle = true
+        copyFeedbackTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 80_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            didCopyIssueTitle = false
         }
     }
 
@@ -151,9 +181,7 @@ struct ResizableBox: View {
     /// ellipsis when the header gets tight on a narrow window.
     @ViewBuilder
     private var detailField: some View {
-        if isFocusManaged {
-            EmptyView()
-        } else if isEditingDetail {
+        if isEditingDetail {
             InlineField(
                 text: $detail,
                 font: .monospacedSystemFont(ofSize: 10, weight: .regular),
@@ -180,10 +208,8 @@ struct ResizableBox: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .contentShape(Rectangle())
+            .pointerCursor()
             .onTapGesture { workspace.focusedID = id; isEditingDetail = true }
-            .onHover { hovering in
-                if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-            }
     }
 
     /// Drag handle on the bottom edge only; the top edge is inert.

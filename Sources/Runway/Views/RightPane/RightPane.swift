@@ -33,6 +33,7 @@ struct RightPane: View {
                             height: $box.height,
                             isFocused: ws.focusedID == box.id,
                             isFocusManaged: box.focusIssueNumber != nil,
+                            focusIssueNumber: box.focusIssueNumber,
                             fixedHeight: fixedHeight(for: box, geo: geo, count: n)
                         )
                         .id(box.id)

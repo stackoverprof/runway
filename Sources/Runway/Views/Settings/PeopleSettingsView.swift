@@ -2,12 +2,10 @@ import SwiftUI
 import AppKit
 
 struct PeopleSettings: View {
-    @Bindable var feed = GitHubFeed.shared
-    @Bindable var agentFeed = AgentFeed.shared
     @State private var selectedPersonLogin: String?
-    @State private var knownLogins: Set<String> = []
-    @State private var editingDisplayName = ""
-
+    @State private var usernameDraft = ""
+    @State private var fullNameDraft = ""
+    @State private var draftSaveTask: Task<Void, Never>?
     private var manager = PersonProfileManager.shared
 
     var body: some View {
@@ -15,34 +13,25 @@ struct PeopleSettings: View {
             peopleList
             
             if let selected = selectedPersonLogin {
-                let profile = manager.profiles.first { $0.login == selected } ?? PersonProfile(login: selected)
+                let profile = manager.profile(for: selected) ?? PersonProfile(login: selected)
                 Divider()
                 editProfilePanel(for: selected, profile: profile)
             }
         }
         .frame(minHeight: 500)
         .onAppear {
-            updateKnownLogins()
+            GitHubFeed.discoverCachedPeople()
+            PullRequests.discoverCachedPeople()
         }
-        .onChange(of: selectedPersonLogin) { _, selected in
-            if let selected, let profile = manager.profiles.first(where: { $0.login == selected }) {
-                editingDisplayName = profile.displayName
-            } else if let selected {
-                editingDisplayName = selected
-            }
-        }
-        .onChange(of: feed.events) { _, _ in
-            updateKnownLogins()
-        }
-        .onChange(of: agentFeed.posts) { _, _ in
-            updateKnownLogins()
-        }
+        .onChange(of: usernameDraft) { _, _ in scheduleDraftSave() }
+        .onChange(of: fullNameDraft) { _, _ in scheduleDraftSave() }
+        .onDisappear { commitDrafts() }
     }
 
     private var peopleList: some View {
-        List(selection: $selectedPersonLogin) {
-            if knownLogins.isEmpty {
-                Text("People will appear here as they show up in the activity feed.")
+        List {
+            if manager.profiles.isEmpty {
+                Text("People will appear here when Runway sees them in Feeds or Pulls.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding()
@@ -54,37 +43,44 @@ struct PeopleSettings: View {
     }
 
     private var peopleListRows: some View {
-        ForEach(knownLogins.sorted(), id: \.self) { login in
-            peopleRow(login: login)
+        ForEach(sortedProfiles) { profile in
+            peopleRow(profile: profile)
         }
     }
 
-    private func peopleRow(login: String) -> some View {
-        let profile = manager.profiles.first { $0.login == login } ?? PersonProfile(login: login)
-        return HStack(spacing: 10) {
-            if let imageData = profile.imageData, let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 32, height: 32)
-                    .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 32, height: 32)
-                    .overlay(Circle().stroke(Color.gray.opacity(0.5), lineWidth: 1))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName)
-                    .font(.system(size: 12.5, weight: .semibold))
-                Text("@\(login)")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+    private var sortedProfiles: [PersonProfile] {
+        manager.profiles.sorted {
+            $0.effectiveFullName.localizedCaseInsensitiveCompare(
+                $1.effectiveFullName
+            ) == .orderedAscending
         }
-        .contentShape(Rectangle())
-        .tag(login)
+    }
+
+    private func peopleRow(profile: PersonProfile) -> some View {
+        Button {
+            select(profile.login)
+        } label: {
+            HStack(spacing: 10) {
+                Avatar(login: profile.login, url: profile.avatarURL, size: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.effectiveFullName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                    Text("@\(profile.effectiveUsername)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selectedPersonLogin == profile.login
+                ? Color.accentColor.opacity(0.16)
+                : Color.clear
+        )
+        .pointerCursor()
     }
 
     private func editProfilePanel(for login: String, profile: PersonProfile) -> some View {
@@ -94,18 +90,7 @@ struct PeopleSettings: View {
                 .foregroundStyle(.secondary)
             
             HStack(spacing: 8) {
-                if let imageData = profile.imageData, let nsImage = NSImage(data: imageData) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 48, height: 48)
-                        .clipShape(Circle())
-                } else {
-                    Circle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(width: 48, height: 48)
-                        .overlay(Circle().stroke(Color.gray.opacity(0.4), lineWidth: 1))
-                }
+                Avatar(login: login, url: profile.avatarURL, size: 48)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Button("Upload Image") {
@@ -120,6 +105,7 @@ struct PeopleSettings: View {
                         }
                     }
                     .font(.system(size: 11))
+                    .pointerCursor()
                     if profile.imageData != nil {
                         Button("Remove Image", role: .destructive) {
                             var updated = profile
@@ -127,28 +113,87 @@ struct PeopleSettings: View {
                             updateProfile(updated)
                         }
                         .font(.system(size: 11))
+                        .pointerCursor()
                     }
                 }
             }
-            
-            TextField("Display name", text: $editingDisplayName)
-                .font(.system(size: 12))
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: editingDisplayName) { _, newName in
-                    var updated = profile
-                    updated.displayName = newName
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Username")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(login, text: $usernameDraft)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Full name")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Full name", text: $fullNameDraft)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Text("Edits are local to Runway. An empty username uses the GitHub login, and an empty full name uses the username.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Reset") {
+                    draftSaveTask?.cancel()
+                    var updated = manager.profile(for: login) ?? PersonProfile(login: login)
+                    updated.displayName = ""
+                    updated.fullNameOverride = nil
                     updateProfile(updated)
+                    usernameDraft = ""
+                    fullNameDraft = updated.githubFullName ?? ""
                 }
+                .disabled(
+                    profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && profile.fullNameOverride == nil
+                )
+                .pointerCursor()
+            }
         }
         .padding()
     }
 
-    private func updateKnownLogins() {
-        var logins = Set<String>()
-        logins.formUnion(feed.events.map { $0.actor })
-        logins.formUnion(feed.presence.map { $0.login })
-        logins.formUnion(agentFeed.posts.map { $0.author })
-        knownLogins = logins
+    private func select(_ login: String) {
+        commitDrafts()
+        let profile = manager.profile(for: login) ?? PersonProfile(login: login)
+        usernameDraft = profile.displayName
+        fullNameDraft = profile.fullNameOverride ?? profile.githubFullName ?? ""
+        withAnimation(.easeInOut(duration: 0.15)) {
+            selectedPersonLogin = login
+        }
+    }
+
+    private func scheduleDraftSave() {
+        guard selectedPersonLogin != nil else { return }
+        draftSaveTask?.cancel()
+        draftSaveTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            commitDrafts()
+        }
+    }
+
+    private func commitDrafts() {
+        guard let login = selectedPersonLogin else { return }
+        var profile = manager.profile(for: login) ?? PersonProfile(login: login)
+        guard profile.displayName != usernameDraft
+            || (profile.fullNameOverride ?? profile.githubFullName ?? "") != fullNameDraft
+        else { return }
+        profile.displayName = usernameDraft
+        profile.fullNameOverride = fullNameDraft
+        updateProfile(profile)
     }
 
     private func updateProfile(_ profile: PersonProfile) {

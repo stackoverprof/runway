@@ -63,6 +63,8 @@ struct Presence: Identifiable {
     private var pushSHAs: [String: (before: String, head: String)] = [:]
     private var fetchingCounts: Set<String> = []
     private var fetchingPRs: Set<Int> = []
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var repoListTask: Task<Void, Never>?
 
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
@@ -75,10 +77,40 @@ struct Presence: Identifiable {
 
     // Disk cache so reopening the app shows the last feed instantly (no skeleton).
     private static var cacheFile: URL { AgentControl.supportDir.appendingPathComponent("feed-cache.json") }
+    private static let recentRepositoriesKey = "runway.recentRepositories.v1"
+    private static let repositoryDirectoryKey = "runway.repositoryDirectory.v1"
+    private static let repositoryDirectoryFetchedAtKey = "runway.repositoryDirectoryFetchedAt.v1"
+    private static let feedValidatedAtKey = "runway.feedValidatedAt.v1"
     private static let coderDate: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
     private static let decoderDate: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
 
-    init() { loadCache() }
+    init() {
+        availableRepos = Self.cachedRepositoryDirectory
+        loadCache()
+    }
+
+    /// Filter out branch-delete and merge-commit noise from the visible feed.
+    static func filterNoise(_ events: [FeedEvent]) -> [FeedEvent] {
+        let mergeTargets: [(branch: String, date: Date)] = events.compactMap { event in
+            if case let .prMerged(_, _, base, _, _, _, _, _) = event.kind {
+                return (base, event.date)
+            }
+            return nil
+        }
+        return events.filter { event in
+            switch event.kind {
+            case .branchDeleted:
+                return false
+            case let .push(branch, _, _):
+                return !mergeTargets.contains { target in
+                    target.branch == branch
+                        && abs(target.date.timeIntervalSince(event.date)) < 120
+                }
+            default:
+                return true
+            }
+        }
+    }
 
     /// Load the cached feed for the current repo (if any) so the left pane renders
     /// immediately instead of a skeleton. Recomputes presence from it.
@@ -89,12 +121,14 @@ struct Presence: Identifiable {
               let cached = byRepo[repo], !cached.isEmpty else { return }
         events = cached.sorted { $0.date > $1.date }
         presence = computePresence(from: events)
+        Self.discoverPeople(in: events)
         didLoad = true
     }
 
     /// Delete the on-disk feed cache and refetch the current repo.
     static func clearCache() {
         try? FileManager.default.removeItem(at: cacheFile)
+        UserDefaults.standard.removeObject(forKey: feedValidatedAtKey)
         shared.events = []; shared.presence = []; shared.didLoad = false
         Task { await shared.refresh() }
     }
@@ -108,51 +142,152 @@ struct Presence: Identifiable {
     }
 
     func startPolling() {
+        guard pollTask == nil else { return }
         fetchRepoList()
-        Task { @MainActor in
+        pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                if repo.isEmpty { fetchRepoList() }   // keep retrying to bootstrap (e.g. after gh login)
-                await refresh()
-                try? await Task.sleep(nanoseconds: pollInterval * 1_000_000_000)
+                guard let self else { return }
+                let interval = self.pollInterval
+                if NSApp.isActive {
+                    if self.repo.isEmpty { self.fetchRepoList() }
+                    await self.refresh(minimumAge: TimeInterval(interval))
+                }
+                do {
+                    try await Task.sleep(nanoseconds: interval * 1_000_000_000)
+                } catch {
+                    return
+                }
             }
         }
+    }
+
+    func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+        repoListTask?.cancel()
+        repoListTask = nil
     }
 
     func setRepo(_ r: String) {
         guard r != repo, !r.isEmpty else { return }
         repo = r
         UserDefaults.standard.set(r, forKey: "runway.repo")
+        Self.rememberRepository(r)
+        availableRepos = Self.uniqueRepositories([r] + availableRepos)
+        Self.saveRepositoryDirectory(availableRepos)
         presence = []; lastError = nil; loadedPages = 1; canLoadMore = true
         loadCache()   // show this repo's cached feed instantly (or skeleton if none)
         Task { await refresh() }
     }
 
-    /// Populate the repo switcher with every repo the signed-in user can reach
-    /// (their own *and* their orgs'), most-recently-pushed first. Nothing
-    /// org-specific is hardcoded; the picker also accepts a free-form `owner/repo`.
-    func fetchRepoList() {
-        Task { @MainActor in
-            guard let data = await GH.run(["api",
+    /// Rank repositories by the signed-in user's own recent activity, then by
+    /// local Runway recency, with GitHub's repository push recency as fallback.
+    func fetchRepoList(force: Bool = false) {
+        if !force,
+           !availableRepos.isEmpty,
+           Date().timeIntervalSince(Self.repositoryDirectoryFetchedAt) < 6 * 3_600 {
+            availableRepos = Self.uniqueRepositories(
+                [repo] + Self.recentRepositories + availableRepos
+            )
+            return
+        }
+        guard repoListTask == nil else { return }
+        repoListTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.repoListTask = nil }
+            async let repositoryRequest = GH.query([
+                "api", "--paginate",
                 "/user/repos?per_page=100&sort=pushed&affiliation=owner,organization_member,collaborator",
-                "-q", ".[].full_name"]),
+                "-q", ".[].full_name",
+            ], cacheFor: 6 * 3_600)
+            async let loginRequest = GH.query(
+                ["api", "user", "-q", ".login"],
+                cacheFor: 6 * 3_600
+            )
+            guard let data = await repositoryRequest,
                   let s = String(data: data, encoding: .utf8) else {
-                if repo.isEmpty { lastError = Self.ghHint }
+                if self.repo.isEmpty { self.lastError = Self.ghHint }
                 return
             }
             let repos = s.split(whereSeparator: \.isNewline).map(String.init)
-            var seen = Set<String>(); var ordered: [String] = []
-            for r in ([repo] + repos) where !r.isEmpty && seen.insert(r).inserted { ordered.append(r) }
+            var activityRepos: [String] = []
+            if let loginData = await loginRequest,
+               let login = String(data: loginData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !login.isEmpty,
+               let activityData = await GH.query([
+                    "api",
+                    "/users/\(login)/events?per_page=100",
+                    "-q", ".[].repo.name",
+               ], cacheFor: 15 * 60),
+               let activity = String(data: activityData, encoding: .utf8) {
+                activityRepos = activity
+                    .split(whereSeparator: \.isNewline)
+                    .map(String.init)
+            }
+            if !self.repo.isEmpty { Self.rememberRepository(self.repo) }
+            let ordered = Self.uniqueRepositories(
+                [self.repo] + Self.recentRepositories + activityRepos + repos
+            )
             if !ordered.isEmpty {
-                availableRepos = ordered
-                if repo.isEmpty, let first = ordered.first { setRepo(first) }   // first run: show something
-            } else if repo.isEmpty {
-                lastError = Self.ghHint
+                self.availableRepos = ordered
+                Self.saveRepositoryDirectory(ordered, fetchedAt: Date())
+                if self.repo.isEmpty, let first = ordered.first { self.setRepo(first) }
+            } else if self.repo.isEmpty {
+                self.lastError = Self.ghHint
             }
         }
     }
 
-    func refresh() async {
+    private static var cachedRepositoryDirectory: [String] {
+        UserDefaults.standard.stringArray(forKey: repositoryDirectoryKey) ?? []
+    }
+
+    private static var repositoryDirectoryFetchedAt: Date {
+        Date(timeIntervalSince1970: UserDefaults.standard.double(
+            forKey: repositoryDirectoryFetchedAtKey
+        ))
+    }
+
+    private static func saveRepositoryDirectory(
+        _ repositories: [String],
+        fetchedAt: Date? = nil
+    ) {
+        UserDefaults.standard.set(repositories, forKey: repositoryDirectoryKey)
+        if let fetchedAt {
+            UserDefaults.standard.set(
+                fetchedAt.timeIntervalSince1970,
+                forKey: repositoryDirectoryFetchedAtKey
+            )
+        }
+    }
+
+    private static var recentRepositories: [String] {
+        UserDefaults.standard.stringArray(forKey: recentRepositoriesKey) ?? []
+    }
+
+    private static func rememberRepository(_ repository: String) {
+        guard !repository.isEmpty else { return }
+        let key = repository.lowercased()
+        let recent = [repository] + recentRepositories.filter {
+            $0.lowercased() != key
+        }
+        UserDefaults.standard.set(Array(recent.prefix(20)), forKey: recentRepositoriesKey)
+    }
+
+    private static func uniqueRepositories(_ repositories: [String]) -> [String] {
+        var seen = Set<String>()
+        return repositories.filter { repository in
+            !repository.isEmpty && seen.insert(repository.lowercased()).inserted
+        }
+    }
+
+    func refresh(minimumAge: TimeInterval = 0) async {
         guard !repo.isEmpty, !refreshing else { return }
+        if minimumAge > 0,
+           Date().timeIntervalSince(Self.validationDate(for: repo)) < minimumAge {
+            return
+        }
         refreshing = true
         defer { refreshing = false }
         loading = events.isEmpty
@@ -169,9 +304,22 @@ struct Presence: Identifiable {
         canLoadMore = page.full
         fetchCommitCounts()
         fetchPRDetails()
+        Self.recordValidationDate(for: repo)
         lastError = nil
         didLoad = true
         loading = false
+    }
+
+    private static func validationDate(for repository: String) -> Date {
+        let values = UserDefaults.standard.dictionary(forKey: feedValidatedAtKey)
+        let timestamp = values?[repository] as? Double ?? 0
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    private static func recordValidationDate(for repository: String) {
+        var values = UserDefaults.standard.dictionary(forKey: feedValidatedAtKey) ?? [:]
+        values[repository] = Date().timeIntervalSince1970
+        UserDefaults.standard.set(values, forKey: feedValidatedAtKey)
     }
 
     /// Load the next page of older events (infinite scroll). The events API is
@@ -203,7 +351,10 @@ struct Presence: Identifiable {
             fetchingCounts.insert(key)
             Task { @MainActor in
                 defer { fetchingCounts.remove(key) }
-                guard let data = await GH.api("/repos/\(repo)/compare/\(key)"),
+                guard let data = await GH.api(
+                    "/repos/\(repo)/compare/\(key)",
+                    cacheFor: 24 * 3_600
+                ),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let total = json["total_commits"] as? Int else { return }
                 commitCounts[key] = total
@@ -229,7 +380,10 @@ struct Presence: Identifiable {
             
             Task { @MainActor in
                 defer { fetchingPRs.remove(num) }
-                guard let data = await GH.api("/repos/\(repo)/pulls/\(num)"),
+                guard let data = await GH.api(
+                    "/repos/\(repo)/pulls/\(num)",
+                    cacheFor: 24 * 3_600
+                ),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 
                 let additions = json["additions"] as? Int ?? 0
@@ -275,7 +429,10 @@ struct Presence: Identifiable {
     }
 
     private func fetchPage(_ page: Int) async -> (events: [FeedEvent], full: Bool)? {
-        guard let data = await GH.api("/repos/\(repo)/events?per_page=100&page=\(page)"),
+        guard let data = await GH.api(
+            "/repos/\(repo)/events?per_page=100&page=\(page)",
+            cacheFor: page == 1 ? 10 : 60 * 60
+        ),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         let hideBots = UserDefaults.standard.bool(forKey: SettingsKey.hideBots)
         let parsed = raw.compactMap(parse).filter { !(hideBots && $0.actor.hasSuffix("[bot]")) }
@@ -318,6 +475,7 @@ struct Presence: Identifiable {
             }
         }
         let full = byID.values.sorted { $0.date > $1.date }
+        Self.discoverPeople(in: full)
         let hadEvents = !events.isEmpty
 
         let nextPresence = computePresence(from: full)
@@ -345,6 +503,27 @@ struct Presence: Identifiable {
                 }
             }
         }
+    }
+
+    static func discoverCachedPeople() {
+        guard let data = try? Data(contentsOf: cacheFile),
+              let byRepository = try? decoderDate.decode(
+                [String: [FeedEvent]].self,
+                from: data
+              ) else { return }
+        discoverPeople(in: byRepository.values.flatMap { $0 })
+    }
+
+    private static func discoverPeople(in events: [FeedEvent]) {
+        var identities: [String: (login: String, avatarURL: String?)] = [:]
+        for event in events {
+            let key = event.actor.lowercased()
+            let existingAvatar = identities[key]?.avatarURL
+            identities[key] = (event.actor, event.avatarURL ?? existingAvatar)
+        }
+        PersonProfileManager.shared.discover(identities.values.map {
+            (login: $0.login, githubFullName: nil, avatarURL: $0.avatarURL)
+        })
     }
 
     // MARK: parsing
@@ -427,7 +606,7 @@ struct Presence: Identifiable {
     private func computePresence(from events: [FeedEvent]) -> [Presence] {
         let now = Date()
         let window = TimeInterval(max(1, UserDefaults.standard.integer(forKey: SettingsKey.officeHours))) * 3600
-        let visible = AgentFeed.filterNoise(events)
+        let visible = Self.filterNoise(events)
         let threshold = max(2, UserDefaults.standard.integer(forKey: SettingsKey.fireThreshold))
         let byActor = Dictionary(grouping: visible, by: \.actor)
         return byActor.map { login, evs in
@@ -456,7 +635,21 @@ enum GH {
         return "/usr/bin/env"   // fallback; args get "gh" prepended below
     }()
 
-    static func api(_ apiPath: String) async -> Data? { await run(["api", apiPath]) }
+    static func api(
+        _ apiPath: String,
+        cacheFor: TimeInterval = 0
+    ) async -> Data? {
+        await query(["api", apiPath], cacheFor: cacheFor)
+    }
+
+    /// Coalesces identical reads across tabs and windows, keeps short-lived
+    /// responses in memory, and backs off repeated failures for the same query.
+    static func query(
+        _ args: [String],
+        cacheFor: TimeInterval = 0
+    ) async -> Data? {
+        await GHRequestBroker.shared.query(args, cacheFor: cacheFor)
+    }
 
     /// Run `gh <args>` off the main thread and return stdout data (nil on failure).
     static func run(_ args: [String]) async -> Data? {
@@ -473,6 +666,99 @@ enum GH {
                 process.waitUntilExit()
                 continuation.resume(returning: process.terminationStatus == 0 ? data : nil)
             }
+        }
+    }
+}
+
+private actor GHRequestBroker {
+    static let shared = GHRequestBroker()
+
+    private struct CachedResponse {
+        let data: Data
+        let expiresAt: Date
+    }
+
+    private struct FailureState {
+        let attempts: Int
+        let retryAt: Date
+    }
+
+    private var inFlight: [String: Task<Data?, Never>] = [:]
+    private var cache: [String: CachedResponse] = [:]
+    private var failures: [String: FailureState] = [:]
+
+    func query(_ arguments: [String], cacheFor: TimeInterval) async -> Data? {
+        let key = arguments.joined(separator: "\u{1F}")
+        let now = Date()
+
+        if let cached = cache[key], cached.expiresAt > now {
+            return cached.data
+        }
+        cache[key] = nil
+
+        if let failure = failures[key], failure.retryAt > now {
+            return nil
+        }
+        if let task = inFlight[key] {
+            return await task.value
+        }
+
+        let task = Task<Data?, Never> {
+            await GHConcurrencyLimiter.shared.run(arguments)
+        }
+        inFlight[key] = task
+        let result = await task.value
+        inFlight[key] = nil
+
+        if let result {
+            failures[key] = nil
+            if cacheFor > 0 {
+                cache[key] = CachedResponse(
+                    data: result,
+                    expiresAt: now.addingTimeInterval(cacheFor)
+                )
+            }
+        } else {
+            let attempts = min((failures[key]?.attempts ?? 0) + 1, 8)
+            let delay = min(300, pow(2, Double(attempts - 1)) * 5)
+            failures[key] = FailureState(
+                attempts: attempts,
+                retryAt: now.addingTimeInterval(delay)
+            )
+        }
+        return result
+    }
+}
+
+private actor GHConcurrencyLimiter {
+    static let shared = GHConcurrencyLimiter()
+
+    private let maximumConcurrentReads = 4
+    private var activeReads = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run(_ arguments: [String]) async -> Data? {
+        await acquire()
+        let result = await GH.run(arguments)
+        release()
+        return result
+    }
+
+    private func acquire() async {
+        if activeReads < maximumConcurrentReads {
+            activeReads += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            activeReads = max(0, activeReads - 1)
+        } else {
+            waiters.removeFirst().resume()
         }
     }
 }
