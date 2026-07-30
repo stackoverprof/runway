@@ -19,14 +19,13 @@
 </div>
 
 Runway is a native cockpit for people who work with several coding agents at
-once. It combines persistent GPU terminals with a live GitHub activity feed, so
-the work happening in your shells and the work landing in your repo stay in the
-same field of view.
+once. It connects assigned GitHub issues, persistent GPU terminals, repository
+activity, and pull request progress in one focused workspace.
 
 
 ## Install in a minute
 
-1. Download **`Runway-2.0.0-beta.2-arm64.dmg`** from
+1. Download **`Runway-2.0.0-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -42,10 +41,10 @@ Requirements:
 
 - Apple Silicon Mac running macOS 14 or newer
 - [GitHub CLI](https://cli.github.com) authenticated with `gh auth login` for
-  the activity feed
+  issues, feeds, people, repositories, and pull requests
 
-The terminal workspace still works without GitHub CLI. Only the activity feed
-needs it.
+The terminal workspace still works without GitHub CLI. GitHub-backed views need
+an authenticated session.
 
 ## What you get
 
@@ -59,7 +58,8 @@ needs it.
 | 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
 | 💾 | **Local-first workspace cache** | Issues, Focus terminals, ordering, working directories, and pane position appear immediately after relaunch. |
 | 🎨 | **Custom branding** | Replace the Activity heading with your own text or a persistent SVG, PNG, JPEG, or other macOS-supported image. |
-| 👥 | **People profiles** | Give teammates friendly names and custom avatars in the activity view. |
+| 📊 | **Pull request overview** | Compare open and merged pull requests by developer across practical timeframes. |
+| 👥 | **People profiles** | Edit local usernames, full names, and avatars consistently across Runway. |
 
 ### The activity side
 
@@ -75,7 +75,7 @@ routine polling pauses while Runway is inactive.
   branch changes.
 - **Runway**, **Feeds**, and **Pulls** tabs separate focused work, repo motion,
   and pull request activity. Feeds includes an optional merge-only filter.
-- The PR view groups pull requests by developer, sorts developers by merged PRs,
+- The Pulls view groups pull requests by developer, sorts developers by merged PRs,
   and supports 1d, 7d, 30d, MTD, and YTD timeframes.
 - The Runway board shows assigned Open and Closed issues, supports local
   ordering, and can close or reopen issues on GitHub through drag and drop.
@@ -187,9 +187,9 @@ through the macOS GUI session.
 Sources/Runway/
   Core/         App lifecycle, windows, keyboard monitors, notifications
   Models/       Agent cards, workspace persistence, people profiles
-  Services/     GitHub feed, agent posts, local control API
+  Services/     GitHub data, Focus history, caching, local control API
   Terminal/     Ghostty host, terminal sessions, quick terminal, theme
-  Utils/        Key bindings, Markdown rendering, inline editing
+  Utils/        Key bindings, pointer behavior, inline editing
   Views/        Activity feed, terminal cards, settings, profiles
 ```
 

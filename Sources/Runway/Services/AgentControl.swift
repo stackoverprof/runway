@@ -353,7 +353,7 @@ enum AgentControl {
         echo '{"name":"Build Runner"}' > "$RUNWAY_CONTROL"
 
         # Update the right-side gray description text
-        echo '{"description":"Building release 1.0.0-beta..."}' > "$RUNWAY_CONTROL"
+        echo '{"description":"Building release 2.0.0..."}' > "$RUNWAY_CONTROL"
 
         # Update state, name, and description in one go
         echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
