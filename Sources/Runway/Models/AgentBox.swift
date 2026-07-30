@@ -10,6 +10,10 @@ struct AgentBox: Identifiable, Codable {
     var height: CGFloat = 264
     var cwd: String?                // last working directory, restored on relaunch
     var autorun: String?            // one-time command for new boxes, not persisted
+    var focusRepository: String?    // Focus-owned terminal identity
+    var focusIssueNumber: Int?
 
-    enum CodingKeys: String, CodingKey { case id, name, detail, height, cwd }
+    enum CodingKeys: String, CodingKey {
+        case id, name, detail, height, cwd, focusRepository, focusIssueNumber
+    }
 }

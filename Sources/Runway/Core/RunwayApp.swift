@@ -16,7 +16,7 @@ struct RunwayApp: App {
     var body: some Scene {
         WindowGroup("Runway", id: "main") {
             ContentView()
-                .frame(minWidth: 720, minHeight: 480)
+                .frame(minWidth: 780, minHeight: 480)
                 .ignoresSafeArea()
         }
         .windowStyle(.hiddenTitleBar)
@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         AgentControl.install()
         AgentControl.resetStates()   // clear stale agent dots from the last session
-        installCmdScrollMonitor()
+        installTerminalScrollMonitor()
         installClickFocusMonitor()
         installShortcutMonitor()
         observeFullScreen()
@@ -103,23 +103,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ws = context.workspace
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
 
+        // Fixed: ⌘F toggles search for whichever left-pane tab is active.
+        if mods == [.command], ev.keyCode == 3 {
+            ws.requestFind()
+            return true
+        }
+
         // Fixed: ⌘1–9 jump to a card.
         if mods == [.command], let key = ev.charactersIgnoringModifiers,
            let d = Int(key), (1...9).contains(d) {
             ws.focus(index: d - 1); return true
         }
 
-        // Option-Command-1/2/3 jumps to Feeds/Merge/Posts tab.
+        // Option-Command-1/2/3 jumps to Runway/Feeds/Notes tab.
         if mods == [.command, .option], let key = ev.charactersIgnoringModifiers,
            let d = Int(key), (1...3).contains(d) {
-            let tabs: [FeedTab] = [.feeds, .merge, .posts]
+            let tabs = FeedTab.allCases
             ws.selectedTab = tabs[d - 1]
             return true
         }
 
         // Shift-Command-[ and Shift-Command-] to cycle tabs.
         if mods == [.command, .shift], let key = ev.charactersIgnoringModifiers {
-            let tabs: [FeedTab] = [.feeds, .merge, .posts]
+            let tabs = FeedTab.allCases
             if let idx = tabs.firstIndex(of: ws.selectedTab) {
                 if key == "[" {
                     let prevIdx = (idx - 1 + tabs.count) % tabs.count
@@ -147,7 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .navigateNext:  ws.focus(offset: 1)
         case .reorderUp:     ws.moveFocused(by: -1)
         case .reorderDown:   ws.moveFocused(by: 1)
-        case .accordion:     ws.toggleAccordion()
         case .solo:          ws.toggleSolo()
         case .quickTerminal: ws.toggleQuick()
         case .none:          return false
@@ -170,19 +175,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // the keyboard first responder — otherwise the glow moves but typing
                 // stays on the previously-focused terminal.
                 ws.setFocus(id)
-                // In accordion mode a focus change resizes the boxes; swallow that
-                // first click so the terminal doesn't begin a stray selection while
-                // it reflows. A second click then interacts with the terminal.
-                return changingFocus && ws.accordion
+                // A focus change resizes the accordion. Swallow that first click so
+                // the terminal does not begin a stray selection while it reflows.
+                return changingFocus
             }
             return swallow ? nil : event
         }
     }
 
-    /// ⌘ + scroll-wheel scrolls the enclosing list (the right pane) instead of the
-    /// terminal under the cursor. Plain scroll still goes to the terminal scrollback.
-    /// Implemented as a local event monitor so GhosttyKit's view is untouched.
-    private func installCmdScrollMonitor() {
+    /// Tame dense trackpad scrolling over terminals so mouse-reporting TUIs do
+    /// not overshoot. The right pane itself no longer scrolls.
+    private func installTerminalScrollMonitor() {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             // Local event monitors fire on the main thread, so the event is safe.
             nonisolated(unsafe) let ev = event
@@ -192,23 +195,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       let hit = window.contentView?.hitTest(ev.locationInWindow)
                 else { return false }
 
-                // Walk up: find the terminal (if any) and the enclosing list scroll view.
+                // Walk up to determine whether the pointer is over a terminal.
                 var node: NSView? = hit
                 var terminal: NSView?
-                var list: NSScrollView?
                 while let cur = node {
                     if terminal == nil, cur is GhosttyTerminalView { terminal = cur }
-                    if let sv = cur as? NSScrollView { list = sv; break }
                     node = cur.superview
                 }
 
                 // Over a terminal (agent grid OR the quick-terminal overlay): tame
                 // trackpad scroll so TUIs don't overshoot.
                 if terminal != nil {
-                    if ev.modifierFlags.contains(.command) {
-                        list?.scrollWheel(with: ev)    // ⌘-scroll → scroll the enclosing list
-                        return true
-                    }
                     // Drop momentum (inertia overshoots mouse-reporting TUIs like
                     // claude), then throttle the dense precise-scroll stream;
                     // coarse mouse wheels (not precise) pass untouched.
@@ -222,12 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return false
                 }
 
-                // Not over a terminal: the left pane (activity feed) scrolls
-                // natively; the right pane only scrolls its list with ⌘ held.
-                guard let ws = RunwayWindowRegistry.shared.context(for: ev.window)?.workspace else { return false }
-                if ev.locationInWindow.x < ws.leftWidth { return false }
-                if ev.modifierFlags.contains(.command) { list?.scrollWheel(with: ev); return true }
-                return list != nil
+                return false
             }
             return swallow ? nil : event
         }

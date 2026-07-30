@@ -55,6 +55,7 @@ struct Presence: Identifiable {
     var canLoadMore = true
     var loadingMore = false
     private var loadedPages = 1
+    @ObservationIgnored private var refreshing = false
     private var offline = false   // for the offline/online toast transition
     /// Commit counts for pushes (this events API strips `size`), keyed by
     /// "before...head" and fetched via the compare API, with an in-flight guard.
@@ -151,7 +152,9 @@ struct Presence: Identifiable {
     }
 
     func refresh() async {
-        guard !repo.isEmpty else { return }
+        guard !repo.isEmpty, !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         loading = events.isEmpty
         guard let page = await fetchPage(1) else {
             if !offline {

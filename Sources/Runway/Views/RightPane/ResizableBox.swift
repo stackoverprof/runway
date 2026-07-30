@@ -10,6 +10,7 @@ struct ResizableBox: View {
     let config: TerminalConfig
     @Binding var height: CGFloat
     var isFocused: Bool = false
+    var isFocusManaged: Bool = false
     /// When non-nil (accordion mode) the box uses this height and the resize
     /// handle is disabled.
     var fixedHeight: CGFloat? = nil
@@ -110,7 +111,7 @@ struct ResizableBox: View {
                 .layoutPriority(0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHoveringHeader = $0 }
@@ -120,17 +121,22 @@ struct ResizableBox: View {
     /// The agent name: a label that becomes an inline text field when clicked.
     @ViewBuilder
     private var nameField: some View {
-        if isEditingName {
+        if isFocusManaged {
+            Text(name)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.9))
+                .lineLimit(1)
+        } else if isEditingName {
             InlineField(
                 text: $name,
-                font: .monospacedSystemFont(ofSize: 11, weight: .medium),
+                font: .monospacedSystemFont(ofSize: 10, weight: .medium),
                 color: .white,
                 onEnd: { isEditingName = false }
             )
             .fixedSize()
         } else {
             Text(name)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.9))
                 .lineLimit(1)
                 .contentShape(Rectangle())
@@ -145,7 +151,9 @@ struct ResizableBox: View {
     /// ellipsis when the header gets tight on a narrow window.
     @ViewBuilder
     private var detailField: some View {
-        if isEditingDetail {
+        if isFocusManaged {
+            EmptyView()
+        } else if isEditingDetail {
             InlineField(
                 text: $detail,
                 font: .monospacedSystemFont(ofSize: 10, weight: .regular),

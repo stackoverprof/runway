@@ -2,9 +2,27 @@ import SwiftUI
 import AppKit
 
 enum FeedTab: String, CaseIterable, Codable {
+    case runway = "Runway"
     case feeds = "Feeds"
-    case merge = "Merge"
-    case posts = "Posts"
+    case posts = "Notes"
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        // Preserve workspaces saved before Merge moved into Feeds and Posts was
+        // renamed to Notes.
+        if value == "Merge" {
+            self = .feeds
+        } else if value == "Posts" {
+            self = .posts
+        } else {
+            self = FeedTab(rawValue: value) ?? .feeds
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 /// App-wide state + actions for the agent list. Owned here (not in a view) so the
@@ -16,8 +34,6 @@ enum FeedTab: String, CaseIterable, Codable {
     /// The box the user last focused (click or keyboard). Drives the focus glow,
     /// the accordion's larger share, and the solo target.
     var focusedID: UUID?
-    /// Accordion: no scroll, boxes split the height, focused box larger.
-    var accordion = false
     /// Solo / zoom: show only the focused box, filling the pane.
     var soloed = false
 
@@ -29,11 +45,19 @@ enum FeedTab: String, CaseIterable, Codable {
     var quickState: AgentState = .idle
     /// The currently selected feed tab in the left pane
     var selectedTab: FeedTab = .feeds
+    /// Incremented by the app-level ⌘F handler so the active left pane can
+    /// toggle its tab-specific search UI.
+    var findRequestID = 0
     /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
     @ObservationIgnored var focusQuick: (() -> Void)?
 
     /// Width of the left pane (the split divider position).
     var leftWidth: CGFloat = 460
+    /// Temporarily lifts the left pane so its actively dragged Focus card can
+    /// cross pane boundaries without lifting ordinary left-pane content.
+    var isFocusCardDragging = false
+    /// Once the Runway board has loaded, Focus is the sole owner of right-pane boxes.
+    var focusBoardControlsBoxes = false
 
     /// True while the window is full screen (no traffic lights → less top inset).
     var isFullScreen = false
@@ -83,7 +107,6 @@ enum FeedTab: String, CaseIterable, Codable {
         if !s.boxes.isEmpty { boxes = s.boxes }
         leftWidth = s.leftWidth
         quickHeight = s.quickHeight
-        accordion = s.accordion
         quickPinned = s.quickPinned ?? false
         selectedTab = s.selectedTab ?? .feeds
         lastSaved = data
@@ -92,7 +115,7 @@ enum FeedTab: String, CaseIterable, Codable {
     /// Write current layout to disk if it changed. Cheap enough to call on the poll tick.
     func saveIfNeeded() {
         let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
-                                 quickHeight: quickHeight, accordion: accordion,
+                                 quickHeight: quickHeight, accordion: true,
                                  quickPinned: quickPinned, selectedTab: selectedTab)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
@@ -100,6 +123,8 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 
     func toggleQuick() { quickVisible.toggle() }
+
+    func requestFind() { findRequestID &+= 1 }
 
     var focusedIndex: Int? { boxes.firstIndex { $0.id == focusedID } }
 
@@ -160,11 +185,13 @@ enum FeedTab: String, CaseIterable, Codable {
             if lastControl[id] == raw { continue }   // unchanged → skip
             lastControl[id] = raw
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if let name = (json["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if boxes[i].focusIssueNumber == nil,
+               let name = (json["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !name.isEmpty {
                 boxes[i].name = String(name.prefix(40))
             }
-            if let desc = json["description"] as? String {
+            if boxes[i].focusIssueNumber == nil,
+               let desc = json["description"] as? String {
                 boxes[i].detail = String(desc.prefix(40))
             }
             if let state = json["state"] as? String {
@@ -214,6 +241,7 @@ enum FeedTab: String, CaseIterable, Codable {
     // MARK: Actions (driven by the keyboard monitor + clicks)
 
     func newBox() {
+        guard !focusBoardControlsBoxes else { return }
         var box = AgentBox(name: "agent\(boxes.count + 1)")
         let cmd = SettingsKey.configuredAgentCommand
         if !cmd.isEmpty { box.autorun = cmd }   // run it as the shell starts
@@ -223,6 +251,7 @@ enum FeedTab: String, CaseIterable, Codable {
 
     @discardableResult
     func closeFocused() -> Bool {
+        guard !focusBoardControlsBoxes else { return true }
         guard let idx = focusedIndex else { return false }
         let removed = boxes.remove(at: idx)
         TerminalRegistry.shared.unregister(id: removed.id)
@@ -250,21 +279,14 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 
     func moveFocused(by delta: Int) {
+        guard !focusBoardControlsBoxes else { return }
         guard let idx = focusedIndex else { return }
         let target = idx + delta
         guard boxes.indices.contains(target) else { return }
         boxes.swapAt(idx, target)
     }
 
-    func toggleAccordion() {
-        // Choosing a base layout un-zooms.
-        soloed = false
-        accordion.toggle()
-    }
-
     func toggleSolo() {
-        // Solo is an overlay on the current mode; toggling it preserves
-        // `accordion`, so exiting solo returns to whatever mode you were in.
         guard focusedID != nil else { return }
         soloed.toggle()
     }
@@ -273,6 +295,57 @@ enum FeedTab: String, CaseIterable, Codable {
     func setFocus(_ id: UUID?) {
         focusedID = id
         TerminalRegistry.shared.focusTerminal(id)
+    }
+
+    /// Make the right pane an exact, stable projection of the Focus board.
+    func syncFocusBoard(issues: [AssignedIssue], repository: String) {
+        focusBoardControlsBoxes = true
+        let previousBoxes = boxes
+        let previousFocusedID = focusedID
+        let previousFocusedIndex = focusedIndex ?? 0
+        var usedIDs = Set<UUID>()
+        var nextBoxes: [AgentBox] = []
+
+        for issue in issues {
+            if var existing = previousBoxes.first(where: {
+                $0.focusRepository == repository && $0.focusIssueNumber == issue.number
+            }) {
+                existing.name = issue.title
+                existing.detail = ""
+                nextBoxes.append(existing)
+                usedIDs.insert(existing.id)
+            } else {
+                var box = AgentBox(
+                    name: issue.title,
+                    detail: "",
+                    cwd: SettingsKey.configuredFocusTerminalDirectory,
+                    focusRepository: repository,
+                    focusIssueNumber: issue.number
+                )
+                let command = SettingsKey.configuredAgentCommand
+                if !command.isEmpty { box.autorun = command }
+                nextBoxes.append(box)
+                usedIDs.insert(box.id)
+            }
+        }
+
+        for removed in previousBoxes where !usedIDs.contains(removed.id) {
+            TerminalRegistry.shared.unregister(id: removed.id)
+            AgentControl.cleanup(removed.id)
+            lastControl[removed.id] = nil
+        }
+
+        boxes = nextBoxes
+        if boxes.isEmpty {
+            focusedID = nil
+            soloed = false
+        } else if let previousFocusedID,
+                  boxes.contains(where: { $0.id == previousFocusedID }) {
+            focusedID = previousFocusedID
+        } else {
+            focusedID = boxes[min(previousFocusedIndex, boxes.count - 1)].id
+        }
+        saveIfNeeded()
     }
 }
 

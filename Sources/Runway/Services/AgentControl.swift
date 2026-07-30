@@ -187,7 +187,7 @@ enum AgentControl {
         let pinScript = """
         #!/bin/zsh
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
-          echo 'Runway API: Pin a feed post or user note to the top of the Posts tab.' >&2
+          echo 'Runway API: Pin a feed post or user note to the top of the Notes tab.' >&2
           echo 'Usage:' >&2
           echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
           exit 0
@@ -205,7 +205,7 @@ enum AgentControl {
         let unpinScript = """
         #!/bin/zsh
         if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
-          echo 'Runway API: Unpin a feed post or user note from the top of the Posts tab.' >&2
+          echo 'Runway API: Unpin a feed post or user note from the top of the Notes tab.' >&2
           echo 'Usage:' >&2
           echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
           exit 0
@@ -316,7 +316,7 @@ enum AgentControl {
 
         ## 1. Post to the Activity Feed
 
-        You can post markdown updates, build reports, deployment logs, or daily recaps directly to the **Posts** tab using the built-in shell helper `runway-post`.
+        You can post markdown updates, build reports, deployment logs, or daily recaps directly to the **Notes** tab using the built-in shell helper `runway-post`.
 
         ### Usage
         ```bash
@@ -350,7 +350,7 @@ enum AgentControl {
         # Delete a post or note by ID
         runway-delete "note-1234"
 
-        # Pin a post or note to the top of the Posts tab
+        # Pin a post or note to the top of the Notes tab
         runway-pin "agent-5678"
 
         # Unpin a post or note
@@ -534,7 +534,7 @@ enum AgentControl {
         # Pin a post or note by ID.
         runway-pin() {
           if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-            echo 'Runway API: Pin a feed post or user note to the top of the Posts tab.' >&2
+            echo 'Runway API: Pin a feed post or user note to the top of the Notes tab.' >&2
             echo 'Usage:' >&2
             echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
             return 0
@@ -552,7 +552,7 @@ enum AgentControl {
         # Unpin a post or note by ID.
         runway-unpin() {
           if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-            echo 'Runway API: Unpin a feed post or user note from the top of the Posts tab.' >&2
+            echo 'Runway API: Unpin a feed post or user note from the top of the Notes tab.' >&2
             echo 'Usage:' >&2
             echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
             return 0

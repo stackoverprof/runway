@@ -18,11 +18,19 @@ enum SettingsKey {
     static let brandHeaderStyle = "runway.brandHeaderStyle"
     static let brandTitle = "runway.brandTitle"
     static let brandLogoFilename = "runway.brandLogoFilename"
+    static let focusTerminalDirectory = "runway.focusTerminalDirectory"
 
     static var configuredAgentCommand: String {
         guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
         return (UserDefaults.standard.string(forKey: agentCommand) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static var configuredFocusTerminalDirectory: String {
+        let value = (UserDefaults.standard.string(forKey: focusTerminalDirectory) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = value.isEmpty ? NSHomeDirectory() : value
+        return (path as NSString).expandingTildeInPath
     }
 
     static func registerDefaults() {
@@ -43,6 +51,7 @@ enum SettingsKey {
             brandHeaderStyle: "text",
             brandTitle: "Activity",
             brandLogoFilename: "",
+            focusTerminalDirectory: "~/Developer",
         ])
 
         // Older builds used `initialCommand` at runtime while exposing different

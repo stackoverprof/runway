@@ -26,7 +26,7 @@ same field of view.
 
 ## Install in a minute
 
-1. Download the latest **`Runway-1.0.3-arm64.dmg`** from
+1. Download **`Runway-2.0.0-beta.1-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -54,10 +54,10 @@ needs it.
 | 🖥️ | **Persistent GPU terminals** | Run Claude Code, Codex, Gemini, custom agents, or a normal shell in fast libghostty-backed cards. |
 | 📡 | **Live GitHub activity** | See pushes, pull requests, reviews, issues, branch activity, and who has been active recently. |
 | ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q` without losing its session. |
-| 🧭 | **Focus-first navigation** | Create, close, jump between, reorder, solo, and accordion agents entirely from the keyboard. |
+| 🧭 | **Issue-driven Focus board** | Drag assigned GitHub issues into Focus to create matching terminals automatically. |
 | 🟢 | **Agent-aware status** | Cards can report `idle`, `running`, or `needs-action`, plus their current task and description. |
 | 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
-| 💾 | **Workspace memory** | Card names, sizes, working directories, layout mode, and pane position survive relaunches. |
+| 💾 | **Local-first workspace cache** | Issues, Focus terminals, ordering, working directories, and pane position appear immediately after relaunch. |
 | 🎨 | **Custom branding** | Replace the Activity heading with your own text or a persistent SVG, PNG, JPEG, or other macOS-supported image. |
 | 👥 | **People profiles** | Give teammates friendly names and custom avatars in the activity view. |
 
@@ -70,8 +70,11 @@ the app.
 - A presence strip shows who has been active recently.
 - The timeline groups meaningful pushes, PR activity, reviews, issues, and
   branch changes.
-- Dedicated **Feeds**, **Merge**, and **Posts** tabs separate repo motion from
-  agent-authored updates.
+- **Runway**, **Feeds**, and **Notes** tabs separate focused work, repo motion,
+  and agent-authored updates. Feeds includes an optional merge-only filter.
+- The Runway board shows assigned Open and Closed issues, supports local
+  ordering, and can close or reopen issues on GitHub through drag and drop.
+- `⌘F` opens tab-specific search for issues, feed events, or notes.
 - The searchable repo switcher can open any accessible `owner/repo`.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
   responsive.
@@ -82,15 +85,17 @@ the app.
 
 ### The terminal side
 
-Each agent lives in a resizable card with its own shell session. Cards can be
-renamed, described, reordered, focused, or collapsed without restarting the
-underlying terminal.
+The Focus board is the source of truth for the right pane. Each focused issue
+creates a terminal with the issue title, stable shell session, and configured
+starting directory.
 
-- **Normal mode** gives every card an independently resizable height.
-- **Accordion mode** fits every agent into the available window height.
-- **Solo mode** expands the focused agent to fill the pane.
+- **Accordion layout** always fits every focused terminal into the available
+  window height and gives the active terminal more space.
+- **Focus mode** expands the active terminal to fill the pane.
 - **Quick terminal** stays alive behind its bottom-left overlay.
 - File drops insert shell-escaped paths directly into the target terminal.
+- Agent commands can start as Claude, Codex, Agent, a custom command, or a
+  plain shell.
 
 ## Agent-native by design
 
@@ -125,7 +130,7 @@ Claude Code gets richer automatic attention hooks when launched normally as
 `claude`. The guide and helper commands live inside Runway's Application Support
 directory. Runway does not edit your shell or agent configuration files.
 
-Agents can also post Markdown updates to the **Posts** timeline:
+Agents can also post Markdown updates to the **Notes** timeline:
 
 ```sh
 runway-post "Build passed on macOS 14 and 15"
@@ -136,24 +141,21 @@ runway-post "release-bot" "Production deployment complete" "Deploy"
 
 | Move | Shortcut | Action |
 | --- | --- | --- |
-| Create | `⌘N` | Add and focus a new agent |
-| Close | `⌘W` | Close the focused agent |
 | Focus | `⌘⌥↑` / `⌘⌥↓` | Move between agents |
 | Jump | `⌘1` through `⌘9` | Focus a specific agent |
-| Reorder | `⌘⌥⇧↑` / `⌘⌥⇧↓` | Move the focused card |
-| Layout | `⌘⌥A` | Toggle accordion mode |
-| Zoom | `⌘⌥⏎` | Toggle solo mode |
+| Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |
+| Find | `⌘F` | Search the active Runway, Feeds, or Notes tab |
+| Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Notes |
 | Settings | `⌘,` | Open settings and people profiles |
-| Scroll cards | `⌘` + scroll | Scroll the agent list |
 
 Shortcuts can be customized from **Runway → Settings → Shortcuts**.
 
 ## Privacy and local state
 
 - GitHub requests run through your local authenticated `gh` CLI.
-- Agent control files, workspace state, cached feed data, and helper scripts stay
-  under `~/Library/Application Support/Runway`.
+- Agent control files, workspace state, cached feed and issue data, and helper
+  scripts stay under `~/Library/Application Support/Runway`.
 - Runway does not install skills into Claude, Codex, Gemini, or other agent
   configuration directories.
 - Runway does not modify `.zshrc`, `.claude`, or equivalent user configuration

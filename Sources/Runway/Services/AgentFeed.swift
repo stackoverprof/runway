@@ -12,7 +12,7 @@ struct AgentPost: Identifiable, Codable, Equatable {
     var pinned: Bool?
 }
 
-/// A user-authored markdown note, displayed alongside agent posts in the Posts tab.
+/// A user-authored markdown note, displayed alongside agent posts in the Notes tab.
 struct UserNote: Identifiable, Codable, Equatable {
     let id: String
     let body: String

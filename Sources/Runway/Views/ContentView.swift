@@ -2,7 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var context = RunwayWindowContext()
-    private let minLeft: CGFloat = 220
+    // Keeps the rotating activity label and all four tabs usable on one line.
+    private let minLeft: CGFloat = 440
     private let minRight: CGFloat = 320
 
     var body: some View {
@@ -15,6 +16,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     LeftPane(ws: context.workspace, feed: context.githubFeed, agentFeed: context.agentFeed)     // GitHub activity feed
                         .frame(width: left)
+                        .zIndex(context.workspace.isFocusCardDragging ? 2 : 0)
 
                     Rectangle()
                         .fill(Color.white.opacity(0.07))

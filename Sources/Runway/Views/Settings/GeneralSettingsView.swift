@@ -17,9 +17,12 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
+    @AppStorage(SettingsKey.focusTerminalDirectory) private var focusTerminalDirectory = "~/Developer"
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
+    @State private var issueOrderReset = false
     @State private var brandingError: String?
+    @State private var agentCommandChoice = "claude"
 
     private let sounds = ["Glass", "Ping", "Submarine", "Hero", "Pop", "Funk", "Blow"]
     var body: some View {
@@ -108,9 +111,47 @@ struct GeneralSettings: View {
 
             Section("Agents") {
                 Toggle("Run command in each agent", isOn: $agentCommandEnabled)
-                TextField("Command", text: $agentCommand)
+                Picker("Command", selection: $agentCommandChoice) {
+                    Text("Claude").tag("claude")
+                    Text("Codex").tag("codex")
+                    Text("Agent").tag("agent")
+                    Text("Custom…").tag("custom")
+                }
                     .disabled(!agentCommandEnabled)
-                Text("Runs automatically when an agent opens — new ones (⌘N), every agent when you reopen the app, and the quick terminal. Leave unchecked for a plain shell.")
+
+                if agentCommandChoice == "custom" {
+                    TextField("Custom command", text: $agentCommand)
+                        .disabled(!agentCommandEnabled)
+                }
+
+                Text("Runs automatically when a Focus terminal opens, when you reopen the app, and in the quick terminal. Leave unchecked for a plain shell.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Focus terminals") {
+                HStack {
+                    TextField("Starting directory", text: $focusTerminalDirectory)
+                    Button("Choose…") { chooseFocusTerminalDirectory() }
+                }
+                Text("New terminals created from the Focus board start in this directory. You can use ~ for your home folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Issue boards") {
+                HStack {
+                    Button("Reset Open & Closed Order", role: .destructive) {
+                        AssignedIssues.resetSavedBacklogOrder()
+                        issueOrderReset = true
+                    }
+                    if issueOrderReset {
+                        Text("Reset")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Restores the default GitHub ordering for Open and Closed issues. Focus membership and Focus order are not changed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -133,6 +174,15 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            agentCommandChoice = ["claude", "codex", "agent"].contains(agentCommand)
+                ? agentCommand
+                : "custom"
+        }
+        .onChange(of: agentCommandChoice) { _, choice in
+            guard choice != "custom" else { return }
+            agentCommand = choice
+        }
     }
 
     @ViewBuilder
@@ -175,5 +225,23 @@ struct GeneralSettings: View {
         } catch {
             brandingError = error.localizedDescription
         }
+    }
+
+    private func chooseFocusTerminalDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose where Focus terminals start"
+        panel.prompt = "Choose"
+        let expanded = (focusTerminalDirectory as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: expanded) {
+            panel.directoryURL = URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let home = NSHomeDirectory()
+        focusTerminalDirectory = url.path.hasPrefix(home)
+            ? "~" + url.path.dropFirst(home.count)
+            : url.path
     }
 }
