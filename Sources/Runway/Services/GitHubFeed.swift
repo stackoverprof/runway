@@ -44,6 +44,7 @@ struct Presence: Identifiable {
 
     var repo: String = UserDefaults.standard.string(forKey: "runway.repo") ?? ""
     var availableRepos: [String] = []
+    private(set) var repositoryPaths: [String: String] = [:]
     var events: [FeedEvent] = []
     var presence: [Presence] = []
     var lastError: String?
@@ -65,6 +66,13 @@ struct Presence: Identifiable {
     private var fetchingPRs: Set<Int> = []
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var repoListTask: Task<Void, Never>?
+    /// Walking the home directory and asking git for each remote is expensive,
+    /// so background revalidation is throttled to this interval.
+    private static let repositoryScanInterval: TimeInterval = 120
+    @ObservationIgnored private var lastRepositoryScanAt: Date?
+    @ObservationIgnored private var repositoryListHeld = false
+    @ObservationIgnored private var pendingRepositoryDirectory:
+        (repositories: [String], paths: [String: String])?
 
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
@@ -76,16 +84,43 @@ struct Presence: Identifiable {
     private let isoFull = ISO8601DateFormatter()
 
     // Disk cache so reopening the app shows the last feed instantly (no skeleton).
-    private static var cacheFile: URL { AgentControl.supportDir.appendingPathComponent("feed-cache.json") }
+    /// v2 because caches written before events were filed per repository can hold
+    /// another repository's events under this one's key. A cached event carries no
+    /// repository of its own, so a mixed entry cannot be repaired, only dropped.
+    private static var cacheFile: URL {
+        AgentControl.supportDir.appendingPathComponent("feed-cache.v2.json")
+    }
+    private static var legacyCacheFile: URL {
+        AgentControl.supportDir.appendingPathComponent("feed-cache.json")
+    }
+    /// Runs once per launch, before the first cache read.
+    private static let discardLegacyCache: Void = {
+        guard FileManager.default.fileExists(atPath: legacyCacheFile.path) else { return }
+        try? FileManager.default.removeItem(at: legacyCacheFile)
+        // Without this the first poll could skip its fetch as "recently
+        // validated" and leave the freshly emptied feed on a skeleton.
+        UserDefaults.standard.removeObject(forKey: feedValidatedAtKey)
+    }()
     private static let recentRepositoriesKey = "runway.recentRepositories.v1"
     private static let repositoryDirectoryKey = "runway.repositoryDirectory.v1"
-    private static let repositoryDirectoryFetchedAtKey = "runway.repositoryDirectoryFetchedAt.v1"
+    private static let repositoryPathsKey = "runway.repositoryPaths.v1"
     private static let feedValidatedAtKey = "runway.feedValidatedAt.v1"
     private static let coderDate: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
     private static let decoderDate: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
 
     init() {
-        availableRepos = Self.cachedRepositoryDirectory
+        Self.discardLegacyCache
+        repositoryPaths = Self.cachedRepositoryPaths.filter {
+            FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0.value)
+                .appendingPathComponent(".git").path)
+        }
+        availableRepos = Self.cachedRepositoryDirectory.filter {
+            Self.path(for: $0, in: repositoryPaths) != nil
+        }
+        if !repositoryPaths.isEmpty, Self.path(for: repo, in: repositoryPaths) == nil {
+            repo = availableRepos.first ?? ""
+            UserDefaults.standard.set(repo, forKey: "runway.repo")
+        }
         loadCache()
     }
 
@@ -133,23 +168,28 @@ struct Presence: Identifiable {
         Task { await shared.refresh() }
     }
 
-    private func saveCache(_ list: [FeedEvent]) {
-        guard !repo.isEmpty else { return }
+    /// The cache is keyed by repository, so the owning repository travels with
+    /// the events instead of being read from `repo` at write time. Reading it
+    /// late is how one repository's events used to be filed under another.
+    private func saveCache(_ list: [FeedEvent], for repository: String) {
+        guard !repository.isEmpty else { return }
         var byRepo = (try? Data(contentsOf: Self.cacheFile))
             .flatMap { try? Self.decoderDate.decode([String: [FeedEvent]].self, from: $0) } ?? [:]
-        byRepo[repo] = Array(list.prefix(1000))   // cap per repo
+        byRepo[repository] = Array(list.prefix(1000))   // cap per repo
         if let data = try? Self.coderDate.encode(byRepo) { try? data.write(to: Self.cacheFile) }
     }
 
     func startPolling() {
         guard pollTask == nil else { return }
-        fetchRepoList()
+        fetchRepoList()        // cached list, instantly
+        revalidateRepoList()   // then bring it up to date before it is opened
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 let interval = self.pollInterval
                 if NSApp.isActive {
                     if self.repo.isEmpty { self.fetchRepoList() }
+                    self.revalidateRepoList()
                     await self.refresh(minimumAge: TimeInterval(interval))
                 }
                 do {
@@ -169,73 +209,91 @@ struct Presence: Identifiable {
     }
 
     func setRepo(_ r: String) {
-        guard r != repo, !r.isEmpty else { return }
+        guard r != repo, localPath(for: r) != nil else { return }
         repo = r
         UserDefaults.standard.set(r, forKey: "runway.repo")
         Self.rememberRepository(r)
-        availableRepos = Self.uniqueRepositories([r] + availableRepos)
-        Self.saveRepositoryDirectory(availableRepos)
         presence = []; lastError = nil; loadedPages = 1; canLoadMore = true
         loadCache()   // show this repo's cached feed instantly (or skeleton if none)
         Task { await refresh() }
     }
 
-    /// Rank repositories by the signed-in user's own recent activity, then by
-    /// local Runway recency, with GitHub's repository push recency as fallback.
+    func localPath(for repository: String) -> String? {
+        Self.path(for: repository, in: repositoryPaths)
+            ?? LocalRepositoryDirectory.directCheckoutPath(for: repository)
+    }
+
+    /// Find cloned GitHub repositories under the configured local repository root.
     func fetchRepoList(force: Bool = false) {
-        if !force,
-           !availableRepos.isEmpty,
-           Date().timeIntervalSince(Self.repositoryDirectoryFetchedAt) < 6 * 3_600 {
-            availableRepos = Self.uniqueRepositories(
-                [repo] + Self.recentRepositories + availableRepos
-            )
-            return
-        }
+        if !force, !availableRepos.isEmpty { return }
         guard repoListTask == nil else { return }
+        lastRepositoryScanAt = Date()
         repoListTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.repoListTask = nil }
-            async let repositoryRequest = GH.query([
-                "api", "--paginate",
-                "/user/repos?per_page=100&sort=pushed&affiliation=owner,organization_member,collaborator",
-                "-q", ".[].full_name",
-            ], cacheFor: 6 * 3_600)
-            async let loginRequest = GH.query(
-                ["api", "user", "-q", ".login"],
-                cacheFor: 6 * 3_600
-            )
-            guard let data = await repositoryRequest,
-                  let s = String(data: data, encoding: .utf8) else {
-                if self.repo.isEmpty { self.lastError = Self.ghHint }
-                return
-            }
-            let repos = s.split(whereSeparator: \.isNewline).map(String.init)
-            var activityRepos: [String] = []
-            if let loginData = await loginRequest,
-               let login = String(data: loginData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !login.isEmpty,
-               let activityData = await GH.query([
-                    "api",
-                    "/users/\(login)/events?per_page=100",
-                    "-q", ".[].repo.name",
-               ], cacheFor: 15 * 60),
-               let activity = String(data: activityData, encoding: .utf8) {
-                activityRepos = activity
-                    .split(whereSeparator: \.isNewline)
-                    .map(String.init)
-            }
-            if !self.repo.isEmpty { Self.rememberRepository(self.repo) }
+            let localRepositories = await Task.detached(priority: .utility) {
+                LocalRepositoryDirectory.discoverOnDevice()
+            }.value
+            let paths = Dictionary(uniqueKeysWithValues: localRepositories.map {
+                ($0.nameWithOwner, $0.path)
+            })
+            let repos = localRepositories.map(\.nameWithOwner)
+            // Whatever is already listed keeps its position: a rescan may only
+            // append clones that appeared and drop clones that vanished. The
+            // current-then-recent ranking therefore applies to the first build
+            // only, so the picker never reshuffles rows a user is reading.
             let ordered = Self.uniqueRepositories(
-                [self.repo] + Self.recentRepositories + activityRepos + repos
-            )
-            if !ordered.isEmpty {
-                self.availableRepos = ordered
-                Self.saveRepositoryDirectory(ordered, fetchedAt: Date())
-                if self.repo.isEmpty, let first = ordered.first { self.setRepo(first) }
-            } else if self.repo.isEmpty {
-                self.lastError = Self.ghHint
+                self.availableRepos + [self.repo] + Self.recentRepositories + repos
+            ).filter {
+                Self.path(for: $0, in: paths) != nil
             }
+            self.applyRepositoryDirectory(ordered, paths: paths)
+        }
+    }
+
+    /// Rescan for cloned repositories ahead of time, throttled. The picker only
+    /// ever renders the result of an earlier scan, so the scan has to happen
+    /// while it is closed. A scan landing under an open list is what made the
+    /// rows jump a second after opening.
+    func revalidateRepoList() {
+        if let lastRepositoryScanAt,
+           Date().timeIntervalSince(lastRepositoryScanAt) < Self.repositoryScanInterval {
+            return
+        }
+        fetchRepoList(force: true)
+    }
+
+    /// Freeze the repository list while the picker is on screen. A scan that
+    /// finishes meanwhile parks its result and lands once the list closes.
+    func holdRepositoryList(_ held: Bool) {
+        repositoryListHeld = held
+        guard !held, let pending = pendingRepositoryDirectory else { return }
+        pendingRepositoryDirectory = nil
+        applyRepositoryDirectory(pending.repositories, paths: pending.paths)
+    }
+
+    private func applyRepositoryDirectory(
+        _ ordered: [String],
+        paths: [String: String]
+    ) {
+        if repositoryListHeld {
+            pendingRepositoryDirectory = (repositories: ordered, paths: paths)
+            return
+        }
+        repositoryPaths = paths
+        availableRepos = ordered
+        Self.saveRepositoryDirectory(ordered, paths: paths)
+        if !ordered.isEmpty {
+            if Self.path(for: repo, in: paths) == nil, let first = ordered.first {
+                setRepo(first)
+            }
+        } else {
+            repo = ""
+            UserDefaults.standard.set("", forKey: "runway.repo")
+            events = []
+            presence = []
+            didLoad = false
+            lastError = "No cloned GitHub repositories found on this Mac."
         }
     }
 
@@ -243,23 +301,16 @@ struct Presence: Identifiable {
         UserDefaults.standard.stringArray(forKey: repositoryDirectoryKey) ?? []
     }
 
-    private static var repositoryDirectoryFetchedAt: Date {
-        Date(timeIntervalSince1970: UserDefaults.standard.double(
-            forKey: repositoryDirectoryFetchedAtKey
-        ))
+    private static var cachedRepositoryPaths: [String: String] {
+        UserDefaults.standard.dictionary(forKey: repositoryPathsKey) as? [String: String] ?? [:]
     }
 
     private static func saveRepositoryDirectory(
         _ repositories: [String],
-        fetchedAt: Date? = nil
+        paths: [String: String]
     ) {
         UserDefaults.standard.set(repositories, forKey: repositoryDirectoryKey)
-        if let fetchedAt {
-            UserDefaults.standard.set(
-                fetchedAt.timeIntervalSince1970,
-                forKey: repositoryDirectoryFetchedAtKey
-            )
-        }
+        UserDefaults.standard.set(paths, forKey: repositoryPathsKey)
     }
 
     private static var recentRepositories: [String] {
@@ -282,32 +333,53 @@ struct Presence: Identifiable {
         }
     }
 
+    private static func path(
+        for repository: String,
+        in paths: [String: String]
+    ) -> String? {
+        let key = repository.lowercased()
+        return paths.first { $0.key.lowercased() == key }?.value
+    }
+
     func refresh(minimumAge: TimeInterval = 0) async {
-        guard !repo.isEmpty, !refreshing else { return }
+        // Everything below belongs to the repository selected when the fetch
+        // started. A switch mid-flight makes the response someone else's data.
+        let repository = repo
+        guard !repository.isEmpty, !refreshing else { return }
         if minimumAge > 0,
-           Date().timeIntervalSince(Self.validationDate(for: repo)) < minimumAge {
+           Date().timeIntervalSince(Self.validationDate(for: repository)) < minimumAge {
             return
         }
         refreshing = true
         defer { refreshing = false }
         loading = events.isEmpty
-        guard let page = await fetchPage(1) else {
+        guard let page = await fetchPage(1, in: repository) else {
+            guard repo == repository else { return dropStaleRefresh() }
             if !offline {
                 offline = true
             }
             lastError = Self.ghHint; loading = false; return
         }
+        guard repo == repository else { return dropStaleRefresh() }
         if offline {
             offline = false
         }
-        merge(page.events, staggerNew: true)
+        merge(page.events, in: repository, staggerNew: true)
         canLoadMore = page.full
-        fetchCommitCounts()
-        fetchPRDetails()
-        Self.recordValidationDate(for: repo)
+        fetchCommitCounts(in: repository)
+        fetchPRDetails(in: repository)
+        Self.recordValidationDate(for: repository)
         lastError = nil
         didLoad = true
         loading = false
+    }
+
+    /// The selected repository changed while a page was in flight. Throw the
+    /// response away and fetch the repository that is actually on screen, which
+    /// the in-flight guard would otherwise have skipped.
+    private func dropStaleRefresh() {
+        loading = false
+        Task { @MainActor [weak self] in await self?.refresh() }
     }
 
     private static func validationDate(for repository: String) -> Date {
@@ -325,23 +397,26 @@ struct Presence: Identifiable {
     /// Load the next page of older events (infinite scroll). The events API is
     /// capped at ~300 events, so this naturally stops when GitHub runs out.
     func loadMore() async {
-        guard didLoad, canLoadMore, !loadingMore, !repo.isEmpty else { return }
+        let repository = repo
+        guard didLoad, canLoadMore, !loadingMore, !repository.isEmpty else { return }
         loadingMore = true
         defer { loadingMore = false }
         let next = loadedPages + 1
-        guard let page = await fetchPage(next), !page.events.isEmpty else {
+        guard let page = await fetchPage(next, in: repository), !page.events.isEmpty else {
+            guard repo == repository else { return }
             canLoadMore = false; return
         }
-        merge(page.events)
+        guard repo == repository else { return }
+        merge(page.events, in: repository)
         loadedPages = next
         canLoadMore = page.full
-        fetchCommitCounts()
-        fetchPRDetails()
+        fetchCommitCounts(in: repository)
+        fetchPRDetails(in: repository)
     }
 
     /// Fill in commit counts for pushes that don't have one yet, via the compare
     /// API (cached by range + an in-flight set so each range is fetched once).
-    private func fetchCommitCounts() {
+    private func fetchCommitCounts(in repository: String) {
         for e in events {
             guard case let .push(_, count, _) = e.kind, count == nil,
                   let shas = pushSHAs[e.id] else { continue }
@@ -352,12 +427,13 @@ struct Presence: Identifiable {
             Task { @MainActor in
                 defer { fetchingCounts.remove(key) }
                 guard let data = await GH.api(
-                    "/repos/\(repo)/compare/\(key)",
+                    "/repos/\(repository)/compare/\(key)",
                     cacheFor: 24 * 3_600
                 ),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let total = json["total_commits"] as? Int else { return }
                 commitCounts[key] = total
+                guard repo == repository else { return }
                 applyCount(total, to: e.id)
             }
         }
@@ -371,17 +447,17 @@ struct Presence: Identifiable {
                               date: old.date, kind: .push(branch: branch, count: count, commits: commits))
     }
 
-    private func fetchPRDetails() {
+    private func fetchPRDetails(in repository: String) {
         for e in events {
             guard case let .prMerged(num, _, _, _, _, _, commits, _) = e.kind,
                   commits == nil else { continue }
             if fetchingPRs.contains(num) { continue }
             fetchingPRs.insert(num)
-            
+
             Task { @MainActor in
                 defer { fetchingPRs.remove(num) }
                 guard let data = await GH.api(
-                    "/repos/\(repo)/pulls/\(num)",
+                    "/repos/\(repository)/pulls/\(num)",
                     cacheFor: 24 * 3_600
                 ),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -398,12 +474,27 @@ struct Presence: Identifiable {
                 let merged = df.date(from: mergedStr) ?? Date()
                 let duration = merged.timeIntervalSince(created)
                 
-                applyPRDetails(number: num, additions: additions, deletions: deletions, commits: commitsCount, duration: duration)
+                guard repo == repository else { return }
+                applyPRDetails(
+                    number: num,
+                    additions: additions,
+                    deletions: deletions,
+                    commits: commitsCount,
+                    duration: duration,
+                    in: repository
+                )
             }
         }
     }
 
-    private func applyPRDetails(number: Int, additions: Int, deletions: Int, commits: Int, duration: TimeInterval) {
+    private func applyPRDetails(
+        number: Int,
+        additions: Int,
+        deletions: Int,
+        commits: Int,
+        duration: TimeInterval,
+        in repository: String
+    ) {
         for i in 0..<events.count {
             if case let .prMerged(num, title, base, branch, _, _, _, _) = events[i].kind, num == number {
                 let old = events[i]
@@ -425,12 +516,15 @@ struct Presence: Identifiable {
                 )
             }
         }
-        saveCache(events)
+        saveCache(events, for: repository)
     }
 
-    private func fetchPage(_ page: Int) async -> (events: [FeedEvent], full: Bool)? {
+    private func fetchPage(
+        _ page: Int,
+        in repository: String
+    ) async -> (events: [FeedEvent], full: Bool)? {
         guard let data = await GH.api(
-            "/repos/\(repo)/events?per_page=100&page=\(page)",
+            "/repos/\(repository)/events?per_page=100&page=\(page)",
             cacheFor: page == 1 ? 10 : 60 * 60
         ),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
@@ -463,7 +557,13 @@ struct Presence: Identifiable {
     /// Merge new events (deduped by id, newest first), recompute presence, cache.
     /// With `staggerNew`, brand-new events at the top reveal one-by-one (phone-
     /// notification style): older cards slide down as each new one fades in.
-    private func merge(_ incoming: [FeedEvent], staggerNew: Bool = false, persistCache: Bool = true, animateFromEmpty: Bool = false) {
+    private func merge(
+        _ incoming: [FeedEvent],
+        in repository: String,
+        staggerNew: Bool = false,
+        persistCache: Bool = true,
+        animateFromEmpty: Bool = false
+    ) {
         let existing = Set(events.map(\.id))
         var byID = [String: FeedEvent](minimumCapacity: events.count + incoming.count)
         for e in events { byID[e.id] = e }
@@ -486,7 +586,7 @@ struct Presence: Identifiable {
         } else {
             presence = nextPresence
         }
-        if persistCache { saveCache(full) }
+        if persistCache { saveCache(full, for: repository) }
 
         let newTop = (staggerNew && (!events.isEmpty || animateFromEmpty))
             ? Array(full.prefix { !existing.contains($0.id) }) : []
@@ -640,6 +740,16 @@ enum GH {
         cacheFor: TimeInterval = 0
     ) async -> Data? {
         await query(["api", apiPath], cacheFor: cacheFor)
+    }
+
+    /// The signed-in GitHub login, or nil when `gh` is unavailable. Cached for an
+    /// hour by the broker, since it only changes when the user re-authenticates.
+    static func viewerLogin() async -> String? {
+        guard let data = await api("user", cacheFor: 3_600),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let login = json["login"] as? String,
+              !login.isEmpty else { return nil }
+        return login
     }
 
     /// Coalesces identical reads across tabs and windows, keeps short-lived

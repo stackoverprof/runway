@@ -46,12 +46,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { Self.configureCloseWindowMenuItem() }
         AgentControl.install()
         AgentControl.resetStates()   // clear stale agent dots from the last session
         installTerminalScrollMonitor()
         installClickFocusMonitor()
         installShortcutMonitor()
         observeFullScreen()
+    }
+
+    /// SwiftUI supplies its own File > Close command for every WindowGroup.
+    /// Keep that visible menu item aligned with Runway's close-window binding.
+    @MainActor
+    private static func configureCloseWindowMenuItem() {
+        guard let fileMenu = NSApp.mainMenu?.items
+            .compactMap(\.submenu)
+            .first(where: { $0.title == "File" }),
+              let closeItem = fileMenu.items.first(where: {
+                  $0.action == #selector(NSWindow.performClose(_:)) || $0.title == "Close"
+              }) else { return }
+
+        closeItem.title = "Close Window"
+        closeItem.keyEquivalent = "w"
+        closeItem.keyEquivalentModifierMask = [.command, .shift]
     }
 
     private func observeFullScreen() {
@@ -97,6 +114,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private static func handleShortcut(_ ev: NSEvent) -> Bool {
         if KeyBindings.shared.recording { return false }   // Settings is capturing a chord
+
+        // Window closing does not require a workspace. Handle it first so it
+        // also works in Settings and any other auxiliary window.
+        if KeyBindings.shared.chord(for: .closeWindow).matches(ev) {
+            guard let window = ev.window ?? NSApp.keyWindow else { return false }
+            window.performClose(nil)
+            return true
+        }
+
         guard let context = RunwayWindowRegistry.shared.context(for: ev.window) ?? RunwayWindowRegistry.shared.activeContext() else {
             return false
         }
@@ -149,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch KeyBindings.shared.action(for: ev) {
         case .newBox:        ws.newBox()
         case .closeBox:      return ws.closeFocused()   // else fall through → window close
+        case .closeWindow:   return false               // handled before workspace lookup
         case .navigatePrev:  ws.focus(offset: -1)
         case .navigateNext:  ws.focus(offset: 1)
         case .reorderUp:     ws.moveFocused(by: -1)
@@ -166,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             nonisolated(unsafe) let ev = event
             let swallow: Bool = MainActor.assumeIsolated {
-                guard let window = ev.window,
+                guard let window = ev.window else { return false }
+                guard
                       let hit = window.contentView?.hitTest(ev.locationInWindow),
                       let id = TerminalRegistry.shared.boxID(under: hit) else { return false }
                 guard let ws = RunwayWindowRegistry.shared.context(for: window)?.workspace else { return false }

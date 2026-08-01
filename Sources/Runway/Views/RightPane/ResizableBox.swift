@@ -23,6 +23,7 @@ struct ResizableBox: View {
     @State private var shimmerOffset: CGFloat = -0.8
     @State private var pulseTask: Task<Void, Never>? = nil
     @State private var didCopyIssueTitle = false
+    @State private var didCopyIssueNumber = false
     @State private var copyFeedbackTask: Task<Void, Never>?
 
     private let maxDetail = 40
@@ -119,7 +120,7 @@ struct ResizableBox: View {
         .contentShape(Rectangle())
         .onHover { isHoveringHeader = $0 }
         .pointerCursor()
-        .onTapGesture { workspace.focusedID = id }
+        .onTapGesture { workspace.setFocus(id) }
     }
 
     /// The agent name: a label that becomes an inline text field when clicked.
@@ -160,11 +161,12 @@ struct ResizableBox: View {
         guard let focusIssueNumber else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
-            "\(name) #\(focusIssueNumber)",
+            "\(name) \(GitHubNumber.reference(focusIssueNumber))",
             forType: .string
         )
 
         copyFeedbackTask?.cancel()
+        didCopyIssueNumber = false
         didCopyIssueTitle = true
         copyFeedbackTask = Task {
             do {
@@ -181,7 +183,20 @@ struct ResizableBox: View {
     /// ellipsis when the header gets tight on a narrow window.
     @ViewBuilder
     private var detailField: some View {
-        if isEditingDetail {
+        if isFocusManaged, let focusIssueNumber {
+            Button {
+                copyIssueNumber(focusIssueNumber)
+            } label: {
+                Text(verbatim: GitHubNumber.reference(focusIssueNumber))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(didCopyIssueNumber ? 0.72 : 0.45))
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Copy issue number")
+        } else if isEditingDetail {
             InlineField(
                 text: $detail,
                 font: .monospacedSystemFont(ofSize: 10, weight: .regular),
@@ -199,6 +214,28 @@ struct ResizableBox: View {
             detailLabel("Add a description", opacity: 0.22)
         }
         // Empty + not hovering → show nothing.
+    }
+
+    private func copyIssueNumber(_ issueNumber: Int) {
+        workspace.focusedID = id
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            GitHubNumber.reference(issueNumber),
+            forType: .string
+        )
+
+        copyFeedbackTask?.cancel()
+        didCopyIssueTitle = false
+        didCopyIssueNumber = true
+        copyFeedbackTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 80_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            didCopyIssueNumber = false
+        }
     }
 
     private func detailLabel(_ text: String, opacity: Double) -> some View {

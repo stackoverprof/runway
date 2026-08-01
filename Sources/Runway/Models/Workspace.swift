@@ -31,6 +31,9 @@ enum FeedTab: String, CaseIterable, Codable {
     static let shared = Workspace()
 
     var boxes: [AgentBox] = [AgentBox(name: "agent1")]
+    /// Repository currently projected into the right pane. Boxes belonging to
+    /// other repositories remain mounted so their terminal sessions keep running.
+    var activeFocusRepository: String?
     /// The box the user last focused (click or keyboard). Drives the focus glow,
     /// the accordion's larger share, and the solo target.
     var focusedID: UUID?
@@ -50,6 +53,16 @@ enum FeedTab: String, CaseIterable, Codable {
     var findRequestID = 0
     /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
     @ObservationIgnored var focusQuick: (() -> Void)?
+    /// Set by the QuickTerminal: reports whether its surface is the window's
+    /// first responder right now.
+    @ObservationIgnored var quickHasKeyboard: (() -> Bool)?
+
+    /// True while the user is typing into the quick terminal. Background work
+    /// (Focus-board reconciliation, a terminal surface mounting) must never pull
+    /// the keyboard out from under it.
+    var isQuickTerminalFocused: Bool {
+        quickVisible && quickHasKeyboard?() == true
+    }
 
     /// Width of the left pane (the split divider position).
     var leftWidth: CGFloat = 460
@@ -69,6 +82,7 @@ enum FeedTab: String, CaseIterable, Codable {
     /// Last raw control-file contents seen per box, so we only apply changes (and
     /// don't clobber the user's UI edits with a stale file).
     private var lastControl: [UUID: String] = [:]
+    @ObservationIgnored private var focusedBoxByRepository: [String: UUID] = [:]
     private var lastSaved: Data?
     /// False until the first control-file poll completes, so adopting agents'
     /// pre-existing needs-action state on launch doesn't fire a burst of toasts.
@@ -79,9 +93,22 @@ enum FeedTab: String, CaseIterable, Codable {
 
     init() {
         load()
+        for index in boxes.indices {
+            guard let repository = boxes[index].focusRepository else { continue }
+            boxes[index].cwd = GitHubFeed.shared.localPath(for: repository)
+        }
+        activeFocusRepository = GitHubFeed.shared.repo.isEmpty
+            ? boxes.first?.focusRepository
+            : GitHubFeed.shared.repo
+        if boxes.contains(where: { $0.focusRepository != nil }) {
+            focusBoardControlsBoxes = true
+        }
         // Focus the first box on launch so the glow + accordion expansion match
         // where the keyboard actually lands (the terminal that auto-focuses).
-        focusedID = boxes.first?.id
+        focusedID = activeBoxes.first?.id
+        if let activeFocusRepository, let focusedID {
+            focusedBoxByRepository[activeFocusRepository] = focusedID
+        }
         // Quitting kills the sessions, so reopen each restored agent into the
         // configured command (e.g. claude) too, not just ⌘N-created ones.
         let cmd = SettingsKey.configuredAgentCommand
@@ -122,11 +149,26 @@ enum FeedTab: String, CaseIterable, Codable {
         try? data.write(to: Self.stateFile)
     }
 
-    func toggleQuick() { quickVisible.toggle() }
+    func toggleQuick() {
+        quickVisible.toggle()
+        // Closing a pinned quick terminal also drops the pin: pinning is a
+        // "keep this open" request, so dismissing it retires that request and
+        // the next open behaves normally (auto-hide when it loses focus).
+        if !quickVisible { quickPinned = false }
+    }
 
     func requestFind() { findRequestID &+= 1 }
 
     var focusedIndex: Int? { boxes.firstIndex { $0.id == focusedID } }
+
+    var activeBoxes: [AgentBox] {
+        guard focusBoardControlsBoxes, let activeFocusRepository else { return boxes }
+        return boxes.filter { $0.focusRepository == activeFocusRepository }
+    }
+
+    func isBoxInActiveRepository(_ box: AgentBox) -> Bool {
+        !focusBoardControlsBoxes || box.focusRepository == activeFocusRepository
+    }
 
     // MARK: Agent control channel
 
@@ -267,15 +309,17 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 
     func focus(offset: Int) {
-        guard !boxes.isEmpty else { return }
-        let current = focusedIndex ?? 0
-        let next = ((current + offset) % boxes.count + boxes.count) % boxes.count
-        setFocus(boxes[next].id)
+        let candidates = activeBoxes
+        guard !candidates.isEmpty else { return }
+        let current = candidates.firstIndex { $0.id == focusedID } ?? 0
+        let next = ((current + offset) % candidates.count + candidates.count) % candidates.count
+        setFocus(candidates[next].id)
     }
 
     func focus(index: Int) {
-        guard boxes.indices.contains(index) else { return }
-        setFocus(boxes[index].id)
+        let candidates = activeBoxes
+        guard candidates.indices.contains(index) else { return }
+        setFocus(candidates[index].id)
     }
 
     func moveFocused(by delta: Int) {
@@ -292,59 +336,145 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 
     /// Set the visual focus and give that box's terminal keyboard focus.
-    func setFocus(_ id: UUID?) {
+    ///
+    /// `moveKeyboard: false` moves the glow and the accordion share only. Use it
+    /// for anything the user did not directly ask for, so a background refresh
+    /// never interrupts typing somewhere else in the window.
+    func setFocus(_ id: UUID?, moveKeyboard: Bool = true) {
         focusedID = id
+        if let id,
+           let repository = boxes.first(where: { $0.id == id })?.focusRepository {
+            focusedBoxByRepository[repository] = id
+        }
+        guard moveKeyboard else { return }
         TerminalRegistry.shared.focusTerminal(id)
     }
 
-    /// Make the right pane an exact, stable projection of the Focus board.
+    /// Reconcile one repository's Focus board without disturbing terminal
+    /// sessions owned by other repositories.
     func syncFocusBoard(issues: [AssignedIssue], repository: String) {
+        let wasFocusControlled = focusBoardControlsBoxes
         focusBoardControlsBoxes = true
         let previousBoxes = boxes
-        let previousFocusedID = focusedID
-        let previousFocusedIndex = focusedIndex ?? 0
+        if let activeFocusRepository, let focusedID,
+           previousBoxes.contains(where: {
+               $0.id == focusedID && $0.focusRepository == activeFocusRepository
+           }) {
+            focusedBoxByRepository[activeFocusRepository] = focusedID
+        }
+
+        let previousRepositoryBoxes = previousBoxes.filter {
+            $0.focusRepository == repository
+        }
+        let previousRepositoryFocusID = focusedBoxByRepository[repository]
+            ?? focusedID.flatMap { id in
+                previousRepositoryBoxes.contains(where: { $0.id == id }) ? id : nil
+            }
+        let previousFocusedIndex = previousRepositoryFocusID.flatMap { id in
+            previousRepositoryBoxes.firstIndex { $0.id == id }
+        } ?? 0
+        let reconciliation = FocusBoxReconciler.reconcile(
+            previousBoxes: previousBoxes,
+            issues: issues,
+            repository: repository,
+            workingDirectory: GitHubFeed.shared.localPath(for: repository),
+            command: SettingsKey.configuredAgentCommand,
+            retainUnmanagedBoxes: wasFocusControlled
+        )
+        let nextRepositoryBoxes = reconciliation.repositoryBoxes
+
+        for removed in reconciliation.removedBoxes {
+            TerminalRegistry.shared.unregister(id: removed.id)
+            AgentControl.cleanup(removed.id)
+            lastControl[removed.id] = nil
+        }
+        boxes = reconciliation.boxes
+        activeFocusRepository = repository
+
+        if nextRepositoryBoxes.isEmpty {
+            setFocus(nil)
+            soloed = false
+        } else {
+            let nextFocusID: UUID
+            if let previousRepositoryFocusID,
+               nextRepositoryBoxes.contains(where: { $0.id == previousRepositoryFocusID }) {
+                nextFocusID = previousRepositoryFocusID
+            } else {
+                nextFocusID = nextRepositoryBoxes[
+                    min(previousFocusedIndex, nextRepositoryBoxes.count - 1)
+                ].id
+            }
+            // This runs on every background issue refresh, so it must be inert
+            // for the keyboard. Only hand the keyboard over when the focused box
+            // genuinely changed, and never while the quick terminal has it.
+            // Otherwise a routine poll yanks the caret mid-keystroke.
+            setFocus(
+                nextFocusID,
+                moveKeyboard: nextFocusID != focusedID && !isQuickTerminalFocused
+            )
+        }
+        saveIfNeeded()
+    }
+}
+
+struct FocusBoxReconciliation {
+    let boxes: [AgentBox]
+    let repositoryBoxes: [AgentBox]
+    let removedBoxes: [AgentBox]
+}
+
+enum FocusBoxReconciler {
+    static func reconcile(
+        previousBoxes: [AgentBox],
+        issues: [AssignedIssue],
+        repository: String,
+        workingDirectory: String?,
+        command: String,
+        retainUnmanagedBoxes: Bool
+    ) -> FocusBoxReconciliation {
+        let previousRepositoryBoxes = previousBoxes.filter {
+            $0.focusRepository == repository
+        }
         var usedIDs = Set<UUID>()
-        var nextBoxes: [AgentBox] = []
+        var repositoryBoxes: [AgentBox] = []
 
         for issue in issues {
-            if var existing = previousBoxes.first(where: {
-                $0.focusRepository == repository && $0.focusIssueNumber == issue.number
+            if var existing = previousRepositoryBoxes.first(where: {
+                $0.focusIssueNumber == issue.number
             }) {
                 existing.name = issue.title
-                nextBoxes.append(existing)
+                existing.cwd = workingDirectory
+                repositoryBoxes.append(existing)
                 usedIDs.insert(existing.id)
             } else {
                 var box = AgentBox(
                     name: issue.title,
                     detail: "",
-                    cwd: SettingsKey.configuredFocusTerminalDirectory,
+                    cwd: workingDirectory,
                     focusRepository: repository,
                     focusIssueNumber: issue.number
                 )
-                let command = SettingsKey.configuredAgentCommand
                 if !command.isEmpty { box.autorun = command }
-                nextBoxes.append(box)
+                repositoryBoxes.append(box)
                 usedIDs.insert(box.id)
             }
         }
 
-        for removed in previousBoxes where !usedIDs.contains(removed.id) {
-            TerminalRegistry.shared.unregister(id: removed.id)
-            AgentControl.cleanup(removed.id)
-            lastControl[removed.id] = nil
+        let removedRepositoryBoxes = previousRepositoryBoxes.filter {
+            !usedIDs.contains($0.id)
         }
-
-        boxes = nextBoxes
-        if boxes.isEmpty {
-            focusedID = nil
-            soloed = false
-        } else if let previousFocusedID,
-                  boxes.contains(where: { $0.id == previousFocusedID }) {
-            focusedID = previousFocusedID
-        } else {
-            focusedID = boxes[min(previousFocusedIndex, boxes.count - 1)].id
+        let removedUnmanagedBoxes = retainUnmanagedBoxes
+            ? []
+            : previousBoxes.filter { $0.focusRepository == nil }
+        let retainedBoxes = previousBoxes.filter {
+            $0.focusRepository != repository
+                && (retainUnmanagedBoxes || $0.focusRepository != nil)
         }
-        saveIfNeeded()
+        return FocusBoxReconciliation(
+            boxes: retainedBoxes + repositoryBoxes,
+            repositoryBoxes: repositoryBoxes,
+            removedBoxes: removedRepositoryBoxes + removedUnmanagedBoxes
+        )
     }
 }
 

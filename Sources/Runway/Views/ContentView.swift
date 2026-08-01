@@ -49,6 +49,12 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea()
+        .overlay(alignment: .top) {
+            if !context.workspace.isFullScreen {
+                WindowDragRegion()
+                    .frame(height: WindowChrome.zoomBandHeight)
+            }
+        }
         .background(WindowConfigurator())
         .background(WindowRegistrationView(context: context))
         .onAppear { context.startIfNeeded() }

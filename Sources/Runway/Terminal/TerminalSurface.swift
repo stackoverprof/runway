@@ -101,7 +101,11 @@ struct TerminalSurfaceView: View {
                     for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         if view.window != nil {
-                            if !didApplyInitialFocus, workspace.focusedID == boxID {
+                            // A surface mounting is not a request to type in it:
+                            // if the quick terminal already holds the keyboard,
+                            // leave it there and only claim the visual focus.
+                            if !didApplyInitialFocus, workspace.focusedID == boxID,
+                               !workspace.isQuickTerminalFocused {
                                 view.window?.makeFirstResponder(view)
                                 didApplyInitialFocus = true
                             }

@@ -7,6 +7,7 @@ struct LeftPane: View {
     @Bindable var feed: GitHubFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
+    @State private var hoveringNewIssue = false
     @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
     @State private var focusIssueDrag = FocusIssueDrag()
@@ -26,6 +27,7 @@ struct LeftPane: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
+    @AppStorage(SettingsKey.focusBoardCollapsed) private var focusBoardCollapsed = false
 
     private static let taglines = [
         "WHAT HAS BEEN HAPPENING",
@@ -102,6 +104,20 @@ struct LeftPane: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await feed.refresh(minimumAge: 15) }
         }
+        // The Focus board owns the right pane whatever the left pane is showing,
+        // so its repository reconciliation lives here rather than inside the
+        // Runway tab. Only the selected tab stays mounted, and hanging this off
+        // that tab left the terminals on the old repository until it reappeared.
+        .task(id: feed.repo) {
+            assignedIssues.restore(repository: feed.repo)
+            syncFocusBoard()
+            await assignedIssues.revalidate(repository: feed.repo)
+            syncFocusBoard()
+        }
+        .onChange(of: assignedIssues.focusedIssueNumbers) { _, _ in
+            guard focusIssueDrag.issueNumber == nil else { return }
+            syncFocusBoard()
+        }
         .onChange(of: ws.selectedTab) { previousTab, tab in
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
@@ -177,15 +193,28 @@ struct LeftPane: View {
 
     // MARK: Header
     private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            brandingTitle
-            Spacer(minLength: 8)
-            repoButton
+        VStack(spacing: 0) {
+            if !ws.isFullScreen {
+                WindowDragRegion()
+                    .frame(height: 42)
+            }
+
+            HStack(alignment: .center, spacing: 8) {
+                brandingTitle
+                    .layoutPriority(1)
+                if ws.isFullScreen {
+                    Spacer(minLength: 8)
+                } else {
+                    WindowDragRegion()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                }
+                repoButton
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, ws.isFullScreen ? 18 : 8)
+            .padding(.bottom, 22)
         }
-        .padding(.horizontal, 16)
-        // Clear the traffic lights when windowed; tighten to the top in full screen.
-        .padding(.top, ws.isFullScreen ? 18 : 50)
-        .padding(.bottom, 22)
     }
 
     @ViewBuilder
@@ -215,7 +244,13 @@ struct LeftPane: View {
 
     /// Rounded-rectangle repo selector with a repo glyph; opens a searchable picker.
     private var repoButton: some View {
-        Button { showRepoPicker.toggle() } label: {
+        Button {
+            showRepoPicker.toggle()
+            // No rescan here: the poll loop keeps the list current in the
+            // background, so opening the picker must not move its rows. Only a
+            // never-populated list is worth fetching on the spot.
+            if showRepoPicker { feed.fetchRepoList() }
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 10, weight: .semibold))
@@ -241,6 +276,9 @@ struct LeftPane: View {
                 feed.setRepo(picked)
                 showRepoPicker = false
             }
+        }
+        .onChange(of: showRepoPicker) { _, open in
+            feed.holdRepositoryList(open)
         }
     }
 
@@ -336,15 +374,34 @@ struct LeftPane: View {
 
     private var subHeader: some View {
         HStack(alignment: .center, spacing: 8) {
-            Text(subHeaderText)
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.3))
-                .tracking(0.8)
-                .lineLimit(1)
-                .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
+            if ws.selectedTab == .runway {
+                Button {
+                    withAnimation(focusBoardCollapseAnimation) {
+                        focusBoardCollapsed.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(subHeaderText)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .rotationEffect(.degrees(focusBoardCollapsed ? -90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
+            } else {
+                Text(subHeaderText)
+                    .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
+            }
             Spacer(minLength: 8)
             feedTabs
         }
+        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+        .foregroundStyle(Color.white.opacity(0.3))
+        .tracking(0.8)
+        .lineLimit(1)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .onAppear {
@@ -357,6 +414,10 @@ struct LeftPane: View {
             guard ws.selectedTab == .feeds, new > old, !isTyping else { return }
             rotateTagline()
         }
+    }
+
+    private var focusBoardCollapseAnimation: Animation {
+        .spring(response: 0.34, dampingFraction: 0.86)
     }
 
     private var subHeaderText: String {
@@ -594,7 +655,7 @@ struct LeftPane: View {
                 return developer
             }
             let matches = developer.pullRequests.filter { pullRequest in
-                "#\(pullRequest.number) \(pullRequest.title) \(pullRequest.headRefName) \(pullRequest.baseRefName)"
+                "\(GitHubNumber.reference(pullRequest.number)) \(pullRequest.title) \(pullRequest.headRefName) \(pullRequest.baseRefName)"
                     .localizedCaseInsensitiveContains(query)
             }
             guard !matches.isEmpty else { return nil }
@@ -770,7 +831,7 @@ struct LeftPane: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Text(verbatim: "#\(pullRequest.number)")
+                    Text(verbatim: GitHubNumber.reference(pullRequest.number))
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(color.opacity(0.82))
                     if pullRequest.isDraft {
@@ -819,25 +880,27 @@ struct LeftPane: View {
 
     private var runwayTab: some View {
         VStack(alignment: .leading, spacing: 0) {
-            runwayEmptyContainer
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-                .layoutPriority(2)
+            if !focusBoardCollapsed {
+                runwayEmptyContainer
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                    .layoutPriority(2)
+                    .transition(
+                        .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.97, anchor: .top))
+                    )
+            }
 
             runwayBacklog
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .clipped()
         }
+        .animation(focusBoardCollapseAnimation, value: focusBoardCollapsed)
         .animation(.spring(response: 0.38, dampingFraction: 0.85), value: runwayIssueTab)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipped()
-        .task(id: feed.repo) {
-            assignedIssues.restore(repository: feed.repo)
-            syncFocusBoard()
-            await assignedIssues.revalidate(repository: feed.repo)
-            syncFocusBoard()
-        }
         .task(id: ws.selectedTab) {
             guard ws.selectedTab == .runway else { return }
             while !Task.isCancelled {
@@ -858,10 +921,6 @@ struct LeftPane: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             guard ws.selectedTab == .runway else { return }
             revalidateFocusBoard()
-        }
-        .onChange(of: assignedIssues.focusedIssueNumbers) { _, _ in
-            guard focusIssueDrag.issueNumber == nil else { return }
-            syncFocusBoard()
         }
     }
 
@@ -885,6 +944,8 @@ struct LeftPane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = assignedIssues.error, assignedIssues.issues.isEmpty {
                 feedNotice(error, systemImage: "exclamationmark.triangle")
+            } else if assignedIssues.issues.isEmpty, !feed.repo.isEmpty {
+                newIssuePlaceholder
             } else {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
@@ -936,7 +997,15 @@ struct LeftPane: View {
 
                     AssignedIssueCard(
                         issue: issue,
-                        repository: issueRepositoryName
+                        repository: issueRepositoryName,
+                        onClosedChange: { closed in
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                _ = assignedIssues.setClosed(
+                                    issueNumber: issue.number,
+                                    closed: closed
+                                )
+                            }
+                        }
                     )
                     .background {
                         GeometryReader { proxy in
@@ -1004,6 +1073,80 @@ struct LeftPane: View {
                         dash: assignedIssues.focused.isEmpty ? [5, 5] : []
                     )
                 )
+        }
+    }
+
+    /// Nothing at all is assigned in this repository. Runway only ever shows
+    /// issues assigned to you, so an empty board usually means "nothing is
+    /// assigned yet" rather than "nothing exists". Say so, and open GitHub's
+    /// new-issue form with the assignee already filled in.
+    private var newIssuePlaceholder: some View {
+        VStack(spacing: 11) {
+            Image(systemName: "tray")
+                .font(.system(size: 21, weight: .light))
+                .foregroundStyle(Color.white.opacity(0.3))
+
+            VStack(spacing: 5) {
+                Text("No issues assigned to you")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.72))
+                Text("Runway tracks the issues you are assigned to. Create one in \(issueRepositoryName) and assign it to yourself to see it here.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.42))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 5) {
+                Text("New issue on GitHub")
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(Color.white.opacity(hoveringNewIssue ? 0.95 : 0.72))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(
+                Capsule().fill(Color.white.opacity(hoveringNewIssue ? 0.17 : 0.1))
+            )
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color(white: hoveringNewIssue ? 0.085 : 0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .strokeBorder(
+                    Color.white.opacity(hoveringNewIssue ? 0.22 : 0.12),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 9))
+        .onHover { hoveringNewIssue = $0 }
+        .pointerCursor()
+        .onTapGesture { openNewIssuePage() }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// GitHub prefills assignees from the query string, so the issue lands in
+    /// Runway as soon as it is submitted, with no second trip to the sidebar.
+    private func openNewIssuePage() {
+        let repository = feed.repo
+        guard !repository.isEmpty,
+              var components = URLComponents(
+                  string: "https://github.com/\(repository)/issues/new"
+              ) else { return }
+        Task {
+            if let login = await GH.viewerLogin() {
+                components.queryItems = [URLQueryItem(name: "assignees", value: login)]
+            }
+            guard let url = components.url else { return }
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -1240,11 +1383,8 @@ struct LeftPane: View {
             case .runway:
                 issueSearchVisible.toggle()
                 willShow = issueSearchVisible
-                if willShow {
-                    runwayIssueTab = .open
-                } else {
+                if !willShow {
                     issueSearchQuery = ""
-                    runwayIssueTab = .open
                 }
             case .feeds:
                 feedSearchVisible.toggle()
@@ -1302,7 +1442,6 @@ struct LeftPane: View {
             case .runway:
                 issueSearchVisible = false
                 issueSearchQuery = ""
-                runwayIssueTab = .open
             case .feeds:
                 feedSearchVisible = false
                 feedSearchQuery = ""
@@ -1336,9 +1475,9 @@ struct LeftPane: View {
             detail = "push pushed \(branch) \(count.map(String.init) ?? "") "
                 + commits.map { "\($0.sha) \($0.message)" }.joined(separator: " ")
         case let .prOpened(number, title, branch):
-            detail = "pull request pr opened #\(number) \(title) \(branch)"
+            detail = "pull request pr opened \(GitHubNumber.reference(number)) \(title) \(branch)"
         case let .prMerged(number, title, base, branch, additions, deletions, commits, _):
-            detail = "pull request pr merged merge #\(number) \(title) \(base) \(branch) "
+            detail = "pull request pr merged merge \(GitHubNumber.reference(number)) \(title) \(base) \(branch) "
                 + "\(additions.map(String.init) ?? "") \(deletions.map(String.init) ?? "") "
                 + "\(commits.map(String.init) ?? "")"
         case let .branchCreated(name):
@@ -1346,11 +1485,11 @@ struct LeftPane: View {
         case let .branchDeleted(name):
             detail = "branch deleted \(name)"
         case let .review(number, title, state):
-            detail = "review reviewed pull request pr #\(number) \(title) \(state)"
+            detail = "review reviewed pull request pr \(GitHubNumber.reference(number)) \(title) \(state)"
         case let .issueOpened(number, title):
-            detail = "issue opened open #\(number) \(title)"
+            detail = "issue opened open \(GitHubNumber.reference(number)) \(title)"
         case let .issueClosed(number, title):
-            detail = "issue closed close #\(number) \(title)"
+            detail = "issue closed close \(GitHubNumber.reference(number)) \(title)"
         }
         return "\(actor) \(detail)"
     }
@@ -1372,8 +1511,17 @@ struct LeftPane: View {
 
                     AssignedIssueCard(
                         issue: issue,
-                        repository: issueRepositoryName
+                        repository: issueRepositoryName,
+                        onClosedChange: { closed in
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                _ = assignedIssues.setClosed(
+                                    issueNumber: issue.number,
+                                    closed: closed
+                                )
+                            }
+                        }
                     )
+                    .transition(.opacity)
                     .background {
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -1409,6 +1557,7 @@ struct LeftPane: View {
                 .easeInOut(duration: 0.16),
                 value: focusIssueDrag.isCrossingIssueTabs
             )
+            .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
@@ -1444,22 +1593,22 @@ struct LeftPane: View {
         let query = issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard issueSearchVisible, !query.isEmpty else { return issues }
         return issues.filter { issue in
-            "#\(issue.number) \(issue.title) \(issueRepositoryName)"
+            "\(GitHubNumber.reference(issue.number)) \(issue.title) \(issueRepositoryName)"
                 .localizedCaseInsensitiveContains(query)
         }
     }
 
     private func updateIssueSearchTab() {
         guard issueSearchVisible else { return }
-        let query = issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let preferredTab: RunwayIssueTab = !query.isEmpty
-            && filteredOpenIssues.isEmpty
-            && !filteredClosedIssues.isEmpty
-            ? .closed
-            : .open
-        guard runwayIssueTab != preferredTab else { return }
+
+        let currentCount = assignedIssueCount(for: runwayIssueTab)
+        guard currentCount == 0 else { return }
+
+        let otherTab: RunwayIssueTab = runwayIssueTab == .open ? .closed : .open
+        guard assignedIssueCount(for: otherTab) > 0 else { return }
+
         withAnimation(.easeInOut(duration: 0.15)) {
-            runwayIssueTab = preferredTab
+            runwayIssueTab = otherTab
         }
     }
 

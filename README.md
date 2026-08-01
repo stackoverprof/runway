@@ -25,7 +25,7 @@ activity, and pull request progress in one focused workspace.
 
 ## Install in a minute
 
-1. Download **`Runway-2.0.0-arm64.dmg`** from
+1. Download **`Runway-2.1.0-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -63,12 +63,13 @@ an authenticated session.
 
 ### The activity side
 
-Runway polls the selected repository through your existing authenticated `gh`
-session. There is no separate token setup and no personal access token stored by
-the app. Cached Feeds, issues, Pulls, and repository choices render immediately,
-then revalidate in the background. Identical requests are coalesced across
-windows, reads are concurrency-limited, failures back off automatically, and
-routine polling pauses while Runway is inactive.
+Runway discovers cloned GitHub repositories on your Mac, then polls the selected
+repository through your existing authenticated `gh` session. There is no
+separate token setup and no personal access token stored by the app. Cached
+Feeds, issues, Pulls, and local repository choices render immediately, then
+revalidate in the background. Identical requests are coalesced across windows,
+reads are concurrency-limited, failures back off automatically, and routine
+polling pauses while Runway is inactive.
 
 - A presence strip shows who has been active recently.
 - The timeline groups meaningful pushes, PR activity, reviews, issues, and
@@ -79,8 +80,11 @@ routine polling pauses while Runway is inactive.
   and supports 1d, 7d, 30d, MTD, and YTD timeframes.
 - The Runway board shows assigned Open and Closed issues, supports local
   ordering, and can close or reopen issues on GitHub through drag and drop.
+- Click **On today's missions** to smoothly collapse or expand the Focus board
+  while keeping the Open and Closed issue backlog visible.
 - `⌘F` opens tab-specific search for issues, feed events, or pull requests.
-- The searchable repo switcher can open any accessible `owner/repo`.
+- The searchable repo switcher shows only GitHub repositories cloned on this
+  Mac. Opening it refreshes the local clone list.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
   responsive.
 
@@ -91,13 +95,20 @@ routine polling pauses while Runway is inactive.
 ### The terminal side
 
 The Focus board is the source of truth for the right pane. Each focused issue
-creates a terminal with the issue title, stable shell session, and configured
-starting directory.
+creates a terminal with the issue title, stable shell session, and the selected
+repository's local clone as its starting directory. For example,
+`VISKA-IO/monorepo` starts in `~/Developer/monorepo` when that is its local clone.
 
 - **Accordion layout** always fits every focused terminal into the available
   window height and gives the active terminal more space.
+- Focus terminal headers are issue-owned and read-only. The right-side `#1234`
+  reference copies the issue number when clicked.
 - **Focus mode** expands the active terminal to fill the pane.
 - **Quick terminal** stays alive behind its bottom-left overlay.
+- Switching repositories keeps each repository's Focus terminals and running
+  agent sessions alive, then restores them when that repository is selected again.
+- Double-click the top window edge or blank left-header space to fill the screen;
+  double-click it again to restore the previous window size and position.
 - File drops insert shell-escaped paths directly into the target terminal.
 - Agent commands can start as Claude, Codex, Agent, a custom command, or a
   plain shell.
@@ -116,6 +127,10 @@ echo '{"state":"running"}' > "$RUNWAY_CONTROL"
 echo '{"state":"needs-action"}' > "$RUNWAY_CONTROL"
 echo '{"state":"idle"}' > "$RUNWAY_CONTROL"
 ```
+
+Focus terminal titles and issue references are owned by their GitHub issues and
+remain read-only. `name` and `description` updates apply only to non-Focus agent
+cards; state updates continue to work for Focus terminals.
 
 Run this inside any card to discover everything an agent can do:
 
@@ -148,6 +163,7 @@ directory. Runway does not edit your shell or agent configuration files.
 | Jump | `⌘1` through `⌘9` | Focus a specific agent |
 | Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |
+| Close window | `⌘⇧W` | Close the current window |
 | Find | `⌘F` | Search the active Runway, Feeds, or Pulls tab |
 | Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Pulls |
 | Settings | `⌘,` | Open settings and people profiles |

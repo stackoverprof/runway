@@ -154,11 +154,11 @@ struct FeedRow: View {
                 }
             }
         case let .prOpened(number, title, branch):
-            prLine("#\(number)", title.isEmpty ? branch : title, tint: Self.green)
+            prLine(GitHubNumber.reference(number), title.isEmpty ? branch : title, tint: Self.green)
         case let .prMerged(number, title, base, branch, adds, dels, commits, duration):
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Chip("#\(number)", tint: Self.purple)
+                    Chip(GitHubNumber.reference(number), tint: Self.purple)
                     Image(systemName: "arrow.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.white.opacity(0.3))
                     Chip(base, tint: Self.gray)
                     if let a = adds, let d = dels {
@@ -181,11 +181,11 @@ struct FeedRow: View {
         case let .branchDeleted(name):
             Chip(name, tint: Self.gray)
         case let .review(number, title, state):
-            prLine("#\(number) \(state.lowercased())", title, tint: Self.blue)
+            prLine("\(GitHubNumber.reference(number)) \(state.lowercased())", title, tint: Self.blue)
         case let .issueOpened(number, title):
-            prLine("#\(number)", title, tint: Self.green)
+            prLine(GitHubNumber.reference(number), title, tint: Self.green)
         case let .issueClosed(number, title):
-            prLine("#\(number)", title, tint: Self.purple)
+            prLine(GitHubNumber.reference(number), title, tint: Self.purple)
         }
     }
 

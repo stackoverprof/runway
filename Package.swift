@@ -22,6 +22,11 @@ let package = Package(
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ],
             path: "Sources/Runway"
+        ),
+        .testTarget(
+            name: "RunwayTests",
+            dependencies: ["Runway"],
+            path: "Tests/RunwayTests"
         )
     ],
     swiftLanguageModes: [.v6]

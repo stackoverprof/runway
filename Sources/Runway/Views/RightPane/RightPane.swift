@@ -18,10 +18,15 @@ struct RightPane: View {
 
     var body: some View {
         GeometryReader { geo in
-            let n = ws.boxes.count
+            let activeBoxes = ws.activeBoxes
+            let activeIDs = Set(activeBoxes.map(\.id))
+            let n = activeBoxes.count
             ZStack {
-                VStack(spacing: ws.soloed ? 0 : 12) {
+                PersistentTerminalLayout(spacing: ws.soloed ? 0 : 12) {
                     ForEach($ws.boxes) { $box in
+                        let isActive = activeIDs.contains(box.id)
+                        let isPresented = isActive
+                            && (!ws.soloed || box.id == ws.focusedID)
                         ResizableBox(
                             id: box.id,
                             workspace: ws,
@@ -34,15 +39,24 @@ struct RightPane: View {
                             isFocused: ws.focusedID == box.id,
                             isFocusManaged: box.focusIssueNumber != nil,
                             focusIssueNumber: box.focusIssueNumber,
-                            fixedHeight: fixedHeight(for: box, geo: geo, count: n)
+                            fixedHeight: isPresented
+                                ? fixedHeight(for: box, geo: geo, count: n)
+                                : 1
                         )
                         .id(box.id)
+                        .opacity(isPresented ? 1 : 0)
+                        .allowsHitTesting(isPresented)
+                        .accessibilityHidden(!isPresented)
+                        .layoutValue(
+                            key: TerminalPresentedLayoutValueKey.self,
+                            value: isPresented
+                        )
                     }
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                if ws.focusBoardControlsBoxes && ws.boxes.isEmpty {
+                if ws.focusBoardControlsBoxes && activeBoxes.isEmpty {
                     focusEmptyState
                     hint
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -54,9 +68,9 @@ struct RightPane: View {
         .background(Color.black)
         .animation(.easeInOut(duration: 0.2), value: ws.soloed)
         .animation(.easeInOut(duration: 0.2), value: ws.focusedID)
-        .animation(.easeInOut(duration: 0.2), value: ws.boxes.map(\.id))
-        .task(id: ws.focusBoardControlsBoxes && ws.boxes.isEmpty) {
-            guard ws.focusBoardControlsBoxes, ws.boxes.isEmpty else { return }
+        .animation(.easeInOut(duration: 0.2), value: ws.activeBoxes.map(\.id))
+        .task(id: ws.focusBoardControlsBoxes && ws.activeBoxes.isEmpty) {
+            guard ws.focusBoardControlsBoxes, ws.activeBoxes.isEmpty else { return }
             emptyStateIndex = Int.random(in: 0..<Self.emptyStates.count)
             emptyStateOpacity = 1
 
@@ -66,7 +80,7 @@ struct RightPane: View {
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, ws.boxes.isEmpty else { return }
+                guard !Task.isCancelled, ws.activeBoxes.isEmpty else { return }
 
                 withAnimation(.easeInOut(duration: 0.18)) {
                     emptyStateOpacity = 0
@@ -76,7 +90,7 @@ struct RightPane: View {
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, ws.boxes.isEmpty else { return }
+                guard !Task.isCancelled, ws.activeBoxes.isEmpty else { return }
 
                 var nextIndex = Int.random(in: 0..<Self.emptyStates.count)
                 while nextIndex == emptyStateIndex {
@@ -104,7 +118,7 @@ struct RightPane: View {
     /// Equal split, or—if a box is focused—weight the focused box 2× the others.
     private func accordionHeight(for box: AgentBox, available: CGFloat, count n: Int) -> CGFloat {
         guard n > 0 else { return available }
-        if let fid = ws.focusedID, ws.boxes.contains(where: { $0.id == fid }) {
+        if let fid = ws.focusedID, ws.activeBoxes.contains(where: { $0.id == fid }) {
             let total = CGFloat(n + 1)   // focused weight 2, others 1
             return box.id == fid ? available * 2 / total : available / total
         }
@@ -138,5 +152,53 @@ struct RightPane: View {
         .frame(maxWidth: .infinity)
         .opacity(emptyStateOpacity)
         .allowsHitTesting(false)
+    }
+}
+
+private struct TerminalPresentedLayoutValueKey: LayoutValueKey {
+    static let defaultValue = true
+}
+
+/// Keeps every terminal surface mounted while laying out only the selected
+/// repository's boxes. Hidden terminals share a 1×1 parking spot and continue
+/// running without consuming visible pane space.
+private struct PersistentTerminalLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var y = bounds.minY
+        for subview in subviews {
+            guard subview[TerminalPresentedLayoutValueKey.self] else {
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: bounds.minY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: 1, height: 1)
+                )
+                continue
+            }
+
+            let size = subview.sizeThatFits(
+                ProposedViewSize(width: bounds.width, height: nil)
+            )
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: size.height)
+            )
+            y += size.height + spacing
+        }
     }
 }

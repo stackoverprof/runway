@@ -17,7 +17,6 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
-    @AppStorage(SettingsKey.focusTerminalDirectory) private var focusTerminalDirectory = "~/Developer"
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
     @State private var issueOrderReset = false
@@ -143,17 +142,6 @@ struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Focus terminals") {
-                HStack {
-                    TextField("Starting directory", text: $focusTerminalDirectory)
-                    Button("Choose…") { chooseFocusTerminalDirectory() }
-                        .pointerCursor()
-                }
-                Text("New terminals created from the Focus board start in this directory. You can use ~ for your home folder.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Issue boards") {
                 HStack {
                     Button("Reset Open & Closed Order", role: .destructive) {
@@ -246,21 +234,4 @@ struct GeneralSettings: View {
         }
     }
 
-    private func chooseFocusTerminalDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose where Focus terminals start"
-        panel.prompt = "Choose"
-        let expanded = (focusTerminalDirectory as NSString).expandingTildeInPath
-        if FileManager.default.fileExists(atPath: expanded) {
-            panel.directoryURL = URL(fileURLWithPath: expanded, isDirectory: true)
-        }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let home = NSHomeDirectory()
-        focusTerminalDirectory = url.path.hasPrefix(home)
-            ? "~" + url.path.dropFirst(home.count)
-            : url.path
-    }
 }

@@ -47,6 +47,9 @@ echo '{"description":"Building release 2.0.0..."}' > "$RUNWAY_CONTROL"
 echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
 ```
 Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
+Focus terminal names and descriptions are issue-owned and read-only. For those
+cards, metadata writes are ignored, the description shows the issue reference
+such as `#1234`, and clicking it copies that reference. State updates still apply.
 
 ---
 

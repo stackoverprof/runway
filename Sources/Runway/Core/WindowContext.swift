@@ -1,5 +1,126 @@
 import SwiftUI
 import AppKit
+import QuartzCore
+
+enum WindowChrome {
+    /// A small unobtrusive strip restores the title-bar double-click behavior
+    /// removed by the full-size hidden title bar.
+    static let zoomBandHeight: CGFloat = 14
+    @MainActor private static let restorationFrames = NSMapTable<NSWindow, NSValue>(
+        keyOptions: .weakMemory,
+        valueOptions: .strongMemory
+    )
+    @MainActor private static let animationWindows = NSMapTable<NSWindow, NSWindow>(
+        keyOptions: .weakMemory,
+        valueOptions: .strongMemory
+    )
+
+    /// Fill the available screen on the first double-click, then restore the
+    /// exact previous frame on the next one. AppKit's borderless-window zoom
+    /// state is not dependable enough to provide the second half itself.
+    @MainActor
+    static func toggleFill(for window: NSWindow) {
+        if let value = restorationFrames.object(forKey: window) {
+            restorationFrames.removeObject(forKey: window)
+            animate(window, to: value.rectValue)
+        } else {
+            guard let targetFrame = window.screen?.visibleFrame else { return }
+            restorationFrames.setObject(NSValue(rect: window.frame), forKey: window)
+            animate(window, to: targetFrame)
+        }
+    }
+
+    /// Animate a compositor snapshot while the live window performs one hidden
+    /// relayout. Resizing live Metal terminal surfaces on every animation frame
+    /// starves the main thread and makes the transition visibly step.
+    @MainActor
+    private static func animate(_ window: NSWindow, to frame: NSRect) {
+        guard animationWindows.object(forKey: window) == nil else { return }
+        guard let cgImage = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            CGWindowID(window.windowNumber),
+            [.boundsIgnoreFraming]
+        ) else {
+            window.setFrame(frame, display: true, animate: false)
+            return
+        }
+
+        let sourceFrame = window.frame
+        let snapshot = NSWindow(
+            contentRect: sourceFrame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let imageView = NSImageView(frame: NSRect(origin: .zero, size: sourceFrame.size))
+        imageView.image = NSImage(cgImage: cgImage, size: sourceFrame.size)
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.autoresizingMask = [.width, .height]
+        snapshot.contentView = imageView
+        snapshot.backgroundColor = .clear
+        snapshot.isOpaque = false
+        snapshot.hasShadow = window.hasShadow
+        snapshot.ignoresMouseEvents = true
+        snapshot.level = window.level
+        snapshot.collectionBehavior = [.transient, .ignoresCycle]
+
+        let originalAlpha = window.alphaValue
+        animationWindows.setObject(snapshot, forKey: window)
+        snapshot.order(.above, relativeTo: window.windowNumber)
+        window.alphaValue = 0
+        window.setFrame(frame, display: true, animate: false)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.20
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            snapshot.animator().setFrame(frame, display: true)
+        } completionHandler: {
+            MainActor.assumeIsolated {
+                window.alphaValue = originalAlpha
+                snapshot.orderOut(nil)
+                animationWindows.removeObject(forKey: window)
+            }
+        }
+    }
+
+    @MainActor
+    static func shouldZoom(for event: NSEvent, in window: NSWindow) -> Bool {
+        guard event.clickCount == 2,
+              !window.styleMask.contains(.fullScreen),
+              window.isZoomable,
+              let contentView = window.contentView else { return false }
+        let location = contentView.convert(event.locationInWindow, from: nil)
+        return isInZoomBand(location: location, bounds: contentView.bounds)
+    }
+
+    static func isInZoomBand(location: CGPoint, bounds: CGRect) -> Bool {
+        let distanceFromTop = bounds.maxY - location.y
+        return bounds.contains(location)
+            && distanceFromTop >= 0
+            && distanceFromTop <= zoomBandHeight
+    }
+}
+
+/// A native window drag region for the borderless top edge. Handling the click
+/// in the view itself is reliable even when SwiftUI content fills the title bar.
+struct WindowDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowDragNSView { WindowDragNSView() }
+    func updateNSView(_ nsView: WindowDragNSView, context: Context) {}
+}
+
+final class WindowDragNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        if event.clickCount == 2, !window.styleMask.contains(.fullScreen), window.isZoomable {
+            WindowChrome.toggleFill(for: window)
+        } else {
+            window.performDrag(with: event)
+        }
+    }
+}
 
 @MainActor @Observable final class RunwayWindowContext {
     let workspace = Workspace()

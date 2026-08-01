@@ -90,6 +90,12 @@ struct QuickTerminal: View {
                     .onAppear {
                         applyRunwayTheme(to: session)
                         ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+                        ws.quickHasKeyboard = {
+                            guard let view = session.view, let window = view.window else {
+                                return false
+                            }
+                            return window.firstResponder === view
+                        }
                         Task { @MainActor in
                             for _ in 0..<100 {
                                 if let view = session.view {

@@ -298,6 +298,43 @@ extension Notification.Name {
     }
 
     @discardableResult
+    func setClosed(issueNumber: Int, closed: Bool) -> Bool {
+        guard let repository = loadedRepository,
+              let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }),
+              issues[issueIndex].isClosed != closed else { return false }
+
+        let issue = issues[issueIndex]
+        let rollback = IssueMoveRollback(
+            issue: issue,
+            focusIndex: focusedIssueNumbers.firstIndex(of: issueNumber),
+            openIndex: openIssueNumbers.firstIndex(of: issueNumber),
+            closedIndex: closedIssueNumbers.firstIndex(of: issueNumber),
+            attemptedDestination: closed ? .closed : .open,
+            shouldLogFocusReturn: false
+        )
+
+        let reordered = Self.ordersAfterStateChange(
+            open: openIssueNumbers,
+            closed: closedIssueNumbers,
+            issueNumber: issueNumber,
+            closed: closed
+        )
+        openIssueNumbers = reordered.open
+        closedIssueNumbers = reordered.closed
+        issues[issueIndex].state = closed ? "CLOSED" : "OPEN"
+        issues[issueIndex].closedAt = closed ? Date() : nil
+        saveSnapshot(for: repository)
+        saveBacklogOrder(for: repository)
+        mutateGitHubState(
+            issueNumber: issueNumber,
+            close: closed,
+            repository: repository,
+            rollback: rollback
+        )
+        return true
+    }
+
+    @discardableResult
     func move(
         issueNumber: Int,
         from source: AssignedIssueLane,
@@ -346,16 +383,25 @@ extension Notification.Name {
                 focusIndex: focusedIssueNumbers.firstIndex(of: issueNumber),
                 openIndex: openIssueNumbers.firstIndex(of: issueNumber),
                 closedIndex: closedIssueNumbers.firstIndex(of: issueNumber),
-                attemptedDestination: destination
+                attemptedDestination: destination,
+                shouldLogFocusReturn: true
             )
 
             focusedIssueNumbers.removeAll { $0 == issueNumber }
-            openIssueNumbers.removeAll { $0 == issueNumber }
-            closedIssueNumbers.removeAll { $0 == issueNumber }
             if destination == .open {
-                insert(issueNumber, before: targetNumber, in: &openIssueNumbers)
+                closedIssueNumbers.removeAll { $0 == issueNumber }
+                openIssueNumbers = Self.returnedBacklogOrder(
+                    openIssueNumbers,
+                    issueNumber: issueNumber,
+                    before: targetNumber
+                )
             } else {
-                insert(issueNumber, before: targetNumber, in: &closedIssueNumbers)
+                openIssueNumbers.removeAll { $0 == issueNumber }
+                closedIssueNumbers = Self.returnedBacklogOrder(
+                    closedIssueNumbers,
+                    issueNumber: issueNumber,
+                    before: targetNumber
+                )
             }
             if needsGitHubMutation,
                let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }) {
@@ -409,6 +455,42 @@ extension Notification.Name {
         order.insert(issueNumber, at: targetIndex)
     }
 
+    static func returnedBacklogOrder(
+        _ order: [Int],
+        issueNumber: Int,
+        before targetNumber: Int?
+    ) -> [Int] {
+        guard let targetNumber else {
+            if order.contains(issueNumber) { return order }
+            return [issueNumber] + order
+        }
+
+        var reordered = order
+        reordered.removeAll { $0 == issueNumber }
+        guard let targetIndex = reordered.firstIndex(of: targetNumber) else {
+            if order.contains(issueNumber) { return order }
+            return [issueNumber] + order
+        }
+        reordered.insert(issueNumber, at: targetIndex)
+        return reordered
+    }
+
+    static func ordersAfterStateChange(
+        open: [Int],
+        closed: [Int],
+        issueNumber: Int,
+        closed shouldClose: Bool
+    ) -> (open: [Int], closed: [Int]) {
+        var nextOpen = open.filter { $0 != issueNumber }
+        var nextClosed = closed.filter { $0 != issueNumber }
+        if shouldClose {
+            nextClosed.insert(issueNumber, at: 0)
+        } else {
+            nextOpen.insert(issueNumber, at: 0)
+        }
+        return (nextOpen, nextClosed)
+    }
+
     private func mutateGitHubState(
         issueNumber: Int,
         close: Bool,
@@ -428,7 +510,7 @@ extension Notification.Name {
                   loadedRepository == repository,
                   result == nil else { return }
             rollbackIssueMove(issueNumber: issueNumber, using: rollback)
-            error = "GitHub could not \(close ? "close" : "reopen") issue #\(issueNumber). The move was undone."
+            error = "GitHub could not \(close ? "close" : "reopen") issue \(GitHubNumber.reference(issueNumber)). The move was undone."
         }
     }
 
@@ -448,7 +530,7 @@ extension Notification.Name {
             saveSnapshot(for: repository)
             saveFocus(for: repository)
             saveBacklogOrder(for: repository)
-            if rollback.focusIndex != nil {
+            if rollback.focusIndex != nil, rollback.shouldLogFocusReturn {
                 FocusActivityLog.record(
                     action: .enteredFocus,
                     repository: repository,
@@ -527,6 +609,7 @@ extension Notification.Name {
         let openIndex: Int?
         let closedIndex: Int?
         let attemptedDestination: AssignedIssueLane
+        let shouldLogFocusReturn: Bool
     }
 
     private struct CachedRepository: Codable {
