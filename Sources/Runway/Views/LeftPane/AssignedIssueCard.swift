@@ -20,12 +20,7 @@ struct AssignedIssueCard: View {
                             } icon: {
                                 coloredMenuIcon(
                                     systemName: "circle",
-                                    color: NSColor(
-                                        red: 0.18,
-                                        green: 0.78,
-                                        blue: 0.38,
-                                        alpha: 1
-                                    )
+                                    color: Self.openNSColor
                                 )
                             }
                         }
@@ -38,12 +33,7 @@ struct AssignedIssueCard: View {
                             } icon: {
                                 coloredMenuIcon(
                                     systemName: "checkmark.circle",
-                                    color: NSColor(
-                                        red: 0.64,
-                                        green: 0.42,
-                                        blue: 0.94,
-                                        alpha: 1
-                                    )
+                                    color: Self.closedNSColor
                                 )
                             }
                         }
@@ -104,9 +94,10 @@ struct AssignedIssueCard: View {
     }
 
     private var statusIcon: some View {
-        Image(systemName: issue.isClosed ? "checkmark.circle" : "circle")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(statusColor)
+        coloredMenuIcon(
+            systemName: issue.isClosed ? "checkmark.circle" : "circle",
+            color: issue.isClosed ? Self.closedNSColor : Self.openNSColor
+        )
     }
 
     private func coloredMenuIcon(
@@ -125,16 +116,18 @@ struct AssignedIssueCard: View {
         return Image(nsImage: symbol).renderingMode(.original)
     }
 
-    private var statusColor: Color {
-        issue.isClosed ? closedColor : openColor
-    }
+    private static let openNSColor = NSColor(
+        red: 0.18,
+        green: 0.78,
+        blue: 0.38,
+        alpha: 1
+    )
 
-    private var openColor: Color {
-        Color(red: 0.18, green: 0.78, blue: 0.38)
-    }
-
-    private var closedColor: Color {
-        Color(red: 0.64, green: 0.42, blue: 0.94)
-    }
+    private static let closedNSColor = NSColor(
+        red: 0.64,
+        green: 0.42,
+        blue: 0.94,
+        alpha: 1
+    )
 
 }
