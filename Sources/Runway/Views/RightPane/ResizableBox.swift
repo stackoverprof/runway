@@ -152,12 +152,12 @@ struct ResizableBox: View {
                 .lineLimit(1)
                 .contentShape(Rectangle())
                 .pointerCursor()
-                .onTapGesture { workspace.focusedID = id; isEditingName = true }
+                .onTapGesture { workspace.setFocus(id); isEditingName = true }
         }
     }
 
     private func copyIssueTitle() {
-        workspace.focusedID = id
+        workspace.setFocus(id)
         guard let focusIssueNumber else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
@@ -217,7 +217,7 @@ struct ResizableBox: View {
     }
 
     private func copyIssueNumber(_ issueNumber: Int) {
-        workspace.focusedID = id
+        workspace.setFocus(id)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
             GitHubNumber.reference(issueNumber),
@@ -246,7 +246,7 @@ struct ResizableBox: View {
             .truncationMode(.tail)
             .contentShape(Rectangle())
             .pointerCursor()
-            .onTapGesture { workspace.focusedID = id; isEditingDetail = true }
+            .onTapGesture { workspace.setFocus(id); isEditingDetail = true }
     }
 
     /// Drag handle on the bottom edge only; the top edge is inert.

@@ -28,6 +28,13 @@ struct RepositoryPullRequest: Codable, Identifiable, Sendable {
     var id: Int { number }
     var isOpen: Bool { state == "OPEN" }
     var isMerged: Bool { mergedAt != nil || state == "MERGED" }
+    /// The timestamp represented by the Pulls timeframe for this PR's current
+    /// state. A merge belongs to the day it merged, not the day it was opened.
+    var timeframeDate: Date {
+        if isMerged { return mergedAt ?? closedAt ?? updatedAt }
+        if isOpen { return createdAt }
+        return closedAt ?? updatedAt
+    }
 }
 
 enum PullRequestDurationFormatter {
@@ -106,7 +113,7 @@ struct PullRequestDeveloper: Identifiable {
             guard let author = pr.author else { return false }
             return !author.isBot
                 && !author.login.isEmpty
-                && startDate.map { pr.createdAt >= $0 } != false
+                && startDate.map { pr.timeframeDate >= $0 } != false
         }
         let developers = Dictionary(grouping: humanPullRequests) { $0.author!.login }
             .map { login, pullRequests in

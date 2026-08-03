@@ -53,7 +53,6 @@ struct AssignedIssueCard: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .tint(statusColor)
                     .fixedSize()
                     .pointerCursor()
                     .help("Change issue state")
@@ -123,7 +122,7 @@ struct AssignedIssueCard: View {
             return Image(systemName: systemName)
         }
         symbol.isTemplate = false
-        return Image(nsImage: symbol)
+        return Image(nsImage: symbol).renderingMode(.original)
     }
 
     private var statusColor: Color {

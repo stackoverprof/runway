@@ -77,7 +77,8 @@ polling pauses while Runway is inactive.
 - **Runway**, **Feeds**, and **Pulls** tabs separate focused work, repo motion,
   and pull request activity. Feeds includes an optional merge-only filter.
 - The Pulls view groups pull requests by developer, sorts developers by merged PRs,
-  and supports 1d, 7d, 30d, MTD, and YTD timeframes.
+  and supports 1d, 7d, 30d, MTD, and YTD timeframes. Timeframes use creation
+  time for open PRs, merge time for merged PRs, and close time for closed PRs.
 - The Runway board shows assigned Open and Closed issues, supports local
   ordering, and can close or reopen issues on GitHub through drag and drop.
 - Click **On today's missions** to smoothly collapse or expand the Focus board
