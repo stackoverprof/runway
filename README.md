@@ -128,6 +128,10 @@ repository's local clone as its starting directory. For example,
   relaunch or after an issue leaves and returns to Focus. It is tested with Claude
   only; other agents and models are untested. Removing an issue or quitting Runway
   still stops its process.
+- **Terminal font** is set in Settings → General → Terminal: pick a family from
+  the coding faces installed on this Mac, type any other family by hand, and set
+  the size. Changes reach every open terminal immediately, without restarting a
+  single session. Your own `~/.config/ghostty` is never modified.
 - Double-click the top window edge or blank left-header space to fill the screen;
   double-click it again to restore the previous window size and position.
 - File drops insert shell-escaped paths directly into the target terminal.
@@ -183,7 +187,9 @@ directory. Runway does not edit your shell or agent configuration files.
 
 | Move | Shortcut | Action |
 | --- | --- | --- |
-| Focus | `⌘⌥↑` / `⌘⌥↓` | Move between agents |
+| Focus | `⌘⌥↑` / `⌘⌥↓`, or `⌘⌥←` / `⌘⌥→` in the horizontal layout | Move between agents |
+| Reorder | `⌘⌥⇧` with any arrow | Move the focused agent along the stack or row |
+| Quick terminal focus | `⌘⌥←` / `⌘⌥→`, or `⌘⌥↓` / `⌘⌥↑` in the horizontal layout | Jump to the open quick terminal and back |
 | Jump | `⌘1` through `⌘9` | Focus a specific agent |
 | Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |

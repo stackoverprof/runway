@@ -24,47 +24,57 @@ enum RunwayTerminal {
             .appendingPathComponent("Runway/runway-terminal-theme").path
     }()
 
-    /// Writes the theme file. Idempotent; call once at launch before any terminal.
+    /// Writes the theme file from the current settings. Idempotent; call once at
+    /// launch before any terminal, and again whenever the font changes.
     static func installTheme() {
         let url = URL(fileURLWithPath: themeFilePath)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? themeContents.write(to: url, atomically: true, encoding: .utf8)
+        try? themeContents(
+            fontFamily: TerminalFont.configuredFamily,
+            fontSize: TerminalFont.configuredSize
+        ).write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private static let themeContents = """
-    # Runway embedded-terminal theme: neutral near-black, opaque, flat.
-    # Default ~2 zoom levels smaller than 11 so sessions fit comfortably.
-    font-size = 9
-    font-family = SF Mono
-    # Tame trackpad scroll in TUIs (claude, etc.); Ghostty's default (3) jumps.
-    mouse-scroll-multiplier = 1
-    background = 0e1012
-    foreground = e6e6e6
-    cursor-color = e6e6e6
-    cursor-text = 0e1012
-    selection-background = 2b2b33
-    selection-foreground = ffffff
-    background-opacity = 1
-    window-padding-x = 2
-    window-padding-y = 2
-    window-padding-balance = true
-    cursor-style = block
-    palette = 0=#15151a
-    palette = 1=#e5697b
-    palette = 2=#6cc26c
-    palette = 3=#e0a850
-    palette = 4=#5aa6e0
-    palette = 5=#b48ce0
-    palette = 6=#5fc7c2
-    palette = 7=#d6d6da
-    palette = 8=#5a5a66
-    palette = 9=#ef7a8b
-    palette = 10=#7fd07f
-    palette = 11=#edbf6a
-    palette = 12=#74b6ef
-    palette = 13=#c4a2ef
-    palette = 14=#73d6d1
-    palette = 15=#f2f2f5
-    """
+    /// The theme file's contents. The font is the only part the user controls;
+    /// everything below it exists to make the terminal sit flush inside the card.
+    static func themeContents(fontFamily: String, fontSize: Int) -> String {
+        let family = TerminalFont.sanitizedFamily(fontFamily)
+        let size = TerminalFont.clampedSize(fontSize)
+        return """
+        # Runway embedded-terminal theme: neutral near-black, opaque, flat.
+        # Font comes from Runway → Settings → General → Terminal.
+        font-size = \(size)
+        font-family = \(family)
+        # Tame trackpad scroll in TUIs (claude, etc.); Ghostty's default (3) jumps.
+        mouse-scroll-multiplier = 1
+        background = 0e1012
+        foreground = e6e6e6
+        cursor-color = e6e6e6
+        cursor-text = 0e1012
+        selection-background = 2b2b33
+        selection-foreground = ffffff
+        background-opacity = 1
+        window-padding-x = 2
+        window-padding-y = 2
+        window-padding-balance = true
+        cursor-style = block
+        palette = 0=#15151a
+        palette = 1=#e5697b
+        palette = 2=#6cc26c
+        palette = 3=#e0a850
+        palette = 4=#5aa6e0
+        palette = 5=#b48ce0
+        palette = 6=#5fc7c2
+        palette = 7=#d6d6da
+        palette = 8=#5a5a66
+        palette = 9=#ef7a8b
+        palette = 10=#7fd07f
+        palette = 11=#edbf6a
+        palette = 12=#74b6ef
+        palette = 13=#c4a2ef
+        palette = 14=#73d6d1
+        palette = 15=#f2f2f5
+        """
+    }
 }

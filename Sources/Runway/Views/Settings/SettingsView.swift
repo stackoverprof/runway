@@ -20,6 +20,8 @@ enum SettingsKey {
     static let brandTitle = "runway.brandTitle"
     static let brandLogoFilename = "runway.brandLogoFilename"
     static let focusBoardCollapsed = "runway.focusBoardCollapsed"
+    static let terminalFontFamily = "runway.terminalFontFamily"
+    static let terminalFontSize = "runway.terminalFontSize"
 
     static var configuredAgentCommand: String {
         guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
@@ -47,6 +49,8 @@ enum SettingsKey {
             brandTitle: "Activity",
             brandLogoFilename: "",
             focusBoardCollapsed: false,
+            terminalFontFamily: TerminalFont.defaultFamily,
+            terminalFontSize: TerminalFont.defaultSize,
         ])
 
         // Older builds used `initialCommand` at runtime while exposing different
