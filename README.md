@@ -25,7 +25,7 @@ activity, and pull request progress in one focused workspace.
 
 ## Install in a minute
 
-1. Download **`Runway-2.1.0-arm64.dmg`** from
+1. Download **`Runway-2.2.0-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -52,7 +52,7 @@ an authenticated session.
 | --- | --- | --- |
 | 🖥️ | **Persistent GPU terminals** | Run Claude Code, Codex, Gemini, custom agents, or a normal shell in fast libghostty-backed cards. |
 | 📡 | **Live GitHub activity** | See pushes, pull requests, reviews, issues, branch activity, and who has been active recently. |
-| ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q` without losing its session. |
+| ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q`. It lives in the selected repository and keeps a per-repo claude conversation across relaunches. |
 | 🧭 | **Issue-driven Focus board** | Drag assigned GitHub issues into Focus to create matching terminals automatically. |
 | 🟢 | **Agent-aware status** | Cards can report `idle`, `running`, or `needs-action`, plus their current task and description. |
 | 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
@@ -81,9 +81,15 @@ polling pauses while Runway is inactive.
   time for open PRs, merge time for merged PRs, and close time for closed PRs.
 - The Runway board shows assigned Open and Closed issues, supports local
   ordering, and can close or reopen issues on GitHub through drag and drop.
+  Dragging a card against the top or bottom edge auto-scrolls the list.
+- Feeds, Runway, and Pulls revalidate on one shared clock, and all three
+  refresh when the window becomes active, so no tab lags the others.
 - Click **On today's missions** to smoothly collapse or expand the Focus board
   while keeping the Open and Closed issue backlog visible.
 - `⌘F` opens tab-specific search for issues, feed events, or pull requests.
+- Picking the tab you are already on returns it to the top of its list and
+  refetches it.
+- Pulls opens on the month in progress; every launch starts on MTD.
 - The searchable repo switcher shows only GitHub repositories cloned on this
   Mac. Opening it refreshes the local clone list.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
@@ -101,16 +107,33 @@ repository's local clone as its starting directory. For example,
 `VISKA-IO/monorepo` starts in `~/Developer/monorepo` when that is its local clone.
 
 - **Accordion layout** always fits every focused terminal into the available
-  window height and gives the active terminal more space.
+  window height and gives the active terminal more space. `⌘⌥L` rotates the
+  same weighted accordion into side-by-side columns for wide monitors.
 - Focus terminal headers are issue-owned and read-only. The right-side `#1234`
-  reference copies the issue number when clicked.
+  reference copies the issue number when clicked. Renaming the GitHub issue
+  updates its terminal header without restarting the running session.
 - **Focus mode** expands the active terminal to fill the pane.
-- **Quick terminal** stays alive behind its bottom-left overlay.
+- **Quick terminal** stays alive behind its bottom-left overlay. It starts in
+  the selected repository's checkout and carries that repository's own
+  persistent claude conversation: switch repositories and it follows, switch
+  back and the previous conversation resumes. A header button starts a fresh
+  session for the current repository, permanently rotating its kept session id.
+- Right-click any terminal header to copy its agent resume command
+  (`claude --resume <id>`) or the bare session id, so the same conversation can
+  be reopened in any other terminal.
 - Switching repositories keeps each repository's Focus terminals and running
   agent sessions alive, then restores them when that repository is selected again.
+- **Experimental, opt-in conversation binding** gives each Focus issue a stable
+  provider conversation identity. Enable it in Settings to resume after a Runway
+  relaunch or after an issue leaves and returns to Focus. It is tested with Claude
+  only; other agents and models are untested. Removing an issue or quitting Runway
+  still stops its process.
 - Double-click the top window edge or blank left-header space to fill the screen;
   double-click it again to restore the previous window size and position.
 - File drops insert shell-escaped paths directly into the target terminal.
+  Images dragged from disk are typed in place; only fileless drags (an image
+  dragged out of a web page) are written, into Runway's own drops folder,
+  never into `~/Downloads`.
 - Agent commands can start as Claude, Codex, Agent, a custom command, or a
   plain shell.
 
@@ -167,6 +190,11 @@ directory. Runway does not edit your shell or agent configuration files.
 | Close window | `⌘⇧W` | Close the current window |
 | Find | `⌘F` | Search the active Runway, Feeds, or Pulls tab |
 | Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Pulls |
+| Cycle tabs | `⌘⌥[` / `⌘⌥]` (also `⌘⇧[` / `⌘⇧]`) | Step through Runway, Feeds, and Pulls |
+| Change subtab | `⌘⌥,` / `⌘⌥.` | Step through the current tab's own options |
+| Jump to subtab | `⌘⌥⇧1` through `⌘⌥⇧5` | Open / Closed, the feed filter, or a Pulls timeframe |
+| Switch repository | `⌘R` | Open the repo picker; type to filter, `↑↓` + `⏎` to pick |
+| Layout | `⌘⌥L` | Toggle the horizontal terminal accordion |
 | Settings | `⌘,` | Open settings and people profiles |
 
 Shortcuts can be customized from **Runway → Settings → Shortcuts**.

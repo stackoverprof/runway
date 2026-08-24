@@ -11,8 +11,10 @@ struct LeftPane: View {
     @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
     @State private var focusIssueDrag = FocusIssueDrag()
-    @State private var runwayIssueTab: RunwayIssueTab = .open
-    @State private var showMergesOnly = false
+    @State private var feedScrollAnchor = RunwayScrollAnchor()
+    @State private var pullScrollAnchor = RunwayScrollAnchor()
+    @State private var openIssueScrollAnchor = RunwayScrollAnchor()
+    @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
     @State private var issueSearchVisible = false
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
@@ -21,7 +23,6 @@ struct LeftPane: View {
     @State private var prSearchQuery = ""
     @State private var expandedPRAuthor: String?
     @State private var prVisibleCounts: [PRPageKey: Int] = [:]
-    @State private var prTimeframe: PRTimeframe = .thirtyDays
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
@@ -56,6 +57,8 @@ struct LeftPane: View {
     @State private var taglineOpacity: Double = 1.0
     @State private var isTyping = false
     @State private var lastEventCount = 0
+    @State private var taglineTask: Task<Void, Never>?
+    @State private var lastTaglineChange = Date.distantPast
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -101,8 +104,28 @@ struct LeftPane: View {
                 assignedIssues.resetBacklogOrder()
             }
         }
+        // Coming back to the window refreshes everything, not only the tab in
+        // front. Feeds used to be the only source that refreshed here, which is
+        // why Pulls and Runway lagged behind it.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await feed.refresh(minimumAge: 15) }
+            syncAllSources(tick: 15)
+        }
+        // One clock for all three sources. They used to poll on separate timers,
+        // and Pulls and Runway only while their own tab was on screen, so those
+        // tabs showed minutes-old data the moment you switched to them.
+        .task(id: feed.repo) {
+            while !Task.isCancelled {
+                let interval = feed.pollInterval
+                if NSApp.isActive { syncAllSources(tick: TimeInterval(interval)) }
+                do {
+                    try await Task.sleep(nanoseconds: interval * 1_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+        .onChange(of: ws.tabResetRequestID) { _, _ in
+            resetActiveTab()
         }
         // The Focus board owns the right pane whatever the left pane is showing,
         // so its repository reconciliation lives here rather than inside the
@@ -114,26 +137,24 @@ struct LeftPane: View {
             await assignedIssues.revalidate(repository: feed.repo)
             syncFocusBoard()
         }
-        .onChange(of: assignedIssues.focusedIssueNumbers) { _, _ in
+        // Observe the complete Focus records, not only membership. GitHub title
+        // edits must refresh the issue-owned terminal header without replacing
+        // its stable box and live shell session.
+        .onChange(of: assignedIssues.focused) { _, _ in
             guard focusIssueDrag.issueNumber == nil else { return }
             syncFocusBoard()
         }
         .onChange(of: ws.selectedTab) { previousTab, tab in
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
-            if tab == .feeds {
-                Task { await feed.refresh(minimumAge: 15) }
-            } else if tab == .pullRequests {
-                Task {
-                    await pullRequests.revalidate(
-                        repository: feed.repo,
-                        minimumAge: 15
-                    )
-                }
-            }
+            refreshSource(for: tab, minimumAge: 15)
         }
         .onChange(of: ws.findRequestID) { _, _ in
             toggleSearch(for: ws.selectedTab)
+        }
+        .onChange(of: ws.repoPickerRequestID) { _, _ in
+            showRepoPicker = true
+            feed.fetchRepoList()
         }
         .task(id: emptySearchIsOpen(for: .runway)) {
             await closeSearchAfterIdle(for: .runway)
@@ -412,8 +433,13 @@ struct LeftPane: View {
         }
         .onChange(of: feed.events.count) { old, new in
             guard ws.selectedTab == .feeds, new > old, !isTyping else { return }
+            // A returning-from-idle batch arrives as several inserts in a row.
+            // Retyping the line for each one is pure churn on the main thread at
+            // the exact moment the list is already animating.
+            guard Date().timeIntervalSince(lastTaglineChange) > Self.taglineMinimumInterval else { return }
             rotateTagline()
         }
+        .onDisappear { taglineTask?.cancel() }
     }
 
     private var focusBoardCollapseAnimation: Animation {
@@ -428,20 +454,31 @@ struct LeftPane: View {
         }
     }
 
-    private var slidingTabContent: some View {
-        ZStack {
-            switch ws.selectedTab {
-            case .runway:
-                runwayTab
-            case .feeds:
-                feedsTab
-            case .pullRequests:
-                pullRequestTab
-            }
+    private var selectedTabIndex: Int {
+        switch ws.selectedTab {
+        case .runway: 0
+        case .feeds: 1
+        case .pullRequests: 2
         }
-        .id(ws.selectedTab)
-        .transition(.opacity)
-        .animation(.easeInOut(duration: 0.12), value: ws.selectedTab)
+    }
+
+    private var slidingTabContent: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                runwayTab
+                    .frame(width: geometry.size.width)
+                feedsTab
+                    .frame(width: geometry.size.width)
+                pullRequestTab
+                    .frame(width: geometry.size.width)
+            }
+            .offset(x: -CGFloat(selectedTabIndex) * geometry.size.width)
+            .animation(
+                .spring(response: 0.38, dampingFraction: 0.85),
+                value: ws.selectedTab
+            )
+        }
+        .clipped()
     }
 
     private var feedsTab: some View {
@@ -461,7 +498,7 @@ struct LeftPane: View {
                 feedScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         let sourceItems = GitHubFeed.filterNoise(feed.events).filter { event in
-                            guard showMergesOnly else { return true }
+                            guard ws.feedFilter.showsMergesOnly else { return true }
                             if case .prMerged = event.kind { return true }
                             return false
                         }
@@ -474,7 +511,7 @@ struct LeftPane: View {
                             if feedSearchVisible,
                                !feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 searchEmptyPlaceholder("No matching feed activity")
-                            } else if showMergesOnly {
+                            } else if ws.feedFilter.showsMergesOnly {
                                 mergeEmptyPlaceholder
                             } else {
                                 emptyTabPlaceholder(for: .feeds)
@@ -497,31 +534,6 @@ struct LeftPane: View {
                 }
                 mergeFilterButton
                     .padding(8)
-            }
-        }
-    }
-
-    private enum PRTimeframe: String, CaseIterable, Identifiable {
-        case oneDay = "1d"
-        case sevenDays = "7d"
-        case thirtyDays = "30d"
-        case monthToDate = "MTD"
-        case yearToDate = "YTD"
-
-        var id: String { rawValue }
-
-        func startDate(now: Date = Date(), calendar: Calendar = .current) -> Date {
-            switch self {
-            case .oneDay:
-                return now.addingTimeInterval(-86_400)
-            case .sevenDays:
-                return now.addingTimeInterval(-7 * 86_400)
-            case .thirtyDays:
-                return now.addingTimeInterval(-30 * 86_400)
-            case .monthToDate:
-                return calendar.dateInterval(of: .month, for: now)?.start ?? now
-            case .yearToDate:
-                return calendar.dateInterval(of: .year, for: now)?.start ?? now
             }
         }
     }
@@ -570,10 +582,11 @@ struct LeftPane: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
+                    .scrollAnchor(pullScrollAnchor)
                 }
                 .contentMargins(.top, 0, for: .scrollContent)
                 .scrollIndicators(.hidden)
-                .id(prTimeframe)
+                .id(ws.prTimeframe)
             }
         }
         .task(id: feed.repo) {
@@ -582,30 +595,11 @@ struct LeftPane: View {
             pullRequests.restore(repository: feed.repo)
             await pullRequests.revalidate(repository: feed.repo, minimumAge: 30)
         }
-        .task(id: ws.selectedTab) {
-            guard ws.selectedTab == .pullRequests else { return }
-            while !Task.isCancelled {
-                if NSApp.isActive {
-                    await pullRequests.revalidate(
-                        repository: feed.repo,
-                        minimumAge: 90
-                    )
-                }
-                do {
-                    try await Task.sleep(nanoseconds: 120_000_000_000)
-                } catch {
-                    return
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            guard ws.selectedTab == .pullRequests else { return }
-            Task {
-                await pullRequests.revalidate(
-                    repository: feed.repo,
-                    minimumAge: 30
-                )
-            }
+        // Changing the window resets paging: the counts and the expanded
+        // developer belong to the window that produced them.
+        .onChange(of: ws.prTimeframe) { _, _ in
+            expandedPRAuthor = nil
+            prVisibleCounts.removeAll()
         }
     }
 
@@ -613,25 +607,23 @@ struct LeftPane: View {
         HStack(spacing: 2) {
             ForEach(PRTimeframe.allCases) { timeframe in
                 Button {
-                    guard prTimeframe != timeframe else { return }
-                    expandedPRAuthor = nil
-                    prVisibleCounts.removeAll()
-                    prTimeframe = timeframe
+                    guard ws.prTimeframe != timeframe else { return }
+                    ws.prTimeframe = timeframe
                 } label: {
                     Text(timeframe.rawValue)
                         .font(.system(
                             size: 9.5,
-                            weight: prTimeframe == timeframe ? .semibold : .medium,
+                            weight: ws.prTimeframe == timeframe ? .semibold : .medium,
                             design: .monospaced
                         ))
                         .foregroundStyle(
-                            Color.white.opacity(prTimeframe == timeframe ? 0.88 : 0.35)
+                            Color.white.opacity(ws.prTimeframe == timeframe ? 0.88 : 0.35)
                         )
                         .frame(maxWidth: .infinity)
                         .frame(height: 25)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(prTimeframe == timeframe ? Color.white.opacity(0.09) : .clear)
+                                .fill(ws.prTimeframe == timeframe ? Color.white.opacity(0.09) : .clear)
                         )
                         .contentShape(RoundedRectangle(cornerRadius: 5))
                 }
@@ -645,12 +637,12 @@ struct LeftPane: View {
     }
 
     private var filteredPRDevelopers: [PullRequestDeveloper] {
-        let developers = pullRequests.developers(since: prTimeframe.startDate())
+        let developers = pullRequests.developers(since: ws.prTimeframe.startDate())
         let query = prSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard prSearchVisible, !query.isEmpty else { return developers }
 
         return developers.compactMap { developer in
-            let developerText = "\(developer.login) \(developer.displayName)"
+            let developerText = "\(developer.login) \(pullRequestDeveloperUsername(developer)) \(pullRequestDeveloperDisplayName(developer))"
             if developerText.localizedCaseInsensitiveContains(query) {
                 return developer
             }
@@ -668,8 +660,18 @@ struct LeftPane: View {
         .sorted { lhs, rhs in
             if lhs.mergedCount != rhs.mergedCount { return lhs.mergedCount > rhs.mergedCount }
             if lhs.totalCount != rhs.totalCount { return lhs.totalCount > rhs.totalCount }
-            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            return pullRequestDeveloperDisplayName(lhs)
+                .localizedCaseInsensitiveCompare(pullRequestDeveloperDisplayName(rhs)) == .orderedAscending
         }
+    }
+
+    private func pullRequestDeveloperUsername(_ developer: PullRequestDeveloper) -> String {
+        PersonProfileManager.shared.username(for: developer.login)
+    }
+
+    private func pullRequestDeveloperDisplayName(_ developer: PullRequestDeveloper) -> String {
+        PersonProfileManager.shared.profile(for: developer.login)?.effectiveFullName
+            ?? developer.displayName
     }
 
     private func pullRequestDeveloperCard(_ developer: PullRequestDeveloper) -> some View {
@@ -688,11 +690,11 @@ struct LeftPane: View {
                 HStack(spacing: 10) {
                     Avatar(login: developer.login, url: developer.avatarURL, size: 30)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(developer.displayName)
+                        Text(pullRequestDeveloperDisplayName(developer))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.88))
                             .lineLimit(1)
-                        Text("@\(developer.login)")
+                        Text("@\(pullRequestDeveloperUsername(developer))")
                             .font(.system(size: 9.5, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.32))
                             .lineLimit(1)
@@ -873,11 +875,6 @@ struct LeftPane: View {
         return PullRequestDurationFormatter.string(endDate.timeIntervalSince(pullRequest.createdAt))
     }
 
-    private enum RunwayIssueTab: String, CaseIterable {
-        case open = "Open"
-        case closed = "Closed"
-    }
-
     private var runwayTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !focusBoardCollapsed {
@@ -898,30 +895,9 @@ struct LeftPane: View {
                 .clipped()
         }
         .animation(focusBoardCollapseAnimation, value: focusBoardCollapsed)
-        .animation(.spring(response: 0.38, dampingFraction: 0.85), value: runwayIssueTab)
+        .animation(.spring(response: 0.38, dampingFraction: 0.85), value: ws.runwayIssueTab)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .clipped()
-        .task(id: ws.selectedTab) {
-            guard ws.selectedTab == .runway else { return }
-            while !Task.isCancelled {
-                if NSApp.isActive {
-                    await assignedIssues.revalidate(
-                        repository: feed.repo,
-                        minimumAge: 45
-                    )
-                    syncFocusBoard()
-                }
-                do {
-                    try await Task.sleep(nanoseconds: 60_000_000_000)
-                } catch {
-                    return
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            guard ws.selectedTab == .runway else { return }
-            revalidateFocusBoard()
-        }
     }
 
     private var runwayBacklog: some View {
@@ -957,7 +933,7 @@ struct LeftPane: View {
                     .offset(x: -CGFloat(runwayIssueTabIndex) * geo.size.width)
                     .animation(
                         .spring(response: 0.38, dampingFraction: 0.85),
-                        value: runwayIssueTab
+                        value: ws.runwayIssueTab
                     )
                 }
                 .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -1186,10 +1162,11 @@ struct LeftPane: View {
             }
             guard focusIssueDrag.issueNumber == issue.number else { return }
             focusIssueDrag.move(pointer: value.location)
+            autoScrollBacklog(pointer: value.location)
 
             let hoveredLane = focusIssueDrag.lane(at: value.location)
             if lane == .focus, focusIssueDrag.isCrossingIssueTabs {
-                let displayedLane: AssignedIssueLane = runwayIssueTab == .open ? .open : .closed
+                let displayedLane: AssignedIssueLane = ws.runwayIssueTab == .open ? .open : .closed
                 let previewLane: AssignedIssueLane? = switch hoveredLane {
                 case .open, .closed: hoveredLane
                 case nil: displayedLane
@@ -1244,12 +1221,13 @@ struct LeftPane: View {
             }
         }
         .onEnded { value in
+            stopBacklogAutoScroll()
             guard focusIssueDrag.issueNumber == issue.number,
                   let sourceLane = focusIssueDrag.sourceLane else { return }
             let proposedLane = focusIssueDrag.proposedLane(
                 at: value.location,
                 fallback: sourceLane,
-                displayedBacklogLane: runwayIssueTab == .open ? .open : .closed
+                displayedBacklogLane: ws.runwayIssueTab == .open ? .open : .closed
             )
             let targetIssueNumber = sourceLane == proposedLane
                 ? focusIssueDrag.targetIssue(
@@ -1290,21 +1268,21 @@ struct LeftPane: View {
         HStack(spacing: 0) {
             ForEach(RunwayIssueTab.allCases, id: \.rawValue) { tab in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { runwayIssueTab = tab }
+                    withAnimation(.easeInOut(duration: 0.15)) { ws.runwayIssueTab = tab }
                 } label: {
                     HStack(spacing: 5) {
                         Text(tab.rawValue)
                         Text("\(assignedIssueCount(for: tab))")
                             .foregroundStyle(Color.white.opacity(0.35))
                     }
-                    .font(.system(size: 10.5, weight: runwayIssueTab == tab ? .semibold : .medium))
-                    .foregroundStyle(runwayIssueTab == tab ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
+                    .font(.system(size: 10.5, weight: ws.runwayIssueTab == tab ? .semibold : .medium))
+                    .foregroundStyle(ws.runwayIssueTab == tab ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(runwayIssueTab == tab ? Color.white.opacity(0.1) : Color.clear)
+                            .fill(ws.runwayIssueTab == tab ? Color.white.opacity(0.1) : Color.clear)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
@@ -1560,6 +1538,7 @@ struct LeftPane: View {
             .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
+            .scrollAnchor(issueScrollAnchor(for: lane))
         }
         .contentMargins(.top, 0, for: .scrollContent)
         .scrollIndicators(.hidden)
@@ -1574,7 +1553,7 @@ struct LeftPane: View {
     }
 
     private var runwayIssueTabIndex: Int {
-        runwayIssueTab == .open ? 0 : 1
+        ws.runwayIssueTab == .open ? 0 : 1
     }
 
     private func assignedIssueCount(for tab: RunwayIssueTab) -> Int {
@@ -1601,14 +1580,14 @@ struct LeftPane: View {
     private func updateIssueSearchTab() {
         guard issueSearchVisible else { return }
 
-        let currentCount = assignedIssueCount(for: runwayIssueTab)
+        let currentCount = assignedIssueCount(for: ws.runwayIssueTab)
         guard currentCount == 0 else { return }
 
-        let otherTab: RunwayIssueTab = runwayIssueTab == .open ? .closed : .open
+        let otherTab: RunwayIssueTab = ws.runwayIssueTab == .open ? .closed : .open
         guard assignedIssueCount(for: otherTab) > 0 else { return }
 
         withAnimation(.easeInOut(duration: 0.15)) {
-            runwayIssueTab = otherTab
+            ws.runwayIssueTab = otherTab
         }
     }
 
@@ -1621,14 +1600,93 @@ struct LeftPane: View {
         ws.syncFocusBoard(issues: assignedIssues.focused, repository: feed.repo)
     }
 
-    private func revalidateFocusBoard() {
+    private func revalidateFocusBoard(minimumAge: TimeInterval = 15) {
         Task {
             await assignedIssues.revalidate(
                 repository: feed.repo,
-                minimumAge: 15
+                minimumAge: minimumAge
             )
             syncFocusBoard()
         }
+    }
+
+    // MARK: Sync
+
+    /// Refresh all three sources off one tick. Started together so the feed, the
+    /// board and the pull requests describe the same moment; each service still
+    /// throttles itself, so the tab in front leads and the others follow closely
+    /// instead of drifting minutes behind.
+    private func syncAllSources(tick: TimeInterval) {
+        let ages = RepositorySyncCadence.ages(for: ws.selectedTab, tick: tick)
+        Task { await feed.refresh(minimumAge: ages.feed) }
+        revalidateFocusBoard(minimumAge: ages.issues)
+        Task {
+            await pullRequests.revalidate(
+                repository: feed.repo,
+                minimumAge: ages.pulls
+            )
+        }
+    }
+
+    private func refreshSource(for tab: FeedTab, minimumAge: TimeInterval) {
+        switch tab {
+        case .runway:
+            revalidateFocusBoard(minimumAge: minimumAge)
+        case .feeds:
+            Task { await feed.refresh(minimumAge: minimumAge) }
+        case .pullRequests:
+            Task {
+                await pullRequests.revalidate(
+                    repository: feed.repo,
+                    minimumAge: minimumAge
+                )
+            }
+        }
+    }
+
+    /// Picking the tab already showing: back to the top of its list, and refetch
+    /// straight away rather than waiting for the next tick.
+    private func resetActiveTab() {
+        scrollAnchor(for: ws.selectedTab).scrollToTop()
+        refreshSource(for: ws.selectedTab, minimumAge: 0)
+    }
+
+    private func scrollAnchor(for tab: FeedTab) -> RunwayScrollAnchor {
+        switch tab {
+        case .runway: issueScrollAnchor(for: ws.runwayIssueTab == .open ? .open : .closed)
+        case .feeds: feedScrollAnchor
+        case .pullRequests: pullScrollAnchor
+        }
+    }
+
+    private func issueScrollAnchor(for lane: AssignedIssueLane) -> RunwayScrollAnchor {
+        lane == .closed ? closedIssueScrollAnchor : openIssueScrollAnchor
+    }
+
+    /// Dragging a card against the top or bottom of the backlog scrolls it, so an
+    /// issue can be moved past the edge of a list taller than the pane.
+    private func autoScrollBacklog(pointer: CGPoint) {
+        let displayed: AssignedIssueLane = ws.runwayIssueTab == .open ? .open : .closed
+        for lane in [AssignedIssueLane.open, .closed] {
+            let anchor = issueScrollAnchor(for: lane)
+            // A short overshoot band past each edge keeps scrolling while the
+            // card is dragged beyond the list, which is exactly when the last
+            // row is still out of reach.
+            guard lane == displayed,
+                  let frame = focusIssueDrag.laneFrames[lane],
+                  pointer.y > frame.minY - 64,
+                  pointer.y < frame.maxY + 64
+            else {
+                anchor.stopAutoScroll()
+                continue
+            }
+            anchor.autoScroll(pointerY: pointer.y, in: frame)
+        }
+    }
+
+    private func stopBacklogAutoScroll() {
+        issueScrollAnchor(for: .open).stopAutoScroll()
+        issueScrollAnchor(for: .closed).stopAutoScroll()
     }
 
     @ViewBuilder private func feedScrollView<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1647,6 +1705,7 @@ struct LeftPane: View {
 
                 content()
             }
+            .scrollAnchor(feedScrollAnchor)
         }
         .contentMargins(.top, 0, for: .scrollContent)
         .scrollIndicators(.hidden)
@@ -1710,25 +1769,25 @@ struct LeftPane: View {
     private var mergeFilterButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.16)) {
-                showMergesOnly.toggle()
+                ws.feedFilter = ws.feedFilter.showsMergesOnly ? .all : .merges
             }
         } label: {
             HStack(spacing: 9) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 3.5)
                         .fill(
-                            showMergesOnly
+                            ws.feedFilter.showsMergesOnly
                                 ? Color(red: 0.45, green: 0.82, blue: 0.78)
                                 : Color.clear
                         )
                     RoundedRectangle(cornerRadius: 3.5)
                         .stroke(
-                            showMergesOnly
+                            ws.feedFilter.showsMergesOnly
                                 ? Color(red: 0.45, green: 0.82, blue: 0.78)
                                 : Color.white.opacity(0.55),
                             lineWidth: 1.5
                         )
-                    if showMergesOnly {
+                    if ws.feedFilter.showsMergesOnly {
                         Image(systemName: "checkmark")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(Color.black.opacity(0.75))
@@ -1781,7 +1840,13 @@ struct LeftPane: View {
         HStack(spacing: 0) {
             ForEach(FeedTab.allCases, id: \.rawValue) { tab in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { ws.selectedTab = tab }
+                    // Already here: treat the second tap as "take me back to the
+                    // top and get me the latest".
+                    if ws.selectedTab == tab {
+                        ws.requestTabReset()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.15)) { ws.selectedTab = tab }
+                    }
                 } label: {
                     Text(tab.rawValue)
                         .font(.system(size: 10, weight: ws.selectedTab == tab ? .semibold : .medium, design: .monospaced))
@@ -1893,29 +1958,32 @@ struct LeftPane: View {
 
     // MARK: Tagline rotation
 
-    private func rotateTagline() {
-        isTyping = true
-        // Fade out
-        withAnimation(.easeOut(duration: 0.25)) { taglineOpacity = 0 }
-        // After fade out, pick next tagline and type it in
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            taglineIndex = (taglineIndex + 1) % Self.taglines.count
-            let target = Self.taglines[taglineIndex]
-            displayedTagline = ""
-            taglineOpacity = 1.0
-            typeIn(target, at: 0)
-        }
-    }
+    /// Shortest gap between two tagline changes. One rotation per burst of new
+    /// events, not one per event.
+    private static let taglineMinimumInterval: TimeInterval = 6
 
-    private func typeIn(_ target: String, at index: Int) {
-        guard index < target.count else {
-            isTyping = false
-            return
-        }
-        let charIndex = target.index(target.startIndex, offsetBy: index)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) {
-            displayedTagline.append(target[charIndex])
-            typeIn(target, at: index + 1)
+    /// Fade the line out, then type the next one in. A single cancellable task,
+    /// so a second rotation can never interleave with one still typing.
+    private func rotateTagline() {
+        taglineTask?.cancel()
+        isTyping = true
+        lastTaglineChange = Date()
+        withAnimation(.easeOut(duration: 0.25)) { taglineOpacity = 0 }
+        taglineTask = Task { @MainActor in
+            defer { isTyping = false }
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                taglineIndex = (taglineIndex + 1) % Self.taglines.count
+                let target = Self.taglines[taglineIndex]
+                displayedTagline = ""
+                taglineOpacity = 1.0
+                for character in target {
+                    try await Task.sleep(nanoseconds: 25_000_000)
+                    displayedTagline.append(character)
+                }
+            } catch {
+                return
+            }
         }
     }
 }

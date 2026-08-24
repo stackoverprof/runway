@@ -169,6 +169,36 @@ func runwayShellEscape(_ path: String) -> String {
     return out
 }
 
+/// Naming for images Runway has to materialize itself (a drag that carried only
+/// pixels, never a file on disk).
+enum DroppedImageFile {
+    /// Prefer the name the drag source suggested, so the path typed into the
+    /// terminal still reads like the file the user dragged.
+    static func name(
+        suggested: String?,
+        typeIdentifier: String?,
+        timestamp: Int
+    ) -> String {
+        let fallbackExtension = typeIdentifier
+            .flatMap(UTType.init)?
+            .preferredFilenameExtension ?? "png"
+        guard let suggested, !suggested.isEmpty else {
+            return "dropped-image-\(timestamp).\(fallbackExtension)"
+        }
+        let sanitized = suggested
+            .components(separatedBy: CharacterSet(charactersIn: "/:\n\r\t"))
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespaces)
+        guard !sanitized.isEmpty else {
+            return "dropped-image-\(timestamp).\(fallbackExtension)"
+        }
+        if (sanitized as NSString).pathExtension.isEmpty {
+            return "\(sanitized).\(fallbackExtension)"
+        }
+        return sanitized
+    }
+}
+
 /// Unified, robust drag-and-drop provider handler for file URLs, images, and screenshots
 @MainActor func handleDropProviders(
     _ providers: [NSItemProvider],
@@ -180,11 +210,7 @@ func runwayShellEscape(_ path: String) -> String {
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 if let url = url, FileManager.default.fileExists(atPath: url.path) {
-                    DispatchQueue.main.async {
-                        let text = runwayShellEscape(url.path)
-                        session.insertText(text + " ")
-                        onComplete()
-                    }
+                    typeDroppedPath(url.path, session: session, onComplete: onComplete)
                 } else {
                     // Fall back to image loading if URL was not locally on disk (like a floating screenshot promise)
                     loadAsImage(safeProvider, session: session, onComplete: onComplete)
@@ -196,29 +222,115 @@ func runwayShellEscape(_ path: String) -> String {
     }
 }
 
+private func typeDroppedPath(
+    _ path: String,
+    session: GhosttyTerminalSession,
+    onComplete: @Sendable @escaping () -> Void
+) {
+    DispatchQueue.main.async {
+        session.insertText(runwayShellEscape(path) + " ")
+        onComplete()
+    }
+}
+
+/// Resolve a dropped image to a path the agent can read.
+///
+/// The file the user dragged almost always exists on disk already, so ask for it
+/// in place first and type that path. Only a drag that carries pixels with no
+/// backing file (a screenshot still floating in its preview, an image dragged out
+/// of a web page) gets written out, and it goes to Runway's own drops folder.
+/// Writing those into ~/Downloads is what used to leave a second copy of every
+/// screenshot dropped on a terminal.
 private func loadAsImage(
     _ provider: NSItemProvider,
     session: GhosttyTerminalSession,
     onComplete: @Sendable @escaping () -> Void
 ) {
-    if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-            guard let data = data else { return }
-            let fm = FileManager.default
-            let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            let timestamp = Int(Date().timeIntervalSince1970)
-            let fileURL = downloads.appendingPathComponent("Screenshot-\(timestamp).png")
-            do {
-                try data.write(to: fileURL)
-                DispatchQueue.main.async {
-                    let text = runwayShellEscape(fileURL.path)
-                    session.insertText(text + " ")
-                    onComplete()
-                }
-            } catch {
-                print("Failed to write dropped image: \(error)")
+    let imageType = provider.registeredTypeIdentifiers.first {
+        UTType($0)?.conforms(to: .image) == true
+    } ?? UTType.image.identifier
+    guard provider.hasItemConformingToTypeIdentifier(imageType) else { return }
+    nonisolated(unsafe) let safeProvider = provider
+    let suggestedName = provider.suggestedName
+
+    _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: imageType) { url, isInPlace, _ in
+        // The URL is only valid for the duration of this callback, so decide and
+        // copy here rather than hopping to the main queue with it.
+        if let url, FileManager.default.fileExists(atPath: url.path) {
+            if isInPlace {
+                typeDroppedPath(url.path, session: session, onComplete: onComplete)
+                return
+            }
+            let destination = AgentControl.dropsDir.appendingPathComponent(
+                DroppedImageFile.name(
+                    suggested: suggestedName ?? url.lastPathComponent,
+                    typeIdentifier: imageType,
+                    timestamp: Int(Date().timeIntervalSince1970)
+                )
+            )
+            if let adopted = adoptDroppedFile(at: url, to: destination) {
+                typeDroppedPath(adopted.path, session: session, onComplete: onComplete)
+                return
             }
         }
+        writeDroppedImageData(
+            safeProvider,
+            typeIdentifier: imageType,
+            suggestedName: suggestedName,
+            session: session,
+            onComplete: onComplete
+        )
     }
+}
+
+private func writeDroppedImageData(
+    _ provider: NSItemProvider,
+    typeIdentifier: String,
+    suggestedName: String?,
+    session: GhosttyTerminalSession,
+    onComplete: @Sendable @escaping () -> Void
+) {
+    provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+        guard let data else { return }
+        let destination = AgentControl.dropsDir.appendingPathComponent(
+            DroppedImageFile.name(
+                suggested: suggestedName,
+                typeIdentifier: typeIdentifier,
+                timestamp: Int(Date().timeIntervalSince1970)
+            )
+        )
+        let target = uniqueDropDestination(destination)
+        do {
+            try data.write(to: target)
+            AgentControl.pruneDrops()
+            typeDroppedPath(target.path, session: session, onComplete: onComplete)
+        } catch {
+            NSLog("Runway: failed to write dropped image: \(error.localizedDescription)")
+        }
+    }
+}
+
+private func adoptDroppedFile(at source: URL, to destination: URL) -> URL? {
+    let target = uniqueDropDestination(destination)
+    do {
+        try FileManager.default.copyItem(at: source, to: target)
+        AgentControl.pruneDrops()
+        return target
+    } catch {
+        NSLog("Runway: failed to adopt dropped file: \(error.localizedDescription)")
+        return nil
+    }
+}
+
+/// Never overwrite an earlier drop that is still on screen in some terminal.
+private func uniqueDropDestination(_ url: URL) -> URL {
+    guard FileManager.default.fileExists(atPath: url.path) else { return url }
+    let base = url.deletingPathExtension().lastPathComponent
+    let ext = url.pathExtension
+    for suffix in 2...99 {
+        let candidate = url.deletingLastPathComponent()
+            .appendingPathComponent(ext.isEmpty ? "\(base)-\(suffix)" : "\(base)-\(suffix).\(ext)")
+        if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+    }
+    return url
 }

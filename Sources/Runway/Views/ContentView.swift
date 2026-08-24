@@ -45,7 +45,12 @@ struct ContentView: View {
                 .coordinateSpace(name: "split")
 
                 // Always mounted (so its shell keeps running); slides in/out with ⌘⌥Q.
-                QuickTerminal(ws: context.workspace, width: left, availableHeight: geo.size.height)
+                QuickTerminal(
+                    ws: context.workspace,
+                    feed: context.githubFeed,
+                    width: left,
+                    availableHeight: geo.size.height
+                )
             }
         }
         .ignoresSafeArea()

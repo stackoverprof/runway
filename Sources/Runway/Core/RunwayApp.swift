@@ -149,20 +149,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        // Shift-Command-[ and Shift-Command-] to cycle tabs.
+        // Shift-Command-[ and Shift-Command-] also cycle tabs (browser habit).
         if mods == [.command, .shift], let key = ev.charactersIgnoringModifiers {
-            let tabs = FeedTab.allCases
-            if let idx = tabs.firstIndex(of: ws.selectedTab) {
-                if key == "[" {
-                    let prevIdx = (idx - 1 + tabs.count) % tabs.count
-                    ws.selectedTab = tabs[prevIdx]
-                    return true
-                } else if key == "]" {
-                    let nextIdx = (idx + 1) % tabs.count
-                    ws.selectedTab = tabs[nextIdx]
-                    return true
-                }
-            }
+            if key == "[" { ws.cycleTab(by: -1); return true }
+            if key == "]" { ws.cycleTab(by: 1); return true }
+        }
+
+        // ⌘⌥[ / ⌘⌥] step through Runway, Feeds, Pulls; ⌘⌥, / ⌘⌥. step through
+        // the subtabs of whichever tab is showing (Open/Closed, the feed filter,
+        // the Pulls timeframe), and ⌘⌥⇧1–5 jump straight to one. Without these
+        // the keyboard stopped at the three top-level tabs and every subtab
+        // needed the mouse.
+        if mods == [.command, .option] {
+            if ev.keyCode == 33 { ws.cycleTab(by: -1); return true }      // ⌘⌥[
+            if ev.keyCode == 30 { ws.cycleTab(by: 1); return true }       // ⌘⌥]
+            if ev.keyCode == 43 { ws.cycleSubtab(by: -1); return true }   // ⌘⌥,
+            if ev.keyCode == 47 { ws.cycleSubtab(by: 1); return true }    // ⌘⌥.
+        }
+        if mods == [.command, .option, .shift], let digit = Self.digit(for: ev.keyCode),
+           digit <= ws.subtabLabels.count {
+            ws.selectSubtab(index: digit - 1)
+            return true
         }
 
         // While the quick terminal is open: ⌘⌥← / ⌘⌥→ jump between it (left) and
@@ -182,9 +189,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .reorderDown:   ws.moveFocused(by: 1)
         case .solo:          ws.toggleSolo()
         case .quickTerminal: ws.toggleQuick()
+        case .repoPicker:    ws.requestRepoPicker()
+        case .layoutAxis:    ws.toggleLayoutAxis()
         case .none:          return false
         }
         return true
+    }
+
+    /// Number-row key codes, matched by position so a modifier that composes a
+    /// different character (⇧1 → "!") still reads as the digit.
+    private static func digit(for keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 18: 1
+        case 19: 2
+        case 20: 3
+        case 21: 4
+        case 23: 5
+        case 22: 6
+        case 26: 7
+        case 28: 8
+        case 25: 9
+        default: nil
+        }
     }
 
     /// Clicking inside a terminal focuses its box (resolved via the registry).

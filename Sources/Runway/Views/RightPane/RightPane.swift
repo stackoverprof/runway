@@ -21,35 +21,61 @@ struct RightPane: View {
             let activeBoxes = ws.activeBoxes
             let activeIDs = Set(activeBoxes.map(\.id))
             let n = activeBoxes.count
+            let axis = ws.terminalLayoutAxis
             ZStack {
-                PersistentTerminalLayout(spacing: ws.soloed ? 0 : 12) {
+                PersistentTerminalLayout(spacing: ws.soloed ? 0 : 12, axis: axis) {
                     ForEach($ws.boxes) { $box in
                         let isActive = activeIDs.contains(box.id)
-                        let isPresented = isActive
-                            && (!ws.soloed || box.id == ws.focusedID)
+                        let presentation = TerminalPresentationPolicy.state(
+                            isActiveRepository: isActive,
+                            isSoloed: ws.soloed,
+                            isFocused: box.id == ws.focusedID
+                        )
                         ResizableBox(
                             id: box.id,
                             workspace: ws,
                             name: $box.name,
                             detail: $box.detail,
                             state: box.state,
-                            config: TerminalConfig(workingDirectory: box.cwd,
-                                                   environment: AgentControl.environment(for: box.id, autorun: box.autorun)),
+                            config: TerminalConfig(
+                                workingDirectory: box.cwd,
+                                environment: AgentControl.environment(
+                                    for: box.id,
+                                    autorun: box.autorun,
+                                    focusRepository: box.focusRepository,
+                                    focusIssueNumber: box.focusIssueNumber,
+                                    issueAgentSessionsEnabled: UserDefaults.standard.bool(
+                                        forKey: SettingsKey.issueAgentSessionsEnabled
+                                    )
+                                )
+                            ),
                             height: $box.height,
                             isFocused: ws.focusedID == box.id,
                             isFocusManaged: box.focusIssueNumber != nil,
                             focusIssueNumber: box.focusIssueNumber,
-                            fixedHeight: isPresented
-                                ? fixedHeight(for: box, geo: geo, count: n)
-                                : 1
+                            focusRepository: box.focusRepository,
+                            // Parked boxes (other repositories) stay 1×1 whatever
+                            // the axis; the presented ones accordion along it.
+                            fixedHeight: presentation.isInLayout
+                                ? (axis == .horizontal
+                                    ? nil
+                                    : fixedSpan(for: box, geo: geo, count: n))
+                                : 1,
+                            fixedWidth: presentation.isInLayout && axis == .horizontal
+                                ? fixedSpan(for: box, geo: geo, count: n)
+                                : nil
                         )
                         .id(box.id)
-                        .opacity(isPresented ? 1 : 0)
-                        .allowsHitTesting(isPresented)
-                        .accessibilityHidden(!isPresented)
+                        // Active-repository terminals stay in the vertical layout
+                        // during Focus navigation. Their heights accordion between
+                        // zero and full size, preserving the switch direction like
+                        // v1. Only other repositories are parked at 1×1.
+                        .opacity(presentation.isInLayout ? 1 : 0)
+                        .allowsHitTesting(presentation.isInteractive)
+                        .accessibilityHidden(!presentation.isInteractive)
                         .layoutValue(
                             key: TerminalPresentedLayoutValueKey.self,
-                            value: isPresented
+                            value: presentation.isInLayout
                         )
                     }
                 }
@@ -104,25 +130,24 @@ struct RightPane: View {
         }
     }
 
-    /// Solo fills the pane with one terminal. Otherwise terminals always use the
-    /// weighted accordion split.
-    private func fixedHeight(for box: AgentBox, geo: GeometryProxy, count n: Int) -> CGFloat {
-        if ws.soloed {
-            return box.id == ws.focusedID ? max(geo.size.height - 32, 60) : 0
-        }
-        let available = max(geo.size.height - 32 - 12 * CGFloat(max(0, n - 1)),
-                            CGFloat(n) * 50)
-        return accordionHeight(for: box, available: available, count: n)
-    }
-
-    /// Equal split, or—if a box is focused—weight the focused box 2× the others.
-    private func accordionHeight(for box: AgentBox, available: CGFloat, count n: Int) -> CGFloat {
-        guard n > 0 else { return available }
-        if let fid = ws.focusedID, ws.activeBoxes.contains(where: { $0.id == fid }) {
-            let total = CGFloat(n + 1)   // focused weight 2, others 1
-            return box.id == fid ? available * 2 / total : available / total
-        }
-        return available / CGFloat(n)
+    /// A box's share along the accordion axis: pane height when stacking
+    /// vertically, pane width when laying out columns. Solo fills the pane with
+    /// one terminal either way.
+    private func fixedSpan(for box: AgentBox, geo: GeometryProxy, count n: Int) -> CGFloat {
+        let paneSpan = ws.terminalLayoutAxis == .horizontal
+            ? geo.size.width
+            : geo.size.height
+        let isFocusedBoxActive = ws.focusedID.map { id in
+            ws.activeBoxes.contains { $0.id == id }
+        } ?? false
+        return AccordionSpanPolicy.span(
+            isFocused: box.id == ws.focusedID,
+            focusedIsActive: isFocusedBoxActive,
+            soloed: ws.soloed,
+            paneSpan: paneSpan,
+            count: n,
+            minimumSpan: ws.terminalLayoutAxis == .horizontal ? 120 : 50
+        )
     }
 
     private var hint: some View {
@@ -155,6 +180,50 @@ struct RightPane: View {
     }
 }
 
+/// The weighted accordion split, axis-agnostic: the same numbers size heights in
+/// the vertical stack and widths in the horizontal one.
+enum AccordionSpanPolicy {
+    /// 16pt pane padding on each side; 12pt gaps between presented boxes.
+    static func span(
+        isFocused: Bool,
+        focusedIsActive: Bool,
+        soloed: Bool,
+        paneSpan: CGFloat,
+        count n: Int,
+        minimumSpan: CGFloat
+    ) -> CGFloat {
+        if soloed {
+            return isFocused ? max(paneSpan - 32, 60) : 0
+        }
+        guard n > 0 else { return paneSpan }
+        let available = max(paneSpan - 32 - 12 * CGFloat(max(0, n - 1)),
+                            CGFloat(n) * minimumSpan)
+        if focusedIsActive {
+            let total = CGFloat(n + 1)   // focused weight 2, others 1
+            return isFocused ? available * 2 / total : available / total
+        }
+        return available / CGFloat(n)
+    }
+}
+
+struct TerminalPresentationState: Equatable {
+    let isInLayout: Bool
+    let isInteractive: Bool
+}
+
+enum TerminalPresentationPolicy {
+    static func state(
+        isActiveRepository: Bool,
+        isSoloed: Bool,
+        isFocused: Bool
+    ) -> TerminalPresentationState {
+        TerminalPresentationState(
+            isInLayout: isActiveRepository,
+            isInteractive: isActiveRepository && (!isSoloed || isFocused)
+        )
+    }
+}
+
 private struct TerminalPresentedLayoutValueKey: LayoutValueKey {
     static let defaultValue = true
 }
@@ -164,6 +233,7 @@ private struct TerminalPresentedLayoutValueKey: LayoutValueKey {
 /// running without consuming visible pane space.
 private struct PersistentTerminalLayout: Layout {
     let spacing: CGFloat
+    let axis: TerminalLayoutAxis
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -179,7 +249,7 @@ private struct PersistentTerminalLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) {
-        var y = bounds.minY
+        var offset = axis == .horizontal ? bounds.minX : bounds.minY
         for subview in subviews {
             guard subview[TerminalPresentedLayoutValueKey.self] else {
                 subview.place(
@@ -190,15 +260,28 @@ private struct PersistentTerminalLayout: Layout {
                 continue
             }
 
-            let size = subview.sizeThatFits(
-                ProposedViewSize(width: bounds.width, height: nil)
-            )
-            subview.place(
-                at: CGPoint(x: bounds.minX, y: y),
-                anchor: .topLeading,
-                proposal: ProposedViewSize(width: bounds.width, height: size.height)
-            )
-            y += size.height + spacing
+            switch axis {
+            case .vertical:
+                let size = subview.sizeThatFits(
+                    ProposedViewSize(width: bounds.width, height: nil)
+                )
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: offset),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: size.height)
+                )
+                offset += size.height + spacing
+            case .horizontal:
+                let size = subview.sizeThatFits(
+                    ProposedViewSize(width: nil, height: bounds.height)
+                )
+                subview.place(
+                    at: CGPoint(x: offset, y: bounds.minY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: size.width, height: bounds.height)
+                )
+                offset += size.width + spacing
+            }
         }
     }
 }

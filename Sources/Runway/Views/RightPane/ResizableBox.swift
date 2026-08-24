@@ -12,9 +12,13 @@ struct ResizableBox: View {
     var isFocused: Bool = false
     var isFocusManaged: Bool = false
     var focusIssueNumber: Int?
+    var focusRepository: String?
     /// When non-nil (accordion mode) the box uses this height and the resize
     /// handle is disabled.
     var fixedHeight: CGFloat? = nil
+    /// Horizontal accordion: the box takes this width and fills the pane's
+    /// height instead. Mutually exclusive with `fixedHeight`.
+    var fixedWidth: CGFloat? = nil
     @State private var startHeight: CGFloat?
     @State private var isEditingName = false
     @State private var isEditingDetail = false
@@ -60,7 +64,9 @@ struct ResizableBox: View {
                 .padding(.horizontal, 10)   // + 2 window-padding ≈ 12, aligns with the header
                 .padding(.bottom, 2)        // tiny inset to clear the rounded corners
         }
-        .frame(height: fixedHeight ?? height)
+        .frame(height: fixedWidth == nil ? (fixedHeight ?? height) : nil)
+        .frame(maxHeight: fixedWidth == nil ? nil : .infinity)
+        .frame(width: fixedWidth)
         .background(RunwayTerminal.body)                 // darker body fills the inset
         .clipShape(RoundedRectangle(cornerRadius: 9))
         // Focus: a very slight brighter border + faint white glow.
@@ -72,7 +78,8 @@ struct ResizableBox: View {
         .shadow(color: isFocused ? Color.white.opacity(0.14) : .clear,
                 radius: isFocused ? 11 : 0)
         .overlay(alignment: .bottom) {
-            if fixedHeight == nil { bottomEdgeHandle }   // no resize in accordion mode
+            // No manual resize in either accordion mode.
+            if fixedHeight == nil, fixedWidth == nil { bottomEdgeHandle }
         }
         .onChange(of: state) { old, new in
             if new == .needsAction {
@@ -121,6 +128,40 @@ struct ResizableBox: View {
         .onHover { isHoveringHeader = $0 }
         .pointerCursor()
         .onTapGesture { workspace.setFocus(id) }
+        .contextMenu { headerMenu }
+    }
+
+    /// Right-clicking the header hands over this terminal's conversation, so the
+    /// same agent session can be reopened in any other terminal.
+    @ViewBuilder
+    private var headerMenu: some View {
+        if let session = resolvedSession() {
+            Button("Copy resume command") { copyToPasteboard(session.resumeCommand) }
+            Button("Copy session ID") { copyToPasteboard(session.sessionID) }
+            Divider()
+            Text(session.resumeCommand)
+        } else {
+            Button("No agent session to resume yet") {}
+                .disabled(true)
+        }
+    }
+
+    /// Which conversation this terminal is in, if one can be identified.
+    private func resolvedSession() -> AgentSessionLocator.Resolved? {
+        AgentSessionLocator.resolve(
+            boxID: id,
+            workingDirectory: config.workingDirectory,
+            focusRepository: focusRepository,
+            focusIssueNumber: focusIssueNumber,
+            issueSessionsEnabled: UserDefaults.standard.bool(
+                forKey: SettingsKey.issueAgentSessionsEnabled
+            )
+        )
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     /// The agent name: a label that becomes an inline text field when clicked.

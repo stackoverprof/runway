@@ -33,6 +33,31 @@ enum AgentControl {
     static var integrationDir: URL { supportDir.appendingPathComponent("integration", isDirectory: true) }
     static var integrationGuide: URL { integrationDir.appendingPathComponent("SKILL.md") }
 
+    /// Images Runway had to materialize from a drag that carried no file on disk.
+    /// Runway's own folder, so dropping a screenshot on a terminal never leaves a
+    /// second copy in ~/Downloads.
+    static var dropsDir: URL {
+        let dir = supportDir.appendingPathComponent("drops", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Dropped images are scratch: an agent reads one right after the drop and
+    /// never again. Keep a week so a path pasted yesterday still resolves.
+    static func pruneDrops(olderThan age: TimeInterval = 7 * 86_400) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dropsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return }
+        let cutoff = Date().addingTimeInterval(-age)
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            guard let modified, modified < cutoff else { continue }
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     static func file(for id: UUID) -> URL {
         controlDir.appendingPathComponent("\(id.uuidString).json")
     }
@@ -42,9 +67,21 @@ enum AgentControl {
         controlDir.appendingPathComponent("\(id.uuidString).cwd")
     }
 
+    /// Where a Runway-scoped agent wrapper records the conversation id it bound,
+    /// so the box can hand back a working resume command.
+    static func sessionFile(for id: UUID) -> URL {
+        controlDir.appendingPathComponent("\(id.uuidString).session")
+    }
+
     /// Environment for a box's terminal: control paths, the portable guide, and
     /// Runway-scoped command helpers.
-    static func environment(for id: UUID, autorun: String? = nil) -> [String: String] {
+    static func environment(
+        for id: UUID,
+        autorun: String? = nil,
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        issueAgentSessionsEnabled: Bool = false
+    ) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
         let binPath = binDir.path
         let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -53,19 +90,45 @@ enum AgentControl {
             "RUNWAY_CONTROL": file(for: id).path,
             "RUNWAY_FOCUS_LOG": FocusActivityLog.file.path,
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
+            "RUNWAY_SESSION_FILE": sessionFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "ZDOTDIR": zdotdir.path,
             "RUNWAY_SKILL_PATH": integrationGuide.path,
             "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
             "PATH": "\(binPath):\(systemPath)",
         ]
-        if let autorun, !autorun.isEmpty { env["RUNWAY_AUTORUN"] = autorun }
+        if let autorun, !autorun.isEmpty {
+            env["RUNWAY_AUTORUN"] = scopedAutorun(autorun)
+        }
+        for provider in IssueAgentProvider.allCases where issueAgentSessionsEnabled {
+            guard let sessionID = IssueAgentSession.id(
+                provider: provider,
+                repository: focusRepository,
+                issueNumber: focusIssueNumber
+            ) else { continue }
+            let prefix = "RUNWAY_\(provider.rawValue.uppercased())_SESSION"
+            env["\(prefix)_ID"] = sessionID.uuidString.lowercased()
+        }
         return env
+    }
+
+    /// Resolve supported configured agents directly through Runway's adapter.
+    /// This avoids aliases and zsh's command hash bypassing the scoped PATH entry.
+    private static func scopedAutorun(_ command: String) -> String {
+        for provider in IssueAgentProvider.allCases {
+            let name = provider.rawValue
+            guard command == name || command.hasPrefix("\(name) ") else { continue }
+            let executable = binDir.appendingPathComponent(name).path
+            let quoted = "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))'"
+            return quoted + command.dropFirst(name.count)
+        }
+        return command
     }
 
     static func cleanup(_ id: UUID) {
         try? FileManager.default.removeItem(at: file(for: id))
         try? FileManager.default.removeItem(at: cwdFile(for: id))
+        try? FileManager.default.removeItem(at: sessionFile(for: id))
     }
 
     /// Clear stale agent states at launch: the shells start fresh (nothing running
@@ -106,6 +169,7 @@ enum AgentControl {
         let focusLogPath = binDir.appendingPathComponent("runway-focus-log")
         let agentPath = binDir.appendingPathComponent("runway-agent")
         let claudePath = binDir.appendingPathComponent("claude")
+        let geminiPath = binDir.appendingPathComponent("gemini")
 
         // 1. runway-post
         let postScript = """
@@ -272,13 +336,97 @@ enum AgentControl {
           echo 'claude: command not found' >&2
           exit 127
         fi
-        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "$@"
+        explicit_session=0
+        for arg in "$@"; do
+          case "$arg" in
+            -c|--continue|-r|--resume|--resume=*|--session-id|--session-id=*|--fork-session)
+              explicit_session=1
+              break
+              ;;
+          esac
+        done
+        session_args=()
+        session_mode="unbound"
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ]; then
+          transcript=""
+          if [ -d "$HOME/.claude/projects" ]; then
+            transcript=$(/usr/bin/find "$HOME/.claude/projects" -type f -name "$RUNWAY_CLAUDE_SESSION_ID.jsonl" -print -quit 2>/dev/null)
+          fi
+          if [ -n "$transcript" ]; then
+            session_args=(--resume "$RUNWAY_CLAUDE_SESSION_ID")
+            session_mode="resume"
+          else
+            session_args=(--session-id "$RUNWAY_CLAUDE_SESSION_ID")
+            session_mode="create"
+          fi
+        elif [ "$explicit_session" -eq 1 ]; then
+          session_mode="explicit"
+        fi
+        export RUNWAY_CLAUDE_SESSION_MODE="$session_mode"
+        if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
+          printf '{"provider":"claude","sessionId":"%s"}' "$RUNWAY_CLAUDE_SESSION_ID" > "$RUNWAY_SESSION_FILE"
+        fi
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
         exit $exit_code
         """
         try? claudeScript.data(using: .utf8)?.write(to: claudePath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudePath.path)
+
+        // Gemini also supports caller-assigned session UUIDs. This wrapper uses
+        // the same issue-owned identity while preserving explicit user flags.
+        let geminiScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/gemini" ]; then real="$dir/gemini"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'gemini: command not found' >&2
+          exit 127
+        fi
+        explicit_session=0
+        for arg in "$@"; do
+          case "$arg" in
+            -r|--resume|--resume=*|--session-id|--session-id=*|--session-file|--session-file=*)
+              explicit_session=1
+              break
+              ;;
+          esac
+        done
+        session_args=()
+        session_mode="unbound"
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ]; then
+          short_id="${RUNWAY_GEMINI_SESSION_ID[1,8]}"
+          transcript=""
+          if [ -d "$HOME/.gemini/tmp" ]; then
+            transcript=$(/usr/bin/find "$HOME/.gemini/tmp" -type f -path '*/chats/*' \\( -name "*-$short_id.json" -o -name "*-$short_id.jsonl" \\) -print -quit 2>/dev/null)
+          fi
+          if [ -n "$transcript" ]; then
+            session_args=(--resume "$RUNWAY_GEMINI_SESSION_ID")
+            session_mode="resume"
+          else
+            session_args=(--session-id "$RUNWAY_GEMINI_SESSION_ID")
+            session_mode="create"
+          fi
+        elif [ "$explicit_session" -eq 1 ]; then
+          session_mode="explicit"
+        fi
+        export RUNWAY_GEMINI_SESSION_MODE="$session_mode"
+        if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
+          printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_SESSION_FILE"
+        fi
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        "$real" "${session_args[@]}" "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        exit $exit_code
+        """
+        try? geminiScript.data(using: .utf8)?.write(to: geminiPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: geminiPath.path)
     }
 
     private static func ensureFeedInbox() {
@@ -289,12 +437,13 @@ enum AgentControl {
 
     private static func writeHooks() {
         func reporter(_ state: String) -> [String: Any] {
-            ["hooks": [[
+            return ["hooks": [[
                 "type": "command",
                 "command": "[ -n \"$RUNWAY_CONTROL\" ] && printf '{\"state\":\"\(state)\"}' > \"$RUNWAY_CONTROL\"",
             ]]]
         }
         let settings: [String: Any] = ["hooks": [
+            "SessionStart": [reporter("running")],
             "UserPromptSubmit": [reporter("running")],
             "PreToolUse": [reporter("running")],
             "Notification": [reporter("needs-action")],
@@ -324,8 +473,10 @@ enum AgentControl {
         - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
         - `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
         - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
+        - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its selected repository's own ids, rotated by its "new session" header button. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
 
         ---
 
