@@ -476,7 +476,7 @@ enum AgentControl {
         - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
-        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs exposed only when experimental Focus conversation binding is enabled in Settings. Runway's scoped wrappers use them to create or resume the issue's conversation. This is tested with Claude only; other agents and models are untested.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its selected repository's own ids, rotated by its "new session" header button. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
 
         ---
 
