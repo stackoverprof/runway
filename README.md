@@ -25,7 +25,7 @@ activity, and pull request progress in one focused workspace.
 
 ## Install in a minute
 
-1. Download **`Runway-2.1.0-arm64.dmg`** from
+1. Download **`Runway-2.2.0-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -84,6 +84,9 @@ polling pauses while Runway is inactive.
 - Click **On today's missions** to smoothly collapse or expand the Focus board
   while keeping the Open and Closed issue backlog visible.
 - `⌘F` opens tab-specific search for issues, feed events, or pull requests.
+- Picking the tab you are already on returns it to the top of its list and
+  refetches it.
+- Pulls opens on the month in progress; every launch starts on MTD.
 - The searchable repo switcher shows only GitHub repositories cloned on this
   Mac. Opening it refreshes the local clone list.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
@@ -103,11 +106,17 @@ repository's local clone as its starting directory. For example,
 - **Accordion layout** always fits every focused terminal into the available
   window height and gives the active terminal more space.
 - Focus terminal headers are issue-owned and read-only. The right-side `#1234`
-  reference copies the issue number when clicked.
+  reference copies the issue number when clicked. Renaming the GitHub issue
+  updates its terminal header without restarting the running session.
 - **Focus mode** expands the active terminal to fill the pane.
 - **Quick terminal** stays alive behind its bottom-left overlay.
 - Switching repositories keeps each repository's Focus terminals and running
   agent sessions alive, then restores them when that repository is selected again.
+- **Experimental, opt-in conversation binding** gives each Focus issue a stable
+  provider conversation identity. Enable it in Settings to resume after a Runway
+  relaunch or after an issue leaves and returns to Focus. It is tested with Claude
+  only; other agents and models are untested. Removing an issue or quitting Runway
+  still stops its process.
 - Double-click the top window edge or blank left-header space to fill the screen;
   double-click it again to restore the previous window size and position.
 - File drops insert shell-escaped paths directly into the target terminal.
@@ -167,6 +176,11 @@ directory. Runway does not edit your shell or agent configuration files.
 | Close window | `⌘⇧W` | Close the current window |
 | Find | `⌘F` | Search the active Runway, Feeds, or Pulls tab |
 | Change tab | `⌘⌥1` through `⌘⌥3` | Open Runway, Feeds, or Pulls |
+| Cycle tabs | `⌘⌥[` / `⌘⌥]` (also `⌘⇧[` / `⌘⇧]`) | Step through Runway, Feeds, and Pulls |
+| Change subtab | `⌘⌥,` / `⌘⌥.` | Step through the current tab's own options |
+| Jump to subtab | `⌘⌥⇧1` through `⌘⌥⇧5` | Open / Closed, the feed filter, or a Pulls timeframe |
+| Switch repository | `⌘R` | Open the repo picker; type to filter, `↑↓` + `⏎` to pick |
+| Layout | `⌘⌥L` | Toggle the horizontal terminal accordion |
 | Settings | `⌘,` | Open settings and people profiles |
 
 Shortcuts can be customized from **Runway → Settings → Shortcuts**.

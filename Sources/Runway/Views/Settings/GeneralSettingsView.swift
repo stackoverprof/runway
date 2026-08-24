@@ -14,6 +14,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.confirmQuit)   private var confirmQuit = true
     @AppStorage(SettingsKey.agentCommandEnabled) private var agentCommandEnabled = false
     @AppStorage(SettingsKey.agentCommand)  private var agentCommand = "claude"
+    @AppStorage(SettingsKey.issueAgentSessionsEnabled) private var issueAgentSessionsEnabled = false
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
@@ -138,6 +139,14 @@ struct GeneralSettings: View {
                 }
 
                 Text("Runs automatically when a Focus terminal opens, when you reopen the app, and in the quick terminal. Leave unchecked for a plain shell.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Resume Focus conversations (Experimental)", isOn: $issueAgentSessionsEnabled)
+                    .disabled(!agentCommandEnabled)
+                    .pointerCursor()
+
+                Text("Binds each Focus issue to one agent conversation across removal and app relaunch. Tested with Claude only. Other agents and models are experimental and untested. Takes effect when a terminal starts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

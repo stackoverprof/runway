@@ -43,7 +43,7 @@ struct KeyChord: Codable, Equatable {
 
 /// The customizable actions (⌘1–9 "jump to card" stays fixed).
 enum AppAction: String, CaseIterable {
-    case newBox, closeBox, closeWindow, navigatePrev, navigateNext, reorderUp, reorderDown, solo, quickTerminal
+    case newBox, closeBox, closeWindow, navigatePrev, navigateNext, reorderUp, reorderDown, solo, quickTerminal, repoPicker, layoutAxis
 
     var label: String {
         switch self {
@@ -56,6 +56,8 @@ enum AppAction: String, CaseIterable {
         case .reorderDown:   return "Move agent down"
         case .solo:          return "Toggle focus mode"
         case .quickTerminal: return "Toggle quick terminal"
+        case .repoPicker:    return "Switch repository"
+        case .layoutAxis:    return "Toggle horizontal layout"
         }
     }
 
@@ -70,6 +72,8 @@ enum AppAction: String, CaseIterable {
         case .reorderDown:   return KeyChord(keyCode: 125, modifiers: [.command, .option, .shift])     // ⌘⌥⇧↓
         case .solo:          return KeyChord(keyCode: 36, modifiers: [.command, .option])              // ⌘⌥↩
         case .quickTerminal: return KeyChord(keyCode: 12, modifiers: [.command, .option])              // ⌘⌥Q
+        case .repoPicker:    return KeyChord(keyCode: 15, modifiers: [.command])                       // ⌘R
+        case .layoutAxis:    return KeyChord(keyCode: 37, modifiers: [.command, .option])              // ⌘⌥L
         }
     }
 }

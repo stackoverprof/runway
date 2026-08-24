@@ -8,7 +8,7 @@ struct ShortcutSettings: View {
             Section {
                 ForEach(AppAction.allCases, id: \.self) { KeyRecorderRow(action: $0) }
             } header: {
-                Text("Click a shortcut, then press the new keys (Esc to cancel). ⌘1–9 jump to a card.")
+                Text("Click a shortcut, then press the new keys (Esc to cancel). ⌘1–9 jump to a card, ⌘⌥1–3 to a tab, ⌘⌥[ / ⌘⌥] cycle tabs, and ⌘⌥, / ⌘⌥. step through that tab's own options.")
             } footer: {
                 HStack {
                     Spacer()

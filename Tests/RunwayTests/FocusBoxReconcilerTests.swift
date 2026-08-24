@@ -4,6 +4,28 @@ import Testing
 
 @Suite("Focus terminal reconciliation")
 struct FocusBoxReconcilerTests {
+    @Test("Renaming a focused issue preserves its terminal session")
+    func refreshesTitleWithoutReplacingBox() {
+        let existing = AgentBox(
+            name: "Old issue title",
+            focusRepository: "owner/repository",
+            focusIssueNumber: 123
+        )
+
+        let result = FocusBoxReconciler.reconcile(
+            previousBoxes: [existing],
+            issues: [issue(number: 123, title: "Renamed issue title")],
+            repository: "owner/repository",
+            workingDirectory: "/repos/repository",
+            command: "claude",
+            retainUnmanagedBoxes: true
+        )
+
+        #expect(result.repositoryBoxes.first?.id == existing.id)
+        #expect(result.repositoryBoxes.first?.name == "Renamed issue title")
+        #expect(result.removedBoxes.isEmpty)
+    }
+
     @Test("Switching repositories retains other repository terminals")
     func retainsOtherRepositoryBoxes() {
         let repositoryABox = AgentBox(

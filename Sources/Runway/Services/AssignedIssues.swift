@@ -1,6 +1,6 @@
 import Foundation
 
-struct AssignedIssue: Codable, Identifiable, Sendable {
+struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
     let number: Int
     let title: String
     var state: String

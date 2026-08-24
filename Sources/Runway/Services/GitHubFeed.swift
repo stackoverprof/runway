@@ -37,6 +37,24 @@ struct Presence: Identifiable {
     var idle: Bool            // no activity for > 30 min
 }
 
+/// How many brand-new events may cascade in one at a time before the feed just
+/// shows the batch. The cascade is 0.16s per event, so an uncapped burst after a
+/// long idle period animates the list for far longer than anyone waits.
+enum FeedRevealPolicy {
+    static let maxStaggered = 6
+    /// Past this, even a single transition across every new row costs more than
+    /// it is worth: the batch just appears.
+    static let maxAnimatedBatch = 24
+
+    static func staggers(_ newEventCount: Int) -> Bool {
+        newEventCount > 0 && newEventCount <= maxStaggered
+    }
+
+    static func animatesBatch(_ newEventCount: Int) -> Bool {
+        newEventCount > 0 && newEventCount <= maxAnimatedBatch
+    }
+}
+
 // MARK: - Feed (polls the GitHub API via the user's `gh` CLI)
 
 @MainActor @Observable final class GitHubFeed {
@@ -66,6 +84,9 @@ struct Presence: Identifiable {
     private var fetchingPRs: Set<Int> = []
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var repoListTask: Task<Void, Never>?
+    /// Bumped whenever the visible list is replaced, so staggered reveals still
+    /// in flight from an earlier fetch drop instead of landing on top of it.
+    @ObservationIgnored private var revealGeneration = 0
     /// Walking the home directory and asking git for each remote is expensive,
     /// so background revalidation is throttled to this interval.
     private static let repositoryScanInterval: TimeInterval = 120
@@ -150,6 +171,7 @@ struct Presence: Identifiable {
     /// Load the cached feed for the current repo (if any) so the left pane renders
     /// immediately instead of a skeleton. Recomputes presence from it.
     private func loadCache() {
+        cancelPendingReveals()
         didLoad = false; events = []; presence = []
         guard let data = try? Data(contentsOf: Self.cacheFile),
               let byRepo = try? Self.decoderDate.decode([String: [FeedEvent]].self, from: data),
@@ -164,6 +186,7 @@ struct Presence: Identifiable {
     static func clearCache() {
         try? FileManager.default.removeItem(at: cacheFile)
         UserDefaults.standard.removeObject(forKey: feedValidatedAtKey)
+        shared.cancelPendingReveals()
         shared.events = []; shared.presence = []; shared.didLoad = false
         Task { await shared.refresh() }
     }
@@ -590,19 +613,53 @@ struct Presence: Identifiable {
 
         let newTop = (staggerNew && (!events.isEmpty || animateFromEmpty))
             ? Array(full.prefix { !existing.contains($0.id) }) : []
-        guard !newTop.isEmpty else { events = full; return }
+        // Coming back to the app after hours away returns a whole batch at once.
+        // Revealing those one by one keeps the list animating for tens of
+        // seconds — the freeze the user hits exactly when they return — so only
+        // a small burst cascades and anything larger lands in one animation.
+        // A top-of-feed fetch carries everything a pending reveal was waiting to
+        // show, so those reveals are retired here rather than inserting a second
+        // copy of an event this list already holds. An older page does not, so it
+        // leaves them running.
+        if staggerNew { cancelPendingReveals() }
+        let generation = revealGeneration
+
+        guard FeedRevealPolicy.staggers(newTop.count) else {
+            if FeedRevealPolicy.animatesBatch(newTop.count) {
+                withAnimation(.easeOut(duration: 0.22)) { events = full }
+            } else {
+                events = full
+            }
+            return
+        }
 
         events = Array(full.dropFirst(newTop.count))   // the prior list, unchanged on screen
         // Reveal oldest-new first so the newest ends on top, each pushing the
         // stack down; the per-item delay makes the staggered cascade.
         for (i, ev) in newTop.reversed().enumerated() {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: UInt64(Double(i) * 0.16 * 1_000_000_000))
+            Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(Double(i) * 0.16 * 1_000_000_000))
+                } catch {
+                    return
+                }
+                // These land up to a second after the fetch. Without both checks
+                // a repository switch mid-cascade files the previous
+                // repository's events under the new one — the "misplaced
+                // activity" for a repo the author never touched.
+                guard let self, self.repo == repository,
+                      self.revealGeneration == generation else { return }
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                    events.insert(ev, at: 0)
+                    self.events.insert(ev, at: 0)
                 }
             }
         }
+    }
+
+    /// Abandon any pending staggered reveals: their events belong to whatever was
+    /// on screen before, and the cache already holds the full list.
+    private func cancelPendingReveals() {
+        revealGeneration &+= 1
     }
 
     static func discoverCachedPeople() {

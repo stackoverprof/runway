@@ -25,6 +25,74 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 }
 
+/// Which way the right pane stacks its terminals. Vertical is the classic
+/// accordion; horizontal lays the same weighted accordion side by side, which
+/// suits wide monitors where terminals want columns, not slivers.
+enum TerminalLayoutAxis: String, Codable {
+    case vertical
+    case horizontal
+
+    var toggled: TerminalLayoutAxis {
+        self == .vertical ? .horizontal : .vertical
+    }
+}
+
+/// Stepping through a tab's own options from the keyboard.
+enum SubtabNavigation {
+    /// Wraps at both ends, so ⌘⌥] past the last option returns to the first.
+    /// `nil` when there is nothing to step through.
+    static func index(from current: Int, by delta: Int, count: Int) -> Int? {
+        guard count > 1 else { return nil }
+        return ((current + delta) % count + count) % count
+    }
+}
+
+/// Open / Closed inside the Runway tab.
+enum RunwayIssueTab: String, CaseIterable, Identifiable {
+    case open = "Open"
+    case closed = "Closed"
+
+    var id: String { rawValue }
+}
+
+/// Everything / merges-only inside the Feeds tab.
+enum FeedFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case merges = "Merges"
+
+    var id: String { rawValue }
+    var showsMergesOnly: Bool { self == .merges }
+}
+
+/// The window the Pulls tab counts over.
+enum PRTimeframe: String, CaseIterable, Identifiable {
+    case oneDay = "1d"
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+    case monthToDate = "MTD"
+    case yearToDate = "YTD"
+
+    var id: String { rawValue }
+
+    /// Pulls opens on the month in progress, whatever it was left on last time.
+    static let initial = PRTimeframe.monthToDate
+
+    func startDate(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        switch self {
+        case .oneDay:
+            return now.addingTimeInterval(-86_400)
+        case .sevenDays:
+            return now.addingTimeInterval(-7 * 86_400)
+        case .thirtyDays:
+            return now.addingTimeInterval(-30 * 86_400)
+        case .monthToDate:
+            return calendar.dateInterval(of: .month, for: now)?.start ?? now
+        case .yearToDate:
+            return calendar.dateInterval(of: .year, for: now)?.start ?? now
+        }
+    }
+}
+
 /// App-wide state + actions for the agent list. Owned here (not in a view) so the
 /// app-level keyboard monitor can drive it even while a terminal has focus.
 @MainActor @Observable final class Workspace {
@@ -39,6 +107,8 @@ enum FeedTab: String, CaseIterable, Codable {
     var focusedID: UUID?
     /// Solo / zoom: show only the focused box, filling the pane.
     var soloed = false
+    /// Vertical stack (default) or side-by-side columns; ⌘⌥L flips it.
+    var terminalLayoutAxis: TerminalLayoutAxis = .vertical
 
     /// Quick terminal: a persistent background terminal overlaid bottom-left,
     /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
@@ -48,9 +118,22 @@ enum FeedTab: String, CaseIterable, Codable {
     var quickState: AgentState = .idle
     /// The currently selected feed tab in the left pane
     var selectedTab: FeedTab = .feeds
+    /// Sub-selection inside each tab. Held here, not in the view, so the keyboard
+    /// monitor reaches past the three top-level tabs into the tab's own controls.
+    var runwayIssueTab: RunwayIssueTab = .open
+    var feedFilter: FeedFilter = .all
+    /// Pulls always opens on month-to-date. Deliberately not persisted, so every
+    /// launch starts on the month in progress rather than an old window.
+    var prTimeframe: PRTimeframe = .initial
     /// Incremented by the app-level ⌘F handler so the active left pane can
     /// toggle its tab-specific search UI.
     var findRequestID = 0
+    /// Incremented when the already-selected tab is picked again: the tab jumps
+    /// back to the top of its list and refetches.
+    var tabResetRequestID = 0
+    /// Incremented by the repo-switcher shortcut so the left pane opens its
+    /// searchable repository picker.
+    var repoPickerRequestID = 0
     /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
     @ObservationIgnored var focusQuick: (() -> Void)?
     /// Set by the QuickTerminal: reports whether its surface is the window's
@@ -124,6 +207,7 @@ enum FeedTab: String, CaseIterable, Codable {
         var accordion: Bool
         var quickPinned: Bool?
         var selectedTab: FeedTab?
+        var layoutAxis: TerminalLayoutAxis?
     }
 
     private static var stateFile: URL { AgentControl.supportDir.appendingPathComponent("workspace.json") }
@@ -136,6 +220,7 @@ enum FeedTab: String, CaseIterable, Codable {
         quickHeight = s.quickHeight
         quickPinned = s.quickPinned ?? false
         selectedTab = s.selectedTab ?? .feeds
+        terminalLayoutAxis = s.layoutAxis ?? .vertical
         lastSaved = data
     }
 
@@ -143,7 +228,8 @@ enum FeedTab: String, CaseIterable, Codable {
     func saveIfNeeded() {
         let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
                                  quickHeight: quickHeight, accordion: true,
-                                 quickPinned: quickPinned, selectedTab: selectedTab)
+                                 quickPinned: quickPinned, selectedTab: selectedTab,
+                                 layoutAxis: terminalLayoutAxis)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
         try? data.write(to: Self.stateFile)
@@ -158,6 +244,65 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 
     func requestFind() { findRequestID &+= 1 }
+
+    /// Picking the tab you are already on: back to the top, and refetch.
+    func requestTabReset() { tabResetRequestID &+= 1 }
+
+    /// Open the searchable repository picker from the keyboard.
+    func requestRepoPicker() { repoPickerRequestID &+= 1 }
+
+    // MARK: Subtabs
+
+    /// Options the current tab offers below itself, in display order.
+    var subtabLabels: [String] {
+        switch selectedTab {
+        case .runway: RunwayIssueTab.allCases.map(\.rawValue)
+        case .feeds: FeedFilter.allCases.map(\.rawValue)
+        case .pullRequests: PRTimeframe.allCases.map(\.rawValue)
+        }
+    }
+
+    var selectedSubtabIndex: Int {
+        switch selectedTab {
+        case .runway: RunwayIssueTab.allCases.firstIndex(of: runwayIssueTab) ?? 0
+        case .feeds: FeedFilter.allCases.firstIndex(of: feedFilter) ?? 0
+        case .pullRequests: PRTimeframe.allCases.firstIndex(of: prTimeframe) ?? 0
+        }
+    }
+
+    func selectSubtab(index: Int) {
+        switch selectedTab {
+        case .runway:
+            guard RunwayIssueTab.allCases.indices.contains(index) else { return }
+            runwayIssueTab = RunwayIssueTab.allCases[index]
+        case .feeds:
+            guard FeedFilter.allCases.indices.contains(index) else { return }
+            feedFilter = FeedFilter.allCases[index]
+        case .pullRequests:
+            guard PRTimeframe.allCases.indices.contains(index) else { return }
+            prTimeframe = PRTimeframe.allCases[index]
+        }
+    }
+
+    func cycleTab(by delta: Int) {
+        let tabs = FeedTab.allCases
+        guard let index = tabs.firstIndex(of: selectedTab),
+              let next = SubtabNavigation.index(
+                  from: index,
+                  by: delta,
+                  count: tabs.count
+              ) else { return }
+        selectedTab = tabs[next]
+    }
+
+    func cycleSubtab(by delta: Int) {
+        guard let next = SubtabNavigation.index(
+            from: selectedSubtabIndex,
+            by: delta,
+            count: subtabLabels.count
+        ) else { return }
+        selectSubtab(index: next)
+    }
 
     var focusedIndex: Int? { boxes.firstIndex { $0.id == focusedID } }
 
@@ -333,6 +478,11 @@ enum FeedTab: String, CaseIterable, Codable {
     func toggleSolo() {
         guard focusedID != nil else { return }
         soloed.toggle()
+    }
+
+    func toggleLayoutAxis() {
+        terminalLayoutAxis = terminalLayoutAxis.toggled
+        saveIfNeeded()
     }
 
     /// Set the visual focus and give that box's terminal keyboard focus.

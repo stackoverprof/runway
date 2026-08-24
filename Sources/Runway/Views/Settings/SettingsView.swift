@@ -14,6 +14,7 @@ enum SettingsKey {
     static let initialCommand = "runway.initialCommand"   // run on each new agent
     static let agentCommandEnabled = "runway.agentCommandEnabled"
     static let agentCommand  = "runway.agentCommand"
+    static let issueAgentSessionsEnabled = "runway.issueAgentSessionsEnabled"
     static let personProfiles = "runway.personProfiles"
     static let brandHeaderStyle = "runway.brandHeaderStyle"
     static let brandTitle = "runway.brandTitle"
@@ -40,6 +41,7 @@ enum SettingsKey {
             // Preserve the app's historical effective behavior: a plain shell
             // until the user explicitly enables an agent command.
             agentCommandEnabled: false, agentCommand: "claude",
+            issueAgentSessionsEnabled: false,
             personProfiles: [],
             brandHeaderStyle: "text",
             brandTitle: "Activity",

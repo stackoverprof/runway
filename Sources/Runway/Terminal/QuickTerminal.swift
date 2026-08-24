@@ -10,10 +10,15 @@ struct QuickTerminal: View {
     static let quickBoxID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
     @Bindable var ws: Workspace
+    let feed: GitHubFeed
     let width: CGFloat            // left-pane width
     let availableHeight: CGFloat  // full pane height
 
-    @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
+    @State private var session: GhosttyTerminalSession
+    /// Repository the mounted shell was spawned for. A repo switch respawns the
+    /// shell into that repo's own conversation and directory; each repo's claude
+    /// session id is deterministic, so switching back resumes where it left off.
+    @State private var sessionRepository: String
     @State private var dragStartHeight: CGFloat?
     @State private var isHovered = false
     @State private var hideTask: Task<Void, Never>? = nil
@@ -23,30 +28,87 @@ struct QuickTerminal: View {
     @State private var pulseTask: Task<Void, Never>? = nil
     @State private var isHoveringHeader = false
 
-    /// The quick terminal also runs the configured command on launch.
-    static func startupConfig() -> TerminalConfig {
+    init(ws: Workspace, feed: GitHubFeed, width: CGFloat, availableHeight: CGFloat) {
+        self._ws = Bindable(ws)
+        self.feed = feed
+        self.width = width
+        self.availableHeight = availableHeight
+        self._sessionRepository = State(initialValue: feed.repo)
+        self._session = State(initialValue: makeRunwaySession(
+            Self.startupConfig(
+                repository: feed.repo,
+                repositoryPath: feed.localPath(for: feed.repo)
+            )
+        ))
+    }
+
+    /// The quick terminal also runs the configured command on launch. It lives
+    /// in the selected repository: it starts in that repo's checkout and carries
+    /// that repo's own persistent claude conversation.
+    static func startupConfig(
+        repository: String,
+        repositoryPath: String?
+    ) -> TerminalConfig {
         let cmd = SettingsKey.configuredAgentCommand
         let binPath = AgentControl.binDir.path
         let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        
-        let cwdPath: String?
-        if let cwdData = try? Data(contentsOf: AgentControl.cwdFile(for: QuickTerminal.quickBoxID)),
-           let dir = String(data: cwdData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !dir.isEmpty {
-            cwdPath = dir
-        } else {
-            cwdPath = nil
-        }
-        
+
+        // The repo's checkout wins; the recorded cwd only covers the no-repo case.
+        let recordedCwd = (try? Data(contentsOf: AgentControl.cwdFile(for: QuickTerminal.quickBoxID)))
+            .flatMap { String(data: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cwdPath = repositoryPath
+            ?? ((recordedCwd?.isEmpty == false) ? recordedCwd : nil)
+
         var env = [
             "ZDOTDIR": AgentControl.zdotdir.path,
             "RUNWAY_CONTROL": AgentControl.file(for: QuickTerminal.quickBoxID).path,
             "RUNWAY_FOCUS_LOG": FocusActivityLog.file.path,
             "RUNWAY_CWD_FILE": AgentControl.cwdFile(for: QuickTerminal.quickBoxID).path,
+            "RUNWAY_SESSION_FILE": AgentControl.sessionFile(for: QuickTerminal.quickBoxID).path,
+            "RUNWAY_CLAUDE_HOOKS": AgentControl.hooksFile.path,
             "PATH": "\(binPath):\(systemPath)",
         ]
+        for provider in IssueAgentProvider.allCases {
+            guard let sessionID = QuickTerminalSession.id(
+                provider: provider,
+                repository: repository
+            ) else { continue }
+            env["RUNWAY_\(provider.rawValue.uppercased())_SESSION_ID"] =
+                sessionID.uuidString.lowercased()
+        }
         if !cmd.isEmpty { env["RUNWAY_AUTORUN"] = cmd }
         return TerminalConfig(workingDirectory: cwdPath, environment: env)
+    }
+
+    /// Tear the shell down and spawn a fresh one for the current repository.
+    /// With `newSession`, the repo's generation is bumped first so the fresh
+    /// shell binds a brand-new conversation id from now on.
+    private func respawn(newSession: Bool = false) {
+        if newSession { QuickTerminalSession.bumpGeneration(for: feed.repo) }
+        try? FileManager.default.removeItem(
+            at: AgentControl.sessionFile(for: Self.quickBoxID)
+        )
+        sessionRepository = feed.repo
+        session = makeRunwaySession(Self.startupConfig(
+            repository: feed.repo,
+            repositoryPath: feed.localPath(for: feed.repo)
+        ))
+        bindSession()
+        applyRunwayTheme(to: session)
+    }
+
+    /// Point the workspace's quick-terminal hooks at the mounted session. Must
+    /// re-run after a respawn or they keep driving the dead shell.
+    private func bindSession() {
+        let session = session
+        ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
+        ws.quickHasKeyboard = {
+            guard let view = session.view, let window = view.window else {
+                return false
+            }
+            return window.firstResponder === view
+        }
     }
 
     private let margin: CGFloat = 8
@@ -84,18 +146,13 @@ struct QuickTerminal: View {
             VStack(spacing: 0) {
                 header
                 GhosttyTerminalRepresentable(session: session, configuration: .default)
+                    .id(ObjectIdentifier(session))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 5)
                     .padding(.bottom, 5)
                     .onAppear {
                         applyRunwayTheme(to: session)
-                        ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
-                        ws.quickHasKeyboard = {
-                            guard let view = session.view, let window = view.window else {
-                                return false
-                            }
-                            return window.firstResponder === view
-                        }
+                        bindSession()
                         Task { @MainActor in
                             for _ in 0..<100 {
                                 if let view = session.view {
@@ -198,6 +255,13 @@ struct QuickTerminal: View {
                 triggerAutoHide()
             }
         }
+        // The quick terminal follows the selected repository: new checkout, and
+        // that repo's own resumable conversation. The previous repo's session id
+        // is deterministic, so switching back resumes it.
+        .onChange(of: feed.repo) { _, repository in
+            guard repository != sessionRepository else { return }
+            respawn()
+        }
         .onChange(of: ws.quickState) { old, new in
             if new == .needsAction {
                 pulseTask?.cancel()
@@ -244,8 +308,27 @@ struct QuickTerminal: View {
             Text("quick")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
+            if !sessionRepository.isEmpty {
+                Text(sessionRepository.split(separator: "/").last.map(String.init) ?? sessionRepository)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.35))
+                    .lineLimit(1)
+            }
             Spacer()
-            
+
+            if isHoveringHeader {
+                Button {
+                    respawn(newSession: true)
+                } label: {
+                    Image(systemName: "plus.bubble")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Start a new agent session for this repository")
+            }
+
             // Pin button (only show on hover or when pinned)
             if isHoveringHeader || ws.quickPinned {
                 Button {
