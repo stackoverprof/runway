@@ -172,14 +172,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        // While the quick terminal is open: ⌘⌥← / ⌘⌥→ jump between it (left) and
-        // the focused agent (right).
-        if ws.quickVisible, mods == [.command, .option] {
-            if ev.keyCode == 123 { ws.focusQuick?(); return true }                          // ⌘⌥←
-            if ev.keyCode == 124 { TerminalRegistry.shared.focusTerminal(ws.focusedID); return true }  // ⌘⌥→
+        // Arrow navigation follows the layout: the agents run down the pane in
+        // the vertical stack and across it in the horizontal one, and the quick
+        // terminal sits to their left or below them accordingly. Bound chords
+        // still win, except for the four navigation actions, which mean the same
+        // thing here as they do below.
+        let bound = KeyBindings.shared.action(for: ev)
+        if bound == nil || Self.arrowNavigable.contains(bound!),
+           mods == [.command, .option] || mods == [.command, .option, .shift],
+           let outcome = ArrowNavigation.outcome(
+               keyCode: ev.keyCode,
+               shifted: mods.contains(.shift),
+               axis: ws.terminalLayoutAxis,
+               quickTerminalVisible: ws.quickVisible
+           ) {
+            switch outcome {
+            case .focusPrevious:      ws.focus(offset: -1)
+            case .focusNext:          ws.focus(offset: 1)
+            case .reorderPrevious:    ws.moveFocused(by: -1)
+            case .reorderNext:        ws.moveFocused(by: 1)
+            case .focusQuickTerminal: ws.focusQuick?()
+            case .focusAgents:        TerminalRegistry.shared.focusTerminal(ws.focusedID)
+            }
+            return true
         }
 
-        switch KeyBindings.shared.action(for: ev) {
+        switch bound {
         case .newBox:        ws.newBox()
         case .closeBox:      return ws.closeFocused()   // else fall through → window close
         case .closeWindow:   return false               // handled before workspace lookup
@@ -195,6 +213,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return true
     }
+
+    /// Actions whose arrow chords the layout may reinterpret, because the arrow
+    /// handler above resolves them to the same move.
+    private static let arrowNavigable: Set<AppAction> = [
+        .navigatePrev, .navigateNext, .reorderUp, .reorderDown,
+    ]
 
     /// Number-row key codes, matched by position so a modifier that composes a
     /// different character (⇧1 → "!") still reads as the digit.

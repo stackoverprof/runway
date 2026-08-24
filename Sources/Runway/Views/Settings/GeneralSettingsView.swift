@@ -18,11 +18,15 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
+    @AppStorage(SettingsKey.terminalFontFamily) private var terminalFontFamily = TerminalFont.defaultFamily
+    @AppStorage(SettingsKey.terminalFontSize) private var terminalFontSize = TerminalFont.defaultSize
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
     @State private var issueOrderReset = false
     @State private var brandingError: String?
     @State private var agentCommandChoice = "claude"
+    @State private var customFontFamily = ""
+    @State private var usingCustomFont = false
 
     private let sounds = ["Glass", "Ping", "Submarine", "Hero", "Pop", "Funk", "Blow"]
     var body: some View {
@@ -121,6 +125,48 @@ struct GeneralSettings: View {
                 }
             }
 
+            Section("Terminal") {
+                Picker("Font", selection: fontSelection) {
+                    ForEach(TerminalFont.selectableFamilies(current: terminalFontFamily), id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                    Divider()
+                    Text("Custom\u{2026}").tag(Self.customFontTag)
+                }
+                .pointerCursor()
+
+                if usingCustomFont {
+                    TextField("Font family", text: $customFontFamily)
+                        .onSubmit { applyCustomFont() }
+                    Text(customFontNotice)
+                        .font(.caption)
+                        .foregroundStyle(
+                            TerminalFont.isInstalled(terminalFontFamily)
+                                ? Color.secondary
+                                : Color.orange
+                        )
+                }
+
+                Stepper("Size: \(terminalFontSize)pt", value: $terminalFontSize, in: TerminalFont.sizeRange)
+                    .pointerCursor()
+
+                terminalFontPreview
+
+                if terminalFontFamily != TerminalFont.defaultFamily
+                    || terminalFontSize != TerminalFont.defaultSize {
+                    Button("Restore Default", role: .destructive) {
+                        terminalFontFamily = TerminalFont.defaultFamily
+                        terminalFontSize = TerminalFont.defaultSize
+                        usingCustomFont = false
+                    }
+                    .pointerCursor()
+                }
+
+                Text("Applies to every open terminal straight away. Your own Ghostty config is never modified.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Agents") {
                 Toggle("Run command in each agent", isOn: $agentCommandEnabled)
                     .pointerCursor()
@@ -198,6 +244,71 @@ struct GeneralSettings: View {
         .onChange(of: agentCommandChoice) { _, choice in
             guard choice != "custom" else { return }
             agentCommand = choice
+        }
+        // Rewrite the theme file and push it to every open terminal, so the new
+        // face is on screen before the Settings window is even closed.
+        .onChange(of: terminalFontFamily) { _, _ in RunwayTerminalHost.reloadTheme() }
+        .onChange(of: terminalFontSize) { _, _ in RunwayTerminalHost.reloadTheme() }
+    }
+
+    // MARK: Terminal font
+
+    private static let customFontTag = "\u{0}custom"
+
+    /// The picker sits on top of two pieces of state: the stored family, and
+    /// whether the user asked to type one in by hand.
+    private var fontSelection: Binding<String> {
+        Binding(
+            get: { usingCustomFont ? Self.customFontTag : terminalFontFamily },
+            set: { choice in
+                if choice == Self.customFontTag {
+                    customFontFamily = terminalFontFamily
+                    usingCustomFont = true
+                } else {
+                    usingCustomFont = false
+                    terminalFontFamily = choice
+                }
+            }
+        )
+    }
+
+    private func applyCustomFont() {
+        terminalFontFamily = TerminalFont.sanitizedFamily(customFontFamily)
+    }
+
+    private var customFontNotice: String {
+        guard TerminalFont.isInstalled(terminalFontFamily) else {
+            return "\(terminalFontFamily) is not installed on this Mac, so the terminal falls back to its default face."
+        }
+        return "Press Return to apply."
+    }
+
+    /// Honest preview: the real family at the real size, on the terminal's own
+    /// background. Falls back to the system monospaced face when the family
+    /// cannot be instantiated, which is also roughly what the terminal does.
+    private var previewFont: Font {
+        let size = CGFloat(terminalFontSize)
+        if NSFont(name: terminalFontFamily, size: size) != nil {
+            return .custom(terminalFontFamily, fixedSize: size)
+        }
+        return .system(size: size, design: .monospaced)
+    }
+
+    private var terminalFontPreview: some View {
+        HStack(spacing: 12) {
+            Text("Preview")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(verbatim: "~/runway % claude --resume 0b6f2b1e")
+                .font(previewFont)
+                .foregroundStyle(Color(white: 0.90))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .frame(width: 250, alignment: .leading)
+                .background(RunwayTerminal.body)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 

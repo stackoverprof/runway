@@ -41,6 +41,66 @@ struct KeyChord: Codable, Equatable {
     }
 }
 
+/// What a ⌘⌥ arrow means once the layout axis is taken into account.
+///
+/// Agents are laid out down the pane in the vertical stack and across it in the
+/// horizontal one, so the arrows that step between them follow the axis: ↑ / ↓
+/// when they are stacked, ← / → when they are side by side. Pressing ↑ to reach
+/// the terminal on your left is the awkwardness this removes.
+///
+/// The other pair points at the quick terminal, which sits in the bottom-left
+/// corner: to its left in the vertical layout, below it in the horizontal one.
+/// While the quick terminal is closed there is nothing over there to reach, so
+/// that pair steps between agents too and neither arrow is ever dead.
+enum ArrowNavigation {
+    enum Outcome: Equatable {
+        case focusPrevious
+        case focusNext
+        case reorderPrevious
+        case reorderNext
+        case focusQuickTerminal
+        case focusAgents
+    }
+
+    // Arrow key codes, matched by position rather than character.
+    private static let left: UInt16 = 123
+    private static let right: UInt16 = 124
+    private static let down: UInt16 = 125
+    private static let up: UInt16 = 126
+
+    /// The pair pointing across the agents: toward the quick terminal, and back.
+    /// It sits to their left when they are stacked, below them when they are in
+    /// a row.
+    private static func across(_ axis: TerminalLayoutAxis) -> (quickTerminal: UInt16, agents: UInt16) {
+        axis == .horizontal ? (down, up) : (left, right)
+    }
+
+    static func outcome(
+        keyCode: UInt16,
+        shifted: Bool,
+        axis: TerminalLayoutAxis,
+        quickTerminalVisible: Bool
+    ) -> Outcome? {
+        // Reordering never leaves the agents, so it keeps every arrow.
+        if !shifted, quickTerminalVisible {
+            let across = across(axis)
+            if keyCode == across.quickTerminal { return .focusQuickTerminal }
+            if keyCode == across.agents { return .focusAgents }
+        }
+
+        // Up and left run toward the first agent on either axis, down and right
+        // toward the last, so the direction itself needs no special casing.
+        switch keyCode {
+        case up, left:
+            return shifted ? .reorderPrevious : .focusPrevious
+        case down, right:
+            return shifted ? .reorderNext : .focusNext
+        default:
+            return nil
+        }
+    }
+}
+
 /// The customizable actions (⌘1–9 "jump to card" stays fixed).
 enum AppAction: String, CaseIterable {
     case newBox, closeBox, closeWindow, navigatePrev, navigateNext, reorderUp, reorderDown, solo, quickTerminal, repoPicker, layoutAxis

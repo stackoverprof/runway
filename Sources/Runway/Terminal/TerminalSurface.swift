@@ -30,15 +30,59 @@ enum RunwayTerminalHost {
         return host
     }()
 
-    /// Built once: user's config + Runway's neutral theme last. Applied app-wide
-    /// here; each surface also gets it via `session.updateConfig` after it attaches.
-    static let themedConfig: ghostty_config_t? = {
+    /// User's config + Runway's neutral theme last. Applied app-wide here; each
+    /// surface also gets it via `session.updateConfig` after it attaches.
+    /// Rebuilt when the terminal font changes.
+    private(set) static var themedConfig: ghostty_config_t? = buildConfig()
+
+    private static func buildConfig() -> ghostty_config_t? {
         guard let cfg = ghostty_config_new() else { return nil }
         ghostty_config_load_default_files(cfg)
         RunwayTerminal.themeFilePath.withCString { ghostty_config_load_file(cfg, $0) }
         ghostty_config_finalize(cfg)
         return cfg
-    }()
+    }
+
+    /// Rewrite the theme file from the current settings and push it to every
+    /// live terminal, so a font change lands without restarting the app or
+    /// disturbing a single running session.
+    static func reloadTheme() {
+        RunwayTerminal.installTheme()
+        guard let next = buildConfig() else { return }
+        let previous = themedConfig
+        themedConfig = next
+        if let host = shared {
+            ghostty_app_update_config(host.app, next)
+        }
+        for session in RunwayTerminalSessions.live() {
+            session.updateConfig(next)
+            forceTerminalLayoutUpdate(for: session)
+        }
+        // Freed only after every surface has taken the new one, the same order
+        // GhosttyKit uses for its own config reload.
+        if let previous { ghostty_config_free(previous) }
+    }
+}
+
+/// Live terminal sessions, so a config change can reach all of them. GhosttyKit
+/// keeps its own registry but does not publish it.
+@MainActor
+enum RunwayTerminalSessions {
+    private struct WeakSession {
+        weak var value: GhosttyTerminalSession?
+    }
+
+    private static var sessions: [WeakSession] = []
+
+    static func register(_ session: GhosttyTerminalSession) {
+        sessions.removeAll { $0.value == nil || $0.value === session }
+        sessions.append(WeakSession(value: session))
+    }
+
+    static func live() -> [GhosttyTerminalSession] {
+        sessions.removeAll { $0.value == nil }
+        return sessions.compactMap(\.value)
+    }
 }
 
 import UniformTypeIdentifiers
@@ -147,6 +191,9 @@ struct TerminalSurfaceView: View {
 /// Push Runway's themed config onto a session's surface. The surface may not
 /// exist on the first call, so retry once shortly after.
 @MainActor func applyRunwayTheme(to session: GhosttyTerminalSession) {
+    // Every session passes through here, so this is where they become reachable
+    // for a later font change.
+    RunwayTerminalSessions.register(session)
     guard let cfg = RunwayTerminalHost.themedConfig else { return }
     session.updateConfig(cfg)
     forceTerminalLayoutUpdate(for: session)
