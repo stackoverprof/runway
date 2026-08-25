@@ -20,6 +20,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
     @AppStorage(SettingsKey.terminalFontFamily) private var terminalFontFamily = TerminalFont.defaultFamily
     @AppStorage(SettingsKey.terminalFontSize) private var terminalFontSize = TerminalFont.defaultSize
+    @AppStorage(SettingsKey.quickTerminalDirectory) private var quickTerminalDirectory = ""
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
     @State private var issueOrderReset = false
@@ -163,6 +164,35 @@ struct GeneralSettings: View {
                 }
 
                 Text("Applies to every open terminal straight away. Your own Ghostty config is never modified.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Quick terminal") {
+                HStack(spacing: 8) {
+                    TextField(
+                        "Start in",
+                        text: $quickTerminalDirectory,
+                        prompt: Text("Last used directory")
+                    )
+                    Button("Choose\u{2026}") { chooseQuickDirectory() }
+                        .pointerCursor()
+                }
+
+                if let quickDirectoryWarning {
+                    Text(quickDirectoryWarning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                if !quickTerminalDirectory.isEmpty {
+                    Button("Restore Default", role: .destructive) {
+                        quickTerminalDirectory = ""
+                    }
+                    .pointerCursor()
+                }
+
+                Text("The quick terminal (\u{2318}\u{2325}Q) opens here every time its shell starts. Leave it empty to reopen wherever the last shell was left. A leading tilde is expanded.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -331,6 +361,32 @@ struct GeneralSettings: View {
     private var resolvedBrandTitle: String {
         let title = brandTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? "Activity" : title
+    }
+
+    // MARK: Quick terminal
+
+    /// Only warn about a path the user actually typed, and only when it is not
+    /// a folder here: the quick terminal silently falls back in that case.
+    private var quickDirectoryWarning: String? {
+        let trimmed = quickTerminalDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, QuickTerminalDirectory.resolved(trimmed) == nil else {
+            return nil
+        }
+        return "\(trimmed) is not a folder on this Mac, so the quick terminal opens in its last directory."
+    }
+
+    private func chooseQuickDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the folder the quick terminal starts in"
+        panel.prompt = "Choose Folder"
+        if let current = QuickTerminalDirectory.resolved(quickTerminalDirectory) {
+            panel.directoryURL = URL(fileURLWithPath: current)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        quickTerminalDirectory = url.path
     }
 
     private func chooseLogo() {

@@ -47,7 +47,6 @@ struct ContentView: View {
                 // Always mounted (so its shell keeps running); slides in/out with ⌘⌥Q.
                 QuickTerminal(
                     ws: context.workspace,
-                    feed: context.githubFeed,
                     width: left,
                     availableHeight: geo.size.height
                 )

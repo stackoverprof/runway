@@ -22,6 +22,7 @@ enum SettingsKey {
     static let focusBoardCollapsed = "runway.focusBoardCollapsed"
     static let terminalFontFamily = "runway.terminalFontFamily"
     static let terminalFontSize = "runway.terminalFontSize"
+    static let quickTerminalDirectory = "runway.quickTerminalDirectory"
 
     static var configuredAgentCommand: String {
         guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
@@ -51,6 +52,7 @@ enum SettingsKey {
             focusBoardCollapsed: false,
             terminalFontFamily: TerminalFont.defaultFamily,
             terminalFontSize: TerminalFont.defaultSize,
+            quickTerminalDirectory: "",
         ])
 
         // Older builds used `initialCommand` at runtime while exposing different

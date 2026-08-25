@@ -80,7 +80,8 @@ enum AgentControl {
         autorun: String? = nil,
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
-        issueAgentSessionsEnabled: Bool = false
+        issueAgentSessionsEnabled: Bool = false,
+        quickTerminalSession: Bool = false
     ) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
         let binPath = binDir.path
@@ -100,12 +101,20 @@ enum AgentControl {
         if let autorun, !autorun.isEmpty {
             env["RUNWAY_AUTORUN"] = scopedAutorun(autorun)
         }
-        for provider in IssueAgentProvider.allCases where issueAgentSessionsEnabled {
-            guard let sessionID = IssueAgentSession.id(
-                provider: provider,
-                repository: focusRepository,
-                issueNumber: focusIssueNumber
-            ) else { continue }
+        for provider in IssueAgentProvider.allCases {
+            // The quick terminal's conversation is not the opt-in Focus
+            // binding: keeping one session across relaunches is the panel's
+            // whole point, so it is always bound.
+            let sessionID: UUID? = quickTerminalSession
+                ? QuickTerminalSession.id(provider: provider)
+                : (issueAgentSessionsEnabled
+                    ? IssueAgentSession.id(
+                        provider: provider,
+                        repository: focusRepository,
+                        issueNumber: focusIssueNumber
+                    )
+                    : nil)
+            guard let sessionID else { continue }
             let prefix = "RUNWAY_\(provider.rawValue.uppercased())_SESSION"
             env["\(prefix)_ID"] = sessionID.uuidString.lowercased()
         }
@@ -114,7 +123,7 @@ enum AgentControl {
 
     /// Resolve supported configured agents directly through Runway's adapter.
     /// This avoids aliases and zsh's command hash bypassing the scoped PATH entry.
-    private static func scopedAutorun(_ command: String) -> String {
+    static func scopedAutorun(_ command: String) -> String {
         for provider in IssueAgentProvider.allCases {
             let name = provider.rawValue
             guard command == name || command.hasPrefix("\(name) ") else { continue }
@@ -476,7 +485,7 @@ enum AgentControl {
         - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
-        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its selected repository's own ids, rotated by its "new session" header button. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
 
         ---
 
@@ -636,10 +645,15 @@ enum AgentControl {
         # Managed by Runway. Loads your real zsh config and adds only Runway's
         # working-directory and autorun hooks. Your files are never modified.
         [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
-        case ":$PATH:" in
-          *":\(binDir.path):"*) ;;
-          *) export PATH="\(binDir.path):$PATH" ;;
-        esac
+        # The user's own config is sourced first and commonly prepends its own
+        # bin directories, which would shadow Runway's scoped wrappers. Move
+        # Runway's entry back to the front instead of merely ensuring it is
+        # present, so `claude` in a Runway terminal is always the wrapper.
+        runway_bin='\(binDir.path)'
+        path=("$runway_bin" "${(@)path:#${runway_bin}}")
+        export PATH
+        unset runway_bin
+        hash -r 2>/dev/null || true
         # Post a markdown card to the activity timeline.
         runway-post() {
           if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then

@@ -25,7 +25,7 @@ activity, and pull request progress in one focused workspace.
 
 ## Install in a minute
 
-1. Download **`Runway-2.2.0-arm64.dmg`** from
+1. Download **`Runway-2.2.1-arm64.dmg`** from
    [GitHub Releases](https://github.com/stackoverprof/runway/releases/latest).
 2. Open the DMG and drag **Runway.app** onto **Applications**.
 3. Launch Runway.
@@ -52,7 +52,7 @@ an authenticated session.
 | --- | --- | --- |
 | 🖥️ | **Persistent GPU terminals** | Run Claude Code, Codex, Gemini, custom agents, or a normal shell in fast libghostty-backed cards. |
 | 📡 | **Live GitHub activity** | See pushes, pull requests, reviews, issues, branch activity, and who has been active recently. |
-| ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q`. It lives in the selected repository and keeps a per-repo claude conversation across relaunches. |
+| ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q`. Its agent conversation is kept across app restarts until you ask for a new one. |
 | 🧭 | **Issue-driven Focus board** | Drag assigned GitHub issues into Focus to create matching terminals automatically. |
 | 🟢 | **Agent-aware status** | Cards can report `idle`, `running`, or `needs-action`, plus their current task and description. |
 | 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
@@ -113,11 +113,12 @@ repository's local clone as its starting directory. For example,
   reference copies the issue number when clicked. Renaming the GitHub issue
   updates its terminal header without restarting the running session.
 - **Focus mode** expands the active terminal to fill the pane.
-- **Quick terminal** stays alive behind its bottom-left overlay. It starts in
-  the selected repository's checkout and carries that repository's own
-  persistent claude conversation: switch repositories and it follows, switch
-  back and the previous conversation resumes. A header button starts a fresh
-  session for the current repository, permanently rotating its kept session id.
+- **Quick terminal** stays alive behind its bottom-left overlay, and keeps one
+  agent conversation: quit Runway, reopen it, and the quick agent resumes the
+  session it was in. The `+` button in its header is the only thing that starts
+  a new one. Settings → General → Quick terminal picks the folder its shell
+  starts in, `~/Developer` included; left empty, it reopens wherever the last
+  shell was.
 - Right-click any terminal header to copy its agent resume command
   (`claude --resume <id>`) or the bare session id, so the same conversation can
   be reopened in any other terminal.
