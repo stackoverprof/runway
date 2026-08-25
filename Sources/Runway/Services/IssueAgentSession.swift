@@ -51,35 +51,44 @@ enum DeterministicSessionID {
     }
 }
 
-/// The quick terminal's provider conversations: one per repository, rotated by a
-/// per-repository generation counter so "start a new session" changes the id
-/// permanently while old generations stay resumable by hand.
+/// The quick terminal's conversation identity. One conversation is kept until
+/// the user asks for a new one, so quitting and reopening Runway lands back in
+/// the same agent session. The stored root is random rather than derived from
+/// anything on screen: nothing but the "new session" button can change it.
 enum QuickTerminalSession {
-    private static let generationsKey = "runway.quickSessionGenerations.v1"
+    static let rootKey = "runway.quickSessionRoot.v1"
 
-    static func generation(for repository: String) -> Int {
-        let saved = UserDefaults.standard.dictionary(forKey: generationsKey)
-        return saved?[repository.lowercased()] as? Int ?? 0
+    /// Reads the stored root, minting and saving one on first use.
+    static func root(in defaults: UserDefaults = .standard) -> String {
+        if let saved = defaults.string(forKey: rootKey), !saved.isEmpty { return saved }
+        let fresh = UUID().uuidString.lowercased()
+        defaults.set(fresh, forKey: rootKey)
+        return fresh
     }
 
-    static func bumpGeneration(for repository: String) {
-        guard !repository.isEmpty else { return }
-        var saved = UserDefaults.standard.dictionary(forKey: generationsKey) ?? [:]
-        saved[repository.lowercased()] = generation(for: repository) + 1
-        UserDefaults.standard.set(saved, forKey: generationsKey)
+    /// Abandon the current conversation. The next shell binds a brand-new id,
+    /// and the previous one stays resumable by hand.
+    @discardableResult
+    static func rotate(in defaults: UserDefaults = .standard) -> String {
+        let fresh = UUID().uuidString.lowercased()
+        defaults.set(fresh, forKey: rootKey)
+        return fresh
+    }
+
+    /// Each provider gets its own conversation off the same root, so switching
+    /// the configured agent does not hand claude's id to gemini.
+    static func id(provider: IssueAgentProvider, root: String) -> UUID {
+        DeterministicSessionID.uuid(for: [
+            "runway-quick-session-v2",
+            provider.rawValue,
+            root,
+        ].joined(separator: ":"))
     }
 
     static func id(
         provider: IssueAgentProvider,
-        repository: String,
-        generation: Int? = nil
-    ) -> UUID? {
-        guard !repository.isEmpty else { return nil }
-        return DeterministicSessionID.uuid(for: [
-            "runway-quick-session-v1",
-            provider.rawValue,
-            repository.lowercased(),
-            String(generation ?? self.generation(for: repository)),
-        ].joined(separator: ":"))
+        in defaults: UserDefaults = .standard
+    ) -> UUID {
+        id(provider: provider, root: root(in: defaults))
     }
 }
