@@ -14,8 +14,9 @@ Each Runway terminal box exposes the following environment variables to its shel
 - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
 - `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
 - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
+- `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
 - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
-- `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
+- `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
 
 ---
 

@@ -75,6 +75,40 @@ enum FocusActivityLog {
         }
     }
 
+    /// Newest board movement per repository, keyed lowercased.
+    ///
+    /// Reads the log rather than keeping a counter, so the ranking it feeds
+    /// survives relaunches and reflects work done before this build. The
+    /// snapshot written when a repository is first observed is not movement, so
+    /// it is skipped: a repository the user never touched must not rank as if
+    /// they had.
+    static func latestMovementByRepository(in file: URL = FocusActivityLog.file) -> [String: Date] {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [:] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var latest: [String: Date] = [:]
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let row = try? decoder.decode(
+                MovementRow.self,
+                from: Data(line.utf8)
+            ) else { continue }
+            guard row.cause != "initial_snapshot" else { continue }
+            let key = row.repository.lowercased()
+            guard !key.isEmpty else { continue }
+            if let seen = latest[key], seen >= row.timestamp { continue }
+            latest[key] = row.timestamp
+        }
+        return latest
+    }
+
+    /// Only the fields the ranking needs, so a schema change elsewhere in the
+    /// event cannot stop the log from being read.
+    private struct MovementRow: Decodable {
+        let repository: String
+        let timestamp: Date
+        let cause: String?
+    }
+
     static func seedCurrentFocus(repository: String, issues: [AssignedIssue]) {
         var seeded = Set(
             UserDefaults.standard.stringArray(forKey: seededRepositoriesKey) ?? []

@@ -254,19 +254,25 @@ enum FeedRevealPolicy {
         repoListTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.repoListTask = nil }
-            let localRepositories = await Task.detached(priority: .utility) {
-                LocalRepositoryDirectory.discoverOnDevice()
+            let scan = await Task.detached(priority: .utility) {
+                (
+                    repositories: LocalRepositoryDirectory.discoverOnDevice(),
+                    focusMovement: FocusActivityLog.latestMovementByRepository()
+                )
             }.value
+            let localRepositories = scan.repositories
             let paths = Dictionary(uniqueKeysWithValues: localRepositories.map {
                 ($0.nameWithOwner, $0.path)
             })
             let repos = localRepositories.map(\.nameWithOwner)
-            // Whatever is already listed keeps its position: a rescan may only
-            // append clones that appeared and drop clones that vanished. The
-            // current-then-recent ranking therefore applies to the first build
-            // only, so the picker never reshuffles rows a user is reading.
-            let ordered = Self.uniqueRepositories(
-                self.availableRepos + [self.repo] + Self.recentRepositories + repos
+            // Ranked by Focus board movement, then by last selected. A rescan
+            // may re-rank because the picker freezes its list while it is open
+            // (holdRepositoryList), so rows can only move while nobody is
+            // reading them.
+            let ordered = RepositoryRanking.ranked(
+                Self.uniqueRepositories(repos + [self.repo] + self.availableRepos),
+                focusMovement: scan.focusMovement,
+                recents: Self.recentRepositories
             ).filter {
                 Self.path(for: $0, in: paths) != nil
             }

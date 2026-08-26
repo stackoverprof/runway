@@ -59,6 +59,11 @@ struct ContentView: View {
                     .frame(height: WindowChrome.zoomBandHeight)
             }
         }
+        // Agents waiting in a repository that is not on screen. Top-trailing:
+        // the window controls own the other corner.
+        .overlay(alignment: .topTrailing) {
+            AttentionBanners(ws: context.workspace)
+        }
         .background(WindowConfigurator())
         .background(WindowRegistrationView(context: context))
         .onAppear { context.startIfNeeded() }

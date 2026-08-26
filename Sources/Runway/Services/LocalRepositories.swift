@@ -6,8 +6,11 @@ struct LocalRepository: Equatable, Sendable {
 }
 
 enum LocalRepositoryDirectory {
+    /// Scan where the user pointed Runway, as deep as they allowed. Defaults to
+    /// the home directory at depth 6, which is what it always did.
     static func discoverOnDevice() -> [LocalRepository] {
-        discover(in: NSHomeDirectory(), maximumDepth: 6)
+        let search = SettingsKey.cloneSearch()
+        return discover(in: search.root, maximumDepth: search.depth)
     }
 
     static func discover(

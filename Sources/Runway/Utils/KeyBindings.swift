@@ -48,10 +48,12 @@ struct KeyChord: Codable, Equatable {
 /// when they are stacked, ← / → when they are side by side. Pressing ↑ to reach
 /// the terminal on your left is the awkwardness this removes.
 ///
-/// The other pair points at the quick terminal, which sits in the bottom-left
-/// corner: to its left in the vertical layout, below it in the horizontal one.
-/// While the quick terminal is closed there is nothing over there to reach, so
-/// that pair steps between agents too and neither arrow is ever dead.
+/// The quick terminal sits in the bottom-left corner of the window on either
+/// axis, so it is always reached leftward with ← and returned from with →. In
+/// the row layout it acts as the cell left of the first agent: ← crosses over
+/// only from that first agent and steps between agents everywhere else. While
+/// the quick terminal is closed there is nothing over there to reach, so ← and →
+/// step between agents too and neither arrow is ever dead.
 enum ArrowNavigation {
     enum Outcome: Equatable {
         case focusPrevious
@@ -68,24 +70,30 @@ enum ArrowNavigation {
     private static let down: UInt16 = 125
     private static let up: UInt16 = 126
 
-    /// The pair pointing across the agents: toward the quick terminal, and back.
-    /// It sits to their left when they are stacked, below them when they are in
-    /// a row.
-    private static func across(_ axis: TerminalLayoutAxis) -> (quickTerminal: UInt16, agents: UInt16) {
-        axis == .horizontal ? (down, up) : (left, right)
-    }
-
     static func outcome(
         keyCode: UInt16,
         shifted: Bool,
         axis: TerminalLayoutAxis,
-        quickTerminalVisible: Bool
+        quickTerminalVisible: Bool,
+        quickTerminalFocused: Bool = false,
+        focusedIsFirstAgent: Bool = false
     ) -> Outcome? {
         // Reordering never leaves the agents, so it keeps every arrow.
+        //
+        // The quick terminal is bottom-left of the window on either axis, so it
+        // is always reached leftward: ← and → and never ↑ / ↓, whichever way the
+        // agents are stacked. In the row layout it behaves as the cell left of
+        // the first agent, so ← only crosses over from that first agent and
+        // steps between agents anywhere else. In the stack the agents step with
+        // ↑ / ↓, leaving ← free to cross from any of them.
         if !shifted, quickTerminalVisible {
-            let across = across(axis)
-            if keyCode == across.quickTerminal { return .focusQuickTerminal }
-            if keyCode == across.agents { return .focusAgents }
+            if quickTerminalFocused {
+                if keyCode == right { return .focusAgents }
+                // Already at the leftmost cell: nothing further left to reach.
+                if keyCode == left { return .focusQuickTerminal }
+            } else if keyCode == left, axis == .vertical || focusedIsFirstAgent {
+                return .focusQuickTerminal
+            }
         }
 
         // Up and left run toward the first agent on either axis, down and right

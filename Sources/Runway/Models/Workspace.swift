@@ -28,6 +28,13 @@ enum FeedTab: String, CaseIterable, Codable {
 /// Which way the right pane stacks its terminals. Vertical is the classic
 /// accordion; horizontal lays the same weighted accordion side by side, which
 /// suits wide monitors where terminals want columns, not slivers.
+/// An agent needing attention in a repository the user is not looking at.
+struct AttentionAlert: Identifiable, Equatable {
+    let id: UUID            // the box, so a second alert replaces the first
+    let repository: String
+    let title: String
+}
+
 enum TerminalLayoutAxis: String, Codable {
     case vertical
     case horizontal
@@ -74,8 +81,9 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Pulls opens on the month in progress, whatever it was left on last time.
-    static let initial = PRTimeframe.monthToDate
+    /// Pulls opens on the timeframe chosen in Settings, whatever it was left on
+    /// last time. Month to date unless that was changed.
+    static var initial: PRTimeframe { SettingsKey.configuredPullsTimeframe() }
 
     func startDate(now: Date = Date(), calendar: Calendar = .current) -> Date {
         switch self {
@@ -108,7 +116,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     /// Solo / zoom: show only the focused box, filling the pane.
     var soloed = false
     /// Vertical stack (default) or side-by-side columns; ⌘⌥L flips it.
-    var terminalLayoutAxis: TerminalLayoutAxis = .vertical
+    var terminalLayoutAxis: TerminalLayoutAxis = SettingsKey.configuredLayoutAxis()
 
     /// Quick terminal: a persistent background terminal overlaid bottom-left,
     /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
@@ -173,6 +181,12 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     @ObservationIgnored private var dirWatcher: DispatchSourceFileSystemObject?
     @ObservationIgnored private var dirDescriptor: Int32 = -1
+    @ObservationIgnored private var pulseWatcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var pulseDescriptor: Int32 = -1
+
+    /// Agents needing attention in a repository that is not on screen. The
+    /// card itself is parked, so the only way to know is to be told.
+    var attentionAlerts: [AttentionAlert] = []
 
     init() {
         load()
@@ -220,7 +234,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         quickHeight = s.quickHeight
         quickPinned = s.quickPinned ?? false
         selectedTab = s.selectedTab ?? .feeds
-        terminalLayoutAxis = s.layoutAxis ?? .vertical
+        terminalLayoutAxis = s.layoutAxis ?? SettingsKey.configuredLayoutAxis()
         lastSaved = data
     }
 
@@ -340,18 +354,132 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
             source.resume()
         }
 
+        startStatePulseWatch()
+
+        // A clicked banner lands on the agent that raised it.
+        RunwayNotificationManager.shared.openAgent = { [weak self] box, repository in
+            self?.revealAgent(box, in: repository)
+        }
+
+        // Backstop only. The pulse file carries every state change, so this
+        // tick exists for anything that writes a control file without pulsing.
         Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 pollControlFiles()
                 saveIfNeeded()
+                AgentControl.trimStatePulse()
                 watchReady = true   // subsequent polls fire transition toasts
             }
         }
     }
 
+    /// Watch the one file every state writer appends a byte to.
+    ///
+    /// A control file is rewritten in place, which changes no directory entry,
+    /// so the directory watcher above never sees it and the state only surfaced
+    /// on the next poll. An append is a write to a file Runway can watch
+    /// directly, so the amber state now lands as soon as the agent stops.
+    private func startStatePulseWatch() {
+        AgentControl.ensureStatePulse()
+        pulseDescriptor = open(AgentControl.statePulse.path, O_EVTONLY)
+        guard pulseDescriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: pulseDescriptor,
+            eventMask: [.write, .extend, .delete, .rename],
+            queue: DispatchQueue.main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let events = source.data
+            self.pollControlFiles()
+            self.saveIfNeeded()
+            // The file was replaced under us: the fd now points at nothing, so
+            // re-open or every later pulse is missed.
+            if events.contains(.delete) || events.contains(.rename) {
+                self.restartStatePulseWatch()
+            }
+        }
+        source.setCancelHandler { [weak self] in
+            guard let fd = self?.pulseDescriptor, fd >= 0 else { return }
+            close(fd)
+        }
+        pulseWatcher = source
+        source.resume()
+    }
+
+    private func restartStatePulseWatch() {
+        pulseWatcher?.cancel()
+        pulseWatcher = nil
+        pulseDescriptor = -1
+        startStatePulseWatch()
+    }
+
     deinit {
         dirWatcher?.cancel()
+        pulseWatcher?.cancel()
+    }
+
+    /// A card in the selected repository is already visible and already pulses,
+    /// so only a parked one raises an in-app alert. Boxes with no repository of
+    /// their own belong to whatever is on screen.
+    private func noteAttentionIfOffScreen(id: UUID, repository: String?, title: String) {
+        guard let repository, !repository.isEmpty,
+              repository != GitHubFeed.shared.repo else { return }
+
+        attentionAlerts.removeAll { $0.id == id }
+        attentionAlerts.append(
+            AttentionAlert(id: id, repository: repository, title: title)
+        )
+        // Three is enough to read at a glance; older ones drop off.
+        if attentionAlerts.count > 3 {
+            attentionAlerts.removeFirst(attentionAlerts.count - 3)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            self.attentionAlerts.removeAll { $0.id == id }
+        }
+    }
+
+    func dismissAttention(_ alert: AttentionAlert) {
+        attentionAlerts.removeAll { $0.id == alert.id }
+    }
+
+    func openAttention(_ alert: AttentionAlert) {
+        dismissAttention(alert)
+        revealAgent(alert.id, in: alert.repository)
+    }
+
+    /// Jump to a waiting agent: switch to its repository if that is not the one
+    /// on screen, then focus its card once that repository's boxes are back in
+    /// the layout. Parked boxes from other repositories stay in memory, so focus
+    /// only lands immediately when the agent is already on screen.
+    func revealAgent(_ box: UUID, in repository: String?) {
+        attentionAlerts.removeAll { $0.id == box }
+        let switchingRepo = repository.map {
+            !$0.isEmpty && $0.lowercased() != GitHubFeed.shared.repo.lowercased()
+        } ?? false
+        if switchingRepo, let repository {
+            GitHubFeed.shared.setRepo(repository)
+            selectedTab = .runway
+        }
+        if activeBoxes.contains(where: { $0.id == box }) {
+            setFocus(box)
+            return
+        }
+        Task { @MainActor in
+            let target = repository?.lowercased()
+            for _ in 0..<30 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if let target, !target.isEmpty,
+                   self.activeFocusRepository?.lowercased() != target {
+                    continue
+                }
+                guard self.activeBoxes.contains(where: { $0.id == box }) else { continue }
+                self.setFocus(box)
+                return
+            }
+        }
     }
 
     private func pollControlFiles() {
@@ -384,6 +512,11 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
             if let state = json["state"] as? String {
                 let next = AgentState(control: state)
                 if watchReady, next == .needsAction, boxes[i].state != .needsAction {
+                    noteAttentionIfOffScreen(
+                        id: id,
+                        repository: boxes[i].focusRepository,
+                        title: boxes[i].name
+                    )
                     if NSApp.isActive {
                         // App is active: only play sound, no native banner (header will pulse in UI).
                         if UserDefaults.standard.bool(forKey: SettingsKey.soundEnabled) {
@@ -391,7 +524,12 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
                         }
                     } else {
                         // App is backgrounded: show native OS notification banner with sound.
-                        RunwayNotificationManager.shared.show("\(boxes[i].name) needs your attention", sound: true)
+                        RunwayNotificationManager.shared.show(
+                            "\(boxes[i].name) needs your attention",
+                            sound: true,
+                            box: id,
+                            repository: boxes[i].focusRepository
+                        )
                     }
                 }
                 boxes[i].state = next

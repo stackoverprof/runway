@@ -54,8 +54,8 @@ an authenticated session.
 | 📡 | **Live GitHub activity** | See pushes, pull requests, reviews, issues, branch activity, and who has been active recently. |
 | ⚡ | **Quick terminal** | Toggle a persistent overlay with `⌘⌥Q`. Its agent conversation is kept across app restarts until you ask for a new one. |
 | 🧭 | **Issue-driven Focus board** | Drag assigned GitHub issues into Focus to create matching terminals automatically. |
-| 🟢 | **Agent-aware status** | Cards can report `idle`, `running`, or `needs-action`, plus their current task and description. |
-| 🔔 | **Native notifications** | Get macOS alerts and configurable sounds when an agent needs attention. |
+| 🟢 | **Agent-aware status** | Cards report `running`, `needs-action`, or `idle` the moment the agent changes state, plus their current task and description. |
+| 🔔 | **Notifications that land** | macOS alerts, in-app alerts for agents waiting in another repository, and a click that focuses the agent that raised it. |
 | 💾 | **Local-first workspace cache** | Issues, Focus terminals, ordering, working directories, and pane position appear immediately after relaunch. |
 | 🎨 | **Custom branding** | Replace the Activity heading with your own text or a persistent SVG, PNG, JPEG, or other macOS-supported image. |
 | 📊 | **Pull request overview** | Compare open and merged pull requests by developer across practical timeframes. |
@@ -88,10 +88,13 @@ polling pauses while Runway is inactive.
   while keeping the Open and Closed issue backlog visible.
 - `⌘F` opens tab-specific search for issues, feed events, or pull requests.
 - Picking the tab you are already on returns it to the top of its list and
-  refetches it.
+  refetches it. On Feeds the tagline retypes itself so the refresh is visible
+  even when nothing new arrived.
 - Pulls opens on the month in progress; every launch starts on MTD.
 - The searchable repo switcher shows only GitHub repositories cloned on this
-  Mac. Opening it refreshes the local clone list.
+  Mac, ordered by the repositories whose Focus boards moved most recently, then
+  by the last one selected, then alphabetically. Opening it refreshes the local
+  clone list.
 - Pull to refresh, infinite history loading, and skeleton states keep the feed
   responsive.
 
@@ -116,7 +119,7 @@ repository's local clone as its starting directory. For example,
 - **Quick terminal** stays alive behind its bottom-left overlay, and keeps one
   agent conversation: quit Runway, reopen it, and the quick agent resumes the
   session it was in. The `+` button in its header is the only thing that starts
-  a new one. Settings → General → Quick terminal picks the folder its shell
+  a new one. Settings → Terminal → Quick terminal picks the folder its shell
   starts in, `~/Developer` included; left empty, it reopens wherever the last
   shell was.
 - Right-click any terminal header to copy its agent resume command
@@ -124,12 +127,12 @@ repository's local clone as its starting directory. For example,
   be reopened in any other terminal.
 - Switching repositories keeps each repository's Focus terminals and running
   agent sessions alive, then restores them when that repository is selected again.
-- **Experimental, opt-in conversation binding** gives each Focus issue a stable
-  provider conversation identity. Enable it in Settings to resume after a Runway
-  relaunch or after an issue leaves and returns to Focus. It is tested with Claude
-  only; other agents and models are untested. Removing an issue or quitting Runway
-  still stops its process.
-- **Terminal font** is set in Settings → General → Terminal: pick a family from
+- **Conversation binding** gives each Focus issue a stable agent conversation, so
+  a terminal resumes after a Runway relaunch or after the issue leaves and returns
+  to Focus. On by default, and switchable in Settings → Agents. Tested with Claude;
+  other agents are untested. Removing an issue or quitting Runway still stops its
+  process.
+- **Terminal font** is set in Settings → Terminal: pick a family from
   the coding faces installed on this Mac, type any other family by hand, and set
   the size. Changes reach every open terminal immediately, without restarting a
   single session. Your own `~/.config/ghostty` is never modified.
@@ -141,6 +144,13 @@ repository's local clone as its starting directory. For example,
   never into `~/Downloads`.
 - Agent commands can start as Claude, Codex, Agent, a custom command, or a
   plain shell.
+- **Attention is immediate.** A Claude agent reports `needs-action` the instant
+  it stops working and hands the turn back, and every state write appends a byte
+  to a pulse file Runway watches, so the amber dot lands at once instead of on
+  the next poll. `idle` now means the session itself ended.
+- An agent needing you in a repository that is not on screen raises an in-app
+  alert in the top-right corner. Clicking it switches to that repository and
+  focuses that agent; clicking a macOS banner does the same.
 
 ## Agent-native by design
 
@@ -190,7 +200,7 @@ directory. Runway does not edit your shell or agent configuration files.
 | --- | --- | --- |
 | Focus | `⌘⌥↑` / `⌘⌥↓`, or `⌘⌥←` / `⌘⌥→` in the horizontal layout | Move between agents |
 | Reorder | `⌘⌥⇧` with any arrow | Move the focused agent along the stack or row |
-| Quick terminal focus | `⌘⌥←` / `⌘⌥→`, or `⌘⌥↓` / `⌘⌥↑` in the horizontal layout | Jump to the open quick terminal and back |
+| Quick terminal focus | `⌘⌥←` / `⌘⌥→` | Jump to the open quick terminal and back. In the horizontal layout it is the cell left of the first agent, so `⌘⌥←` crosses over from that agent |
 | Jump | `⌘1` through `⌘9` | Focus a specific agent |
 | Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |

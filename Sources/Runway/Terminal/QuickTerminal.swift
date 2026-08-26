@@ -231,9 +231,13 @@ struct QuickTerminal: View {
                         shimmerOffset = -0.8
                     }
                     
-                    // Auto-hide after 3 seconds if not pinned, hovered, or focused
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    // Then hide on the configured schedule, unless it is
+                    // pinned, hovered, focused, or auto-hide is off.
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(SettingsKey.quickAutoHideDelay() * 1_000_000_000)
+                    )
                     guard !Task.isCancelled else { return }
+                    guard SettingsKey.quickAutoHideEnabled() else { return }
                     guard !isHovered else { return }
                     guard !isFocused else { return }
                     guard !ws.quickPinned else { return }
@@ -342,10 +346,12 @@ struct QuickTerminal: View {
 
     private func triggerAutoHide() {
         guard !ws.quickPinned else { return }
-        
+        guard SettingsKey.quickAutoHideEnabled() else { return }
+
         hideTask?.cancel()
+        let delay = SettingsKey.quickAutoHideDelay()
         hideTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s delay
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             guard !isHovered else { return }
             guard !isFocused else { return }

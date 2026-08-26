@@ -12,13 +12,17 @@ struct ArrowNavigationTests {
         _ keyCode: UInt16,
         shifted: Bool = false,
         axis: TerminalLayoutAxis,
-        quick: Bool = false
+        quick: Bool = false,
+        inQuick: Bool = false,
+        atFirstAgent: Bool = false
     ) -> ArrowNavigation.Outcome? {
         ArrowNavigation.outcome(
             keyCode: keyCode,
             shifted: shifted,
             axis: axis,
-            quickTerminalVisible: quick
+            quickTerminalVisible: quick,
+            quickTerminalFocused: inQuick,
+            focusedIsFirstAgent: atFirstAgent
         )
     }
 
@@ -34,7 +38,7 @@ struct ArrowNavigationTests {
         #expect(outcome(down, axis: .vertical) == .focusNext)
     }
 
-    @Test("The other pair still steps between agents when nothing is across the pane")
+    @Test("Every arrow steps between agents when the quick terminal is closed")
     func idleCrossPairAlsoNavigates() {
         #expect(outcome(left, axis: .vertical) == .focusPrevious)
         #expect(outcome(right, axis: .vertical) == .focusNext)
@@ -42,20 +46,43 @@ struct ArrowNavigationTests {
         #expect(outcome(down, axis: .horizontal) == .focusNext)
     }
 
-    @Test("An open quick terminal claims the pair that points at it")
-    func quickTerminalClaimsCrossPair() {
+    @Test("The quick terminal is always left, never up or down")
+    func quickTerminalIsReachedLeftward() {
+        // Stacked: the agents step with up and down, so left is free from any
+        // of them.
         #expect(outcome(left, axis: .vertical, quick: true) == .focusQuickTerminal)
-        #expect(outcome(right, axis: .vertical, quick: true) == .focusAgents)
-        #expect(outcome(down, axis: .horizontal, quick: true) == .focusQuickTerminal)
-        #expect(outcome(up, axis: .horizontal, quick: true) == .focusAgents)
+        // Side by side: the quick terminal is the cell left of the first agent,
+        // so only that agent crosses over.
+        #expect(
+            outcome(left, axis: .horizontal, quick: true, atFirstAgent: true)
+                == .focusQuickTerminal
+        )
+        // Vertical arrows never reach it on either axis.
+        #expect(outcome(down, axis: .horizontal, quick: true) == .focusNext)
+        #expect(outcome(up, axis: .horizontal, quick: true) == .focusPrevious)
+        #expect(outcome(down, axis: .vertical, quick: true) == .focusNext)
+        #expect(outcome(up, axis: .vertical, quick: true) == .focusPrevious)
     }
 
-    @Test("Stepping between agents survives an open quick terminal")
+    @Test("Right comes back out of the quick terminal, and left stays put")
+    func rightReturnsToTheAgents() {
+        for axis in [TerminalLayoutAxis.vertical, .horizontal] {
+            #expect(outcome(right, axis: axis, quick: true, inQuick: true) == .focusAgents)
+            #expect(
+                outcome(left, axis: axis, quick: true, inQuick: true)
+                    == .focusQuickTerminal
+            )
+        }
+    }
+
+    @Test("Stepping between side-by-side agents survives an open quick terminal")
     func quickTerminalLeavesNavigationAlone() {
+        // Anywhere but the first agent, left is still the previous agent.
         #expect(outcome(left, axis: .horizontal, quick: true) == .focusPrevious)
         #expect(outcome(right, axis: .horizontal, quick: true) == .focusNext)
         #expect(outcome(up, axis: .vertical, quick: true) == .focusPrevious)
-        #expect(outcome(down, axis: .vertical, quick: true) == .focusNext)
+        // Right only leaves the agents from inside the quick terminal.
+        #expect(outcome(right, axis: .vertical, quick: true) == .focusNext)
     }
 
     @Test("Shift reorders on every arrow, quick terminal or not")

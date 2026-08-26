@@ -173,8 +173,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Arrow navigation follows the layout: the agents run down the pane in
-        // the vertical stack and across it in the horizontal one, and the quick
-        // terminal sits to their left or below them accordingly. Bound chords
+        // the vertical stack and across it in the horizontal one, while the
+        // quick terminal is always ← away, as the cell left of the first agent.
+        // Bound chords
         // still win, except for the four navigation actions, which mean the same
         // thing here as they do below.
         let bound = KeyBindings.shared.action(for: ev)
@@ -184,7 +185,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                keyCode: ev.keyCode,
                shifted: mods.contains(.shift),
                axis: ws.terminalLayoutAxis,
-               quickTerminalVisible: ws.quickVisible
+               quickTerminalVisible: ws.quickVisible,
+               quickTerminalFocused: ws.quickHasKeyboard?() ?? false,
+               focusedIsFirstAgent: ws.activeBoxes.first?.id == ws.focusedID
            ) {
             switch outcome {
             case .focusPrevious:      ws.focus(offset: -1)

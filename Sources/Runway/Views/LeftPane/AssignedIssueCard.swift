@@ -5,6 +5,8 @@ struct AssignedIssueCard: View {
     let issue: AssignedIssue
     let repository: String
     var onClosedChange: ((Bool) -> Void)? = nil
+    var onRename: ((String) -> Void)? = nil
+    var onRemoveFromFocus: (() -> Void)? = nil
     @State private var hovering = false
 
     var body: some View {
@@ -87,10 +89,27 @@ struct AssignedIssueCard: View {
         .onHover { isHovering in
             hovering = isHovering
         }
-        .pointerCursor()
-        .onTapGesture {
-            NSWorkspace.shared.open(issue.url)
+        .contextMenu {
+            if onRename != nil {
+                Button("Rename issue…") { promptRename() }
+            }
+            Button("Copy issue link") { copyIssueLink() }
+            Button("Open link") { NSWorkspace.shared.open(issue.url) }
+            if let onRemoveFromFocus {
+                Divider()
+                Button("Remove from focus") { onRemoveFromFocus() }
+            }
         }
+    }
+
+    private func promptRename() {
+        guard let newTitle = IssueRenamePrompt.ask(currentTitle: issue.title) else { return }
+        onRename?(newTitle)
+    }
+
+    private func copyIssueLink() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(issue.url.absoluteString, forType: .string)
     }
 
     private var statusIcon: some View {
@@ -130,4 +149,25 @@ struct AssignedIssueCard: View {
         alpha: 1
     )
 
+}
+
+@MainActor
+enum IssueRenamePrompt {
+    static func ask(currentTitle: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Rename issue"
+        alert.informativeText = "Updates the title on GitHub."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = currentTitle
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != currentTitle else { return nil }
+        return trimmed
+    }
 }

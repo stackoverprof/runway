@@ -29,6 +29,30 @@ enum AgentControl {
     static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
     static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
     static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
+    /// One byte appended by anything that changes an agent's state. Runway
+    /// watches this single file, so a state write is noticed at once instead of
+    /// on the next poll: a control file rewritten in place changes no directory
+    /// entry, so the directory watcher never sees it.
+    static var statePulse: URL { supportDir.appendingPathComponent("state-pulse") }
+
+    /// Shell fragment every state writer ends with.
+    static let pulseCommand = #"[ -n "$RUNWAY_STATE_PULSE" ] && printf . >> "$RUNWAY_STATE_PULSE""#
+
+    static func ensureStatePulse() {
+        try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: statePulse.path) {
+            FileManager.default.createFile(atPath: statePulse.path, contents: nil)
+        }
+    }
+
+    /// Keep the pulse file from growing forever. One byte per state change, so
+    /// this trims after tens of thousands of them.
+    static func trimStatePulse(largerThan limit: Int = 64 * 1024) {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: statePulse.path)
+        let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        guard size > limit else { return }
+        try? Data().write(to: statePulse)
+    }
     static var binDir: URL { supportDir.appendingPathComponent("bin", isDirectory: true) }
     static var integrationDir: URL { supportDir.appendingPathComponent("integration", isDirectory: true) }
     static var integrationGuide: URL { integrationDir.appendingPathComponent("SKILL.md") }
@@ -43,8 +67,10 @@ enum AgentControl {
     }
 
     /// Dropped images are scratch: an agent reads one right after the drop and
-    /// never again. Keep a week so a path pasted yesterday still resolves.
-    static func pruneDrops(olderThan age: TimeInterval = 7 * 86_400) {
+    /// never again. The retention window is a setting, and can be turned off
+    /// entirely, in which case nothing is pruned.
+    static func pruneDrops(olderThan age: TimeInterval? = SettingsKey.dropRetention()) {
+        guard let age else { return }
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dropsDir,
             includingPropertiesForKeys: [.contentModificationDateKey]
@@ -93,6 +119,7 @@ enum AgentControl {
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
             "RUNWAY_SESSION_FILE": sessionFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
+            "RUNWAY_STATE_PULSE": statePulse.path,
             "ZDOTDIR": zdotdir.path,
             "RUNWAY_SKILL_PATH": integrationGuide.path,
             "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
@@ -154,6 +181,7 @@ enum AgentControl {
         try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: integrationDir, withIntermediateDirectories: true)
         FocusActivityLog.ensureFile()
+        ensureStatePulse()
         writeHooks()
         writeZshWrapper()
         writeIntegrationGuide()
@@ -323,9 +351,11 @@ enum AgentControl {
           exit 64
         fi
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
         "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
         exit $exit_code
         """
         try? agentScript.data(using: .utf8)?.write(to: agentPath)
@@ -378,6 +408,7 @@ enum AgentControl {
         "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
         exit $exit_code
         """
         try? claudeScript.data(using: .utf8)?.write(to: claudePath)
@@ -429,9 +460,11 @@ enum AgentControl {
           printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_SESSION_FILE"
         fi
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
         "$real" "${session_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
         exit $exit_code
         """
         try? geminiScript.data(using: .utf8)?.write(to: geminiPath)
@@ -445,21 +478,37 @@ enum AgentControl {
     }
 
     private static func writeHooks() {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: hookSettings,
+            options: [.prettyPrinted]
+        ) else { return }
+        try? data.write(to: hooksFile)
+    }
+
+    /// The claude settings Runway hands its wrapper. Separated from the write so
+    /// the state each hook reports can be asserted.
+    static var hookSettings: [String: Any] {
         func reporter(_ state: String) -> [String: Any] {
             return ["hooks": [[
                 "type": "command",
-                "command": "[ -n \"$RUNWAY_CONTROL\" ] && printf '{\"state\":\"\(state)\"}' > \"$RUNWAY_CONTROL\"",
+                "command": "[ -n \"$RUNWAY_CONTROL\" ] && printf '{\"state\":\"\(state)\"}' > \"$RUNWAY_CONTROL\"; \(pulseCommand); true",
             ]]]
         }
+        // Stop is the moment the agent stops working and hands the turn back,
+        // which is exactly when it needs the user: it reports needs-action, not
+        // idle. Waiting for Claude's own Notification hook is what made the
+        // amber state arrive a minute late, or not at all. Idle now means the
+        // session itself ended.
         let settings: [String: Any] = ["hooks": [
             "SessionStart": [reporter("running")],
             "UserPromptSubmit": [reporter("running")],
             "PreToolUse": [reporter("running")],
+            "PostToolUse": [reporter("running")],
             "Notification": [reporter("needs-action")],
-            "Stop": [reporter("idle")],
+            "Stop": [reporter("needs-action")],
+            "SessionEnd": [reporter("idle")],
         ]]
-        guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted]) else { return }
-        try? data.write(to: hooksFile)
+        return settings
     }
 
     private static func writeIntegrationGuide() {
@@ -482,10 +531,11 @@ enum AgentControl {
         - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
         - `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
         - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
+        - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
         - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
-        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them only when experimental Focus conversation binding is enabled in Settings; the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
 
         ---
 
@@ -504,6 +554,14 @@ enum AgentControl {
 
         # Set status back to idle (Grey dot)
         echo '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        ```
+
+        Runway notices a state write on its next poll, up to 1.5 seconds later.
+        To have the card update at once, append one byte to the pulse file after
+        writing state:
+        ```bash
+        echo '{"state":"needs-action"}' > "$RUNWAY_CONTROL"
+        printf . >> "$RUNWAY_STATE_PULSE"
         ```
 
         ### Updating Name or Description

@@ -2,7 +2,7 @@ import Foundation
 
 struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
     let number: Int
-    let title: String
+    var title: String
     var state: String
     var closedAt: Date?
     let createdAt: Date?
@@ -298,6 +298,26 @@ extension Notification.Name {
     }
 
     @discardableResult
+    func renameIssue(issueNumber: Int, newTitle: String) -> Bool {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let repository = loadedRepository,
+              let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }),
+              !trimmed.isEmpty,
+              issues[issueIndex].title != trimmed else { return false }
+
+        let previous = issues[issueIndex]
+        issues[issueIndex].title = trimmed
+        saveSnapshot(for: repository)
+        mutateGitHubTitle(
+            issueNumber: issueNumber,
+            title: trimmed,
+            repository: repository,
+            rollback: previous
+        )
+        return true
+    }
+
+    @discardableResult
     func setClosed(issueNumber: Int, closed: Bool) -> Bool {
         guard let repository = loadedRepository,
               let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }),
@@ -489,6 +509,33 @@ extension Notification.Name {
             nextOpen.insert(issueNumber, at: 0)
         }
         return (nextOpen, nextClosed)
+    }
+
+    private func mutateGitHubTitle(
+        issueNumber: Int,
+        title: String,
+        repository: String,
+        rollback: AssignedIssue
+    ) {
+        error = nil
+        Task { @MainActor [weak self] in
+            let result = await GH.run([
+                "issue",
+                "edit",
+                String(issueNumber),
+                "--repo",
+                repository,
+                "--title",
+                title,
+            ])
+            guard let self,
+                  loadedRepository == repository,
+                  result != nil else { return }
+            guard let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }) else { return }
+            issues[issueIndex] = rollback
+            saveSnapshot(for: repository)
+            error = "GitHub could not rename issue \(GitHubNumber.reference(issueNumber))."
+        }
     }
 
     private func mutateGitHubState(

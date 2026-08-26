@@ -59,6 +59,7 @@ struct LeftPane: View {
     @State private var lastEventCount = 0
     @State private var taglineTask: Task<Void, Never>?
     @State private var lastTaglineChange = Date.distantPast
+    @AppStorage(SettingsKey.taglineEnabled) private var taglineEnabled = true
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -432,6 +433,7 @@ struct LeftPane: View {
             }
         }
         .onChange(of: feed.events.count) { old, new in
+            guard taglineEnabled else { return }
             guard ws.selectedTab == .feeds, new > old, !isTyping else { return }
             // A returning-from-idle batch arrives as several inserts in a row.
             // Retyping the line for each one is pure churn on the main thread at
@@ -981,6 +983,17 @@ struct LeftPane: View {
                                     closed: closed
                                 )
                             }
+                        },
+                        onRename: { newTitle in
+                            if assignedIssues.renameIssue(
+                                issueNumber: issue.number,
+                                newTitle: newTitle
+                            ) {
+                                syncFocusBoard()
+                            }
+                        },
+                        onRemoveFromFocus: {
+                            assignedIssues.removeFromFocus(issueNumber: issue.number)
                         }
                     )
                     .background {
@@ -999,11 +1012,6 @@ struct LeftPane: View {
                     .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
                     .animation(nil, value: focusIssueDrag.issueNumber)
                     .simultaneousGesture(issueDragGesture(for: issue, lane: .focus))
-                    .contextMenu {
-                        Button("Remove from focus") {
-                            assignedIssues.removeFromFocus(issueNumber: issue.number)
-                        }
-                    }
                     .frame(
                         height: focusIssueDrag.shouldReleaseFocusSlot(for: issue.number)
                             ? 0
@@ -1497,6 +1505,14 @@ struct LeftPane: View {
                                     closed: closed
                                 )
                             }
+                        },
+                        onRename: { newTitle in
+                            if assignedIssues.renameIssue(
+                                issueNumber: issue.number,
+                                newTitle: newTitle
+                            ) {
+                                syncFocusBoard()
+                            }
                         }
                     )
                     .transition(.opacity)
@@ -1649,6 +1665,10 @@ struct LeftPane: View {
     private func resetActiveTab() {
         scrollAnchor(for: ws.selectedTab).scrollToTop()
         refreshSource(for: ws.selectedTab, minimumAge: 0)
+        // A refresh that turns up nothing new still has to look like one. The
+        // tagline retypes on the tap itself rather than on an event arriving,
+        // and skips the burst guard because the user asked for it by hand.
+        if ws.selectedTab == .feeds, taglineEnabled { rotateTagline() }
     }
 
     private func scrollAnchor(for tab: FeedTab) -> RunwayScrollAnchor {
