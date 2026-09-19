@@ -13,7 +13,7 @@ enum AgentSessionLocator {
         let sessionID: String
 
         /// The whole command, which is what gets pasted into another terminal.
-        var resumeCommand: String { "\(provider.rawValue) --resume \(sessionID)" }
+        var resumeCommand: String { provider.resumeCommand(sessionID: sessionID) }
     }
 
     // MARK: Recorded by the wrapper
@@ -105,6 +105,56 @@ enum AgentSessionLocator {
         )
     }
 
+    // MARK: Peer names
+
+    /// Claude Code registers every live session here as `<pid>.json`, carrying
+    /// the short peer name (`monorepo-77`) that `SendMessage` and `ListAgents`
+    /// address it by. Nothing else publishes that mapping, so this directory is
+    /// the only way to get from a transcript UUID to the name an agent answers to.
+    static var claudeSessionsDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/sessions", isDirectory: true)
+    }
+
+    /// One registry entry, yielding its name only when the entry really is for
+    /// `sessionID`. `updatedAt` comes back too so the caller can break ties.
+    static func peerName(
+        in contents: String,
+        matching sessionID: String
+    ) -> (name: String, updatedAt: Double)? {
+        guard let data = contents.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let recorded = json["sessionId"] as? String,
+              recorded.caseInsensitiveCompare(sessionID) == .orderedSame,
+              let name = (json["name"] as? String)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return nil }
+        return (name, (json["updatedAt"] as? Double) ?? 0)
+    }
+
+    /// The name this conversation answers to as a peer, if it is still running.
+    /// Only Claude writes the registry, and only for a live session, so a `nil`
+    /// here is the ordinary case for a finished or non-Claude terminal.
+    static func peerName(for sessionID: String) -> String? {
+        guard !sessionID.isEmpty,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: claudeSessionsDirectory,
+                  includingPropertiesForKeys: nil
+              ) else { return nil }
+        // A session killed outright leaves its `<pid>.json` behind, and a resume
+        // of the same conversation writes a second file under the new pid. Both
+        // carry the same id, so take the freshest rather than whichever the
+        // directory listing happened to return first.
+        return entries
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url in
+                (try? String(contentsOf: url, encoding: .utf8))
+                    .flatMap { peerName(in: $0, matching: sessionID) }
+            }
+            .max { $0.updatedAt < $1.updatedAt }?
+            .name
+    }
+
     // MARK: Resolution
 
     static func resolve(
@@ -115,6 +165,13 @@ enum AgentSessionLocator {
         issueSessionsEnabled: Bool
     ) -> Resolved? {
         if let recorded = recorded(for: boxID) { return recorded }
+        if issueSessionsEnabled,
+           let recorded = AgentControl.durableSession(
+               focusRepository: focusRepository,
+               focusIssueNumber: focusIssueNumber
+           ) {
+            return recorded
+        }
         if issueSessionsEnabled,
            let sessionID = IssueAgentSession.id(
                provider: .claude,

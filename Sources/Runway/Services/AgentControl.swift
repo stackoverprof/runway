@@ -27,6 +27,16 @@ enum AgentControl {
     static var feedInbox: URL { feedDir.appendingPathComponent("inbox.jsonl") }
     static var feedPostScript: URL { supportDir.appendingPathComponent("feed-post.py") }
     static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
+    static var issueCommandDir: URL {
+        let dir = supportDir.appendingPathComponent("issue-commands", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var issueResponseDir: URL {
+        let dir = supportDir.appendingPathComponent("issue-responses", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
     static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
     static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
     /// One byte appended by anything that changes an agent's state. Runway
@@ -56,6 +66,11 @@ enum AgentControl {
     static var binDir: URL { supportDir.appendingPathComponent("bin", isDirectory: true) }
     static var integrationDir: URL { supportDir.appendingPathComponent("integration", isDirectory: true) }
     static var integrationGuide: URL { integrationDir.appendingPathComponent("SKILL.md") }
+    static var providerSessionsDir: URL {
+        let dir = supportDir.appendingPathComponent("provider-sessions", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 
     /// Images Runway had to materialize from a drag that carried no file on disk.
     /// Runway's own folder, so dropping a screenshot on a terminal never leaves a
@@ -99,6 +114,60 @@ enum AgentControl {
         controlDir.appendingPathComponent("\(id.uuidString).session")
     }
 
+    /// A provider binding owned by the issue, not its temporary terminal card.
+    /// It intentionally survives card cleanup and app restarts.
+    static func issueProviderSessionFile(repository: String, issueNumber: Int) -> URL {
+        let id = DeterministicSessionID.uuid(for: [
+            "runway-issue-provider-binding-v1",
+            repository.lowercased(),
+            String(issueNumber),
+        ].joined(separator: ":"))
+        return providerSessionsDir.appendingPathComponent("\(id.uuidString.lowercased()).json")
+    }
+
+    static func quickProviderSessionFile(root: String = QuickTerminalSession.root()) -> URL {
+        let id = DeterministicSessionID.uuid(for: "runway-quick-provider-binding-v1:\(root)")
+        return providerSessionsDir.appendingPathComponent("\(id.uuidString.lowercased()).json")
+    }
+
+    static func durableSession(
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        quickTerminalSession: Bool = false
+    ) -> AgentSessionLocator.Resolved? {
+        let file: URL?
+        if quickTerminalSession {
+            file = quickProviderSessionFile()
+        } else if let focusRepository, let focusIssueNumber {
+            file = issueProviderSessionFile(
+                repository: focusRepository,
+                issueNumber: focusIssueNumber
+            )
+        } else {
+            file = nil
+        }
+        guard let file,
+              let contents = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        return AgentSessionLocator.recorded(in: contents)
+    }
+
+    static func preferredAgentCommand(
+        fallback: String,
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        quickTerminalSession: Bool = false
+    ) -> String {
+        guard let provider = durableSession(
+            focusRepository: focusRepository,
+            focusIssueNumber: focusIssueNumber,
+            quickTerminalSession: quickTerminalSession
+        )?.provider.rawValue else { return fallback }
+        if fallback == provider || fallback.hasPrefix("\(provider) ") {
+            return fallback
+        }
+        return provider
+    }
+
     /// Environment for a box's terminal: control paths, the portable guide, and
     /// Runway-scoped command helpers.
     static func environment(
@@ -117,6 +186,7 @@ enum AgentControl {
             "RUNWAY_CONTROL": file(for: id).path,
             "RUNWAY_FOCUS_LOG": FocusActivityLog.file.path,
             "RUNWAY_CWD_FILE": cwdFile(for: id).path,
+            "RUNWAY_ISSUE_COMMAND_DIR": issueCommandDir.path,
             "RUNWAY_SESSION_FILE": sessionFile(for: id).path,
             "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
             "RUNWAY_STATE_PULSE": statePulse.path,
@@ -125,6 +195,31 @@ enum AgentControl {
             "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
             "PATH": "\(binPath):\(systemPath)",
         ]
+        let durableFile: URL?
+        if quickTerminalSession {
+            durableFile = quickProviderSessionFile()
+        } else if issueAgentSessionsEnabled,
+                  let focusRepository,
+                  let focusIssueNumber {
+            durableFile = issueProviderSessionFile(
+                repository: focusRepository,
+                issueNumber: focusIssueNumber
+            )
+        } else {
+            durableFile = nil
+        }
+        if let durableFile {
+            env["RUNWAY_DURABLE_SESSION_FILE"] = durableFile.path
+        }
+        if let focusRepository, !focusRepository.isEmpty {
+            env["RUNWAY_REPOSITORY"] = focusRepository
+        }
+        let recorded = durableFile.flatMap { file -> AgentSessionLocator.Resolved? in
+            guard let contents = try? String(contentsOf: file, encoding: .utf8) else {
+                return nil
+            }
+            return AgentSessionLocator.recorded(in: contents)
+        }
         if let autorun, !autorun.isEmpty {
             env["RUNWAY_AUTORUN"] = scopedAutorun(autorun)
         }
@@ -132,18 +227,24 @@ enum AgentControl {
             // The quick terminal's conversation is not the opt-in Focus
             // binding: keeping one session across relaunches is the panel's
             // whole point, so it is always bound.
-            let sessionID: UUID? = quickTerminalSession
-                ? QuickTerminalSession.id(provider: provider)
-                : (issueAgentSessionsEnabled
-                    ? IssueAgentSession.id(
-                        provider: provider,
-                        repository: focusRepository,
-                        issueNumber: focusIssueNumber
-                    )
-                    : nil)
+            let sessionID: String?
+            if provider == .codex {
+                sessionID = recorded?.provider == .codex ? recorded?.sessionID : nil
+            } else {
+                let deterministicID: UUID? = quickTerminalSession
+                    ? QuickTerminalSession.id(provider: provider)
+                    : (issueAgentSessionsEnabled
+                        ? IssueAgentSession.id(
+                            provider: provider,
+                            repository: focusRepository,
+                            issueNumber: focusIssueNumber
+                        )
+                        : nil)
+                sessionID = deterministicID?.uuidString.lowercased()
+            }
             guard let sessionID else { continue }
             let prefix = "RUNWAY_\(provider.rawValue.uppercased())_SESSION"
-            env["\(prefix)_ID"] = sessionID.uuidString.lowercased()
+            env["\(prefix)_ID"] = sessionID
         }
         return env
     }
@@ -204,8 +305,10 @@ enum AgentControl {
         let unpinPath = binDir.appendingPathComponent("runway-unpin")
         let helpPath = binDir.appendingPathComponent("runway-help")
         let focusLogPath = binDir.appendingPathComponent("runway-focus-log")
+        let issuePath = binDir.appendingPathComponent("runway-issue")
         let agentPath = binDir.appendingPathComponent("runway-agent")
         let claudePath = binDir.appendingPathComponent("claude")
+        let codexPath = binDir.appendingPathComponent("codex")
         let geminiPath = binDir.appendingPathComponent("gemini")
 
         // 1. runway-post
@@ -343,6 +446,85 @@ enum AgentControl {
         try? focusLogScript.data(using: .utf8)?.write(to: focusLogPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: focusLogPath.path)
 
+        // 5. runway-issue: an agent-facing command channel for the Open, Focus,
+        // and Closed boards. The app consumes the request and writes a response
+        // file, so this works without accessibility automation or UI focus.
+        let issueScript = """
+        #!/usr/bin/env python3
+        import argparse, json, os, pathlib, sys, time, uuid
+
+        command_dir = pathlib.Path('\(issueCommandDir.path)')
+        response_dir = pathlib.Path('\(issueResponseDir.path)')
+
+        def main():
+            parser = argparse.ArgumentParser(prog='runway-issue')
+            parser.add_argument('--repo', default=os.environ.get('RUNWAY_REPOSITORY', ''))
+            sub = parser.add_subparsers(dest='action', required=True)
+
+            listing = sub.add_parser('list', help='list issues by board lane')
+            listing.add_argument('--lane', choices=['open', 'focus', 'closed'])
+            listing.add_argument('--repo', default=argparse.SUPPRESS)
+
+            for lane in ('open', 'focus', 'closed'):
+                move = sub.add_parser(lane, help=f'move an issue to {lane}')
+                move.add_argument('issue', type=int)
+                move.add_argument('--before', type=int)
+                move.add_argument('--repo', default=argparse.SUPPRESS)
+
+            move = sub.add_parser('move', help='move an issue to a board lane')
+            move.add_argument('issue', type=int)
+            move.add_argument('--to', choices=['open', 'focus', 'closed'], required=True)
+            move.add_argument('--before', type=int)
+            move.add_argument('--repo', default=argparse.SUPPRESS)
+
+            args = parser.parse_args()
+            command_id = str(uuid.uuid4())
+            action = args.action
+            destination = action if action in ('open', 'focus', 'closed') else getattr(args, 'to', None)
+            payload = {
+                'id': command_id,
+                'action': 'list' if action == 'list' else 'move',
+                'repository': args.repo,
+                'issueNumber': getattr(args, 'issue', None),
+                'destination': destination,
+                'beforeNumber': getattr(args, 'before', None),
+                'lane': getattr(args, 'lane', None),
+            }
+            command_dir.mkdir(parents=True, exist_ok=True)
+            response_dir.mkdir(parents=True, exist_ok=True)
+            request = command_dir / f'{command_id}.json'
+            response = response_dir / f'{command_id}.json'
+            request.write_text(json.dumps(payload), encoding='utf-8')
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                if response.exists():
+                    result = json.loads(response.read_text(encoding='utf-8'))
+                    try:
+                        response.unlink()
+                    except OSError:
+                        pass
+                    if not result.get('success'):
+                        print(result.get('error', 'Runway rejected the issue command.'), file=sys.stderr)
+                        return 1
+                    if action == 'list':
+                        lane = args.lane
+                        if lane:
+                            print(json.dumps(result.get(lane, []), indent=2, ensure_ascii=False))
+                        else:
+                            print(json.dumps({key: result.get(key, []) for key in ('open', 'focus', 'closed')}, indent=2, ensure_ascii=False))
+                    else:
+                        print(json.dumps(result, indent=2, ensure_ascii=False))
+                    return 0
+                time.sleep(0.1)
+            print('Runway did not respond. Is the app running with this terminal?', file=sys.stderr)
+            return 2
+
+        if __name__ == '__main__':
+            raise SystemExit(main())
+        """
+        try? issueScript.data(using: .utf8)?.write(to: issuePath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: issuePath.path)
+
         // 6. runway-agent: opt-in coarse status reporting for any command-line agent.
         let agentScript = """
         #!/bin/zsh
@@ -404,6 +586,7 @@ enum AgentControl {
         export RUNWAY_CLAUDE_SESSION_MODE="$session_mode"
         if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
           printf '{"provider":"claude","sessionId":"%s"}' "$RUNWAY_CLAUDE_SESSION_ID" > "$RUNWAY_SESSION_FILE"
+          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"claude","sessionId":"%s"}' "$RUNWAY_CLAUDE_SESSION_ID" > "$RUNWAY_DURABLE_SESSION_FILE"
         fi
         "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "$@"
         exit_code=$?
@@ -413,6 +596,86 @@ enum AgentControl {
         """
         try? claudeScript.data(using: .utf8)?.write(to: claudePath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudePath.path)
+
+        // Codex chooses its own session UUID. Capture it as soon as the TUI
+        // creates its transcript, then resume that exact UUID on future starts.
+        let codexScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/codex" ]; then real="$dir/codex"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'codex: command not found' >&2
+          exit 127
+        fi
+
+        write_session_record() {
+          local session_id="$1"
+          [ -z "$session_id" ] && return
+          [ -n "$RUNWAY_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_SESSION_FILE"
+          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_DURABLE_SESSION_FILE"
+        }
+
+        session_exists() {
+          [ -d "$HOME/.codex/sessions" ] || return 1
+          [ -n "$(/usr/bin/find "$HOME/.codex/sessions" -type f -name "*-$1.jsonl" -print -quit 2>/dev/null)" ]
+        }
+
+        monitor_pid=""
+        marker=""
+        capture_new_session() {
+          marker=$(/usr/bin/mktemp -t runway-codex-session)
+          (
+            local attempt candidate first_line session_id session_cwd originator
+            for attempt in {1..300}; do
+              while IFS= read -r -d '' candidate; do
+                first_line=$(/usr/bin/head -n 1 "$candidate" 2>/dev/null)
+                [ -z "$first_line" ] && continue
+                session_id=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.id raw -o - -- - 2>/dev/null)
+                session_cwd=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.cwd raw -o - -- - 2>/dev/null)
+                originator=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.originator raw -o - -- - 2>/dev/null)
+                if [ -n "$session_id" ] && [ "$session_cwd" = "$PWD" ] && [ "$originator" = "codex-tui" ]; then
+                  write_session_record "$session_id"
+                  return 0
+                fi
+              done < <(/usr/bin/find "$HOME/.codex/sessions" -type f -name '*.jsonl' -newer "$marker" -print0 2>/dev/null)
+              /bin/sleep 0.1
+            done
+          ) &
+          monitor_pid=$!
+        }
+
+        interactive=1
+        case "${1:-}" in
+          apply|app-server|cloud|completion|debug|exec|features|help|login|logout|mcp|mcp-server|review|sandbox|-h|--help|-V|--version)
+            interactive=0
+            ;;
+        esac
+
+        if [ "${1:-}" = "resume" ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+          write_session_record "$2"
+        elif [ "$interactive" -eq 1 ] && [ "${1:-}" != "resume" ] && [ -n "$RUNWAY_CODEX_SESSION_ID" ] && session_exists "$RUNWAY_CODEX_SESSION_ID"; then
+          write_session_record "$RUNWAY_CODEX_SESSION_ID"
+          set -- resume "$RUNWAY_CODEX_SESSION_ID" "$@"
+        elif [ "$interactive" -eq 1 ]; then
+          capture_new_session
+        fi
+
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        "$real" "$@"
+        exit_code=$?
+        [ -n "$monitor_pid" ] && /bin/kill "$monitor_pid" 2>/dev/null
+        [ -n "$marker" ] && /bin/rm -f "$marker"
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        exit $exit_code
+        """
+        try? codexScript.data(using: .utf8)?.write(to: codexPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexPath.path)
 
         // Gemini also supports caller-assigned session UUIDs. This wrapper uses
         // the same issue-owned identity while preserving explicit user flags.
@@ -458,6 +721,7 @@ enum AgentControl {
         export RUNWAY_GEMINI_SESSION_MODE="$session_mode"
         if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
           printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_SESSION_FILE"
+          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_DURABLE_SESSION_FILE"
         fi
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
         \(pulseCommand)
@@ -533,9 +797,10 @@ enum AgentControl {
         - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
         - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
         - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
+        - `RUNWAY_DURABLE_SESSION_FILE`: The issue-owned provider binding that survives terminal-card removal and app relaunches.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
-        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_CODEX_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal carries its own kept conversation, rotated only by the `+` button in its header. Runway's wrappers create or resume Claude and Gemini IDs, capture Codex's generated UUID, and remember the last provider used.
 
         ---
 
@@ -602,7 +867,25 @@ enum AgentControl {
         logging began. `cause: "github_rollback"` compensates for a move that
         GitHub rejected.
 
-        ## 3. Run Any Agent With Automatic Status
+        ## 3. Manage the Issue Boards
+
+        Runway exposes the board state through `runway-issue`. From a Runway terminal,
+        the repository is inferred from `RUNWAY_REPOSITORY`; outside one, pass `--repo`.
+
+        ```bash
+        runway-issue list
+        runway-issue list --lane focus
+        runway-issue focus 123
+        runway-issue open 123
+        runway-issue closed 123
+        runway-issue move 123 --to focus --before 456
+        ```
+
+        Moving between Open and Closed also updates GitHub. Moving into or out of Focus
+        updates Runway immediately and persists the order. The command waits for Runway
+        to acknowledge the request and returns JSON for agents to consume.
+
+        ## 4. Run Any Agent With Automatic Status
 
         Use `runway-agent` with any command-line coding agent to mark the card
         running until the command exits:

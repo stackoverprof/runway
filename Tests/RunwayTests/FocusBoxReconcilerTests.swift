@@ -80,6 +80,21 @@ struct FocusBoxReconcilerTests {
         #expect(result.removedBoxes.map(\.id) == [repositoryBBox.id])
     }
 
+    @Test("A returning issue launches its last-used provider")
+    func restoresIssueProvider() {
+        let result = FocusBoxReconciler.reconcile(
+            previousBoxes: [],
+            issues: [issue(number: 123, title: "Issue A")],
+            repository: "owner/repository",
+            workingDirectory: "/repos/repository",
+            command: "claude",
+            commandsByIssue: [123: "codex"],
+            retainUnmanagedBoxes: true
+        )
+
+        #expect(result.repositoryBoxes.first?.autorun == "codex")
+    }
+
     private func issue(number: Int, title: String) -> AssignedIssue {
         AssignedIssue(
             number: number,

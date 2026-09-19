@@ -133,12 +133,23 @@ struct ResizableBox: View {
 
     /// Right-clicking the header hands over this terminal's conversation, so the
     /// same agent session can be reopened in any other terminal.
+    ///
+    /// The agent name is the one to reach for when *messaging* the session rather
+    /// than resuming it: `SendMessage` and `ListAgents` address `monorepo-77`, not
+    /// the transcript UUID, and nothing else on screen exposes that mapping. It
+    /// only appears while the session is live, since that is the only time Claude
+    /// publishes the name.
     @ViewBuilder
     private var headerMenu: some View {
         if let session = resolvedSession() {
+            let peerName = AgentSessionLocator.peerName(for: session.sessionID)
+            if let peerName {
+                Button("Copy agent name") { copyToPasteboard(peerName) }
+            }
             Button("Copy resume command") { copyToPasteboard(session.resumeCommand) }
             Button("Copy session ID") { copyToPasteboard(session.sessionID) }
             Divider()
+            if let peerName { Text(verbatim: peerName) }
             Text(session.resumeCommand)
         } else {
             Button("No agent session to resume yet") {}

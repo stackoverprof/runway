@@ -206,10 +206,27 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         if let activeFocusRepository, let focusedID {
             focusedBoxByRepository[activeFocusRepository] = focusedID
         }
-        // Quitting kills the sessions, so reopen each restored agent into the
-        // configured command (e.g. claude) too, not just ⌘N-created ones.
+        // Quitting kills the processes, so reopen each restored card into the
+        // provider that most recently owned its issue conversation.
         let cmd = SettingsKey.configuredAgentCommand
-        if !cmd.isEmpty { for i in boxes.indices { boxes[i].autorun = cmd } }
+        let bindingEnabled = UserDefaults.standard.bool(
+            forKey: SettingsKey.issueAgentSessionsEnabled
+        )
+        for i in boxes.indices {
+            let restoredCommand: String
+            if bindingEnabled,
+               let repository = boxes[i].focusRepository,
+               let issueNumber = boxes[i].focusIssueNumber {
+                restoredCommand = AgentControl.preferredAgentCommand(
+                    fallback: cmd,
+                    focusRepository: repository,
+                    focusIssueNumber: issueNumber
+                )
+            } else {
+                restoredCommand = cmd
+            }
+            if !restoredCommand.isEmpty { boxes[i].autorun = restoredCommand }
+        }
     }
 
     // MARK: Persistence
@@ -661,12 +678,28 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         let previousFocusedIndex = previousRepositoryFocusID.flatMap { id in
             previousRepositoryBoxes.firstIndex { $0.id == id }
         } ?? 0
+        let bindingEnabled = UserDefaults.standard.bool(
+            forKey: SettingsKey.issueAgentSessionsEnabled
+        )
+        let commandsByIssue = bindingEnabled
+            ? Dictionary(uniqueKeysWithValues: issues.map { issue in
+                (
+                    issue.number,
+                    AgentControl.preferredAgentCommand(
+                        fallback: SettingsKey.configuredAgentCommand,
+                        focusRepository: repository,
+                        focusIssueNumber: issue.number
+                    )
+                )
+            })
+            : [:]
         let reconciliation = FocusBoxReconciler.reconcile(
             previousBoxes: previousBoxes,
             issues: issues,
             repository: repository,
             workingDirectory: GitHubFeed.shared.localPath(for: repository),
             command: SettingsKey.configuredAgentCommand,
+            commandsByIssue: commandsByIssue,
             retainUnmanagedBoxes: wasFocusControlled
         )
         let nextRepositoryBoxes = reconciliation.repositoryBoxes
@@ -718,6 +751,7 @@ enum FocusBoxReconciler {
         repository: String,
         workingDirectory: String?,
         command: String,
+        commandsByIssue: [Int: String] = [:],
         retainUnmanagedBoxes: Bool
     ) -> FocusBoxReconciliation {
         let previousRepositoryBoxes = previousBoxes.filter {
@@ -742,7 +776,8 @@ enum FocusBoxReconciler {
                     focusRepository: repository,
                     focusIssueNumber: issue.number
                 )
-                if !command.isEmpty { box.autorun = command }
+                let issueCommand = commandsByIssue[issue.number] ?? command
+                if !issueCommand.isEmpty { box.autorun = issueCommand }
                 repositoryBoxes.append(box)
                 usedIDs.insert(box.id)
             }

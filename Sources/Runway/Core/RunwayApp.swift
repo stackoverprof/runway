@@ -5,7 +5,6 @@ import GhosttyKit
 @main
 struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @Environment(\.openWindow) private var openWindow
 
     init() {
         SettingsKey.registerDefaults()
@@ -23,14 +22,6 @@ struct RunwayApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1100, height: 720)
         .commandsRemoved()
-        .commands {
-            CommandGroup(after: .newItem) {
-                Button("New Window") {
-                    openWindow(id: "main")
-                }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
-            }
-        }
 
         Settings { SettingsView() }
     }
@@ -42,6 +33,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scrollMonitor: Any?
     private var clickMonitor: Any?
     private var keyMonitor: Any?
+
+    /// Runway's palette is hand-picked near-black; every surface color is a
+    /// literal, not a semantic one. Left on the system appearance, flipping the
+    /// Mac to Light turned the few semantic bits (`.secondary` text, the
+    /// materials behind the quick terminal and the banners) into dark-on-dark
+    /// mush, and told libghostty the surface was light, so agent TUIs repainted
+    /// themselves in light-theme greys over our black background. Pin the whole
+    /// app to Dark once, before any window exists, and the design holds
+    /// whatever the Mac is set to.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)

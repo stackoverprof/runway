@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -15,6 +16,9 @@ enum RunwayTerminal {
     static let body = Color(red: 0x0E / 255, green: 0x10 / 255, blue: 0x12 / 255)
     /// Header bar background (#191B1C) — a touch lighter than the body.
     static let headerBar = Color(red: 0x19 / 255, green: 0x1B / 255, blue: 0x1C / 255)
+    /// `body` as an AppKit color, for the layers GhosttyKit paints itself.
+    static let bodyNSColor = NSColor(
+        srgbRed: 0x0E / 255, green: 0x10 / 255, blue: 0x12 / 255, alpha: 1)
 
     /// Path to Runway's private Ghostty theme file.
     static let themeFilePath: String = {

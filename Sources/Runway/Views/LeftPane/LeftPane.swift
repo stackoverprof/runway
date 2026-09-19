@@ -138,6 +138,9 @@ struct LeftPane: View {
             await assignedIssues.revalidate(repository: feed.repo)
             syncFocusBoard()
         }
+        .task(id: feed.repo) {
+            await assignedIssues.processIssueCommands(repository: feed.repo)
+        }
         // Observe the complete Focus records, not only membership. GitHub title
         // edits must refresh the issue-owned terminal header without replacing
         // its stable box and live shell session.
@@ -268,10 +271,7 @@ struct LeftPane: View {
     private var repoButton: some View {
         Button {
             showRepoPicker.toggle()
-            // No rescan here: the poll loop keeps the list current in the
-            // background, so opening the picker must not move its rows. Only a
-            // never-populated list is worth fetching on the spot.
-            if showRepoPicker { feed.fetchRepoList() }
+            if showRepoPicker { feed.fetchRepoList(force: true) }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "book.closed.fill")
@@ -299,8 +299,16 @@ struct LeftPane: View {
                 showRepoPicker = false
             }
         }
-        .onChange(of: showRepoPicker) { _, open in
-            feed.holdRepositoryList(open)
+        .task(id: showRepoPicker) {
+            guard showRepoPicker else { return }
+            while !Task.isCancelled {
+                feed.fetchRepoList(force: true)
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                } catch {
+                    return
+                }
+            }
         }
     }
 
@@ -702,8 +710,15 @@ struct LeftPane: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    prCount("Open", developer.openCount, color: Self.prGreen)
-                    prCount("Merged", developer.mergedCount, color: Self.prPurple)
+                    if developer.draftCount > 0 {
+                        prCount("Draft", developer.draftCount, color: Self.prOrange)
+                    }
+                    if developer.openCount > 0 {
+                        prCount("Open", developer.openCount, color: Self.prGreen)
+                    }
+                    if developer.mergedCount > 0 {
+                        prCount("Merged", developer.mergedCount, color: Self.prPurple)
+                    }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.30))
@@ -721,9 +736,19 @@ struct LeftPane: View {
                     .frame(height: 1)
                 VStack(alignment: .leading, spacing: 10) {
                     pullRequestSection(
+                        "DRAFT",
+                        developerLogin: developer.login,
+                        pullRequests: developer.pullRequests.filter {
+                            $0.isOpen && $0.isDraft
+                        },
+                        color: Self.prOrange
+                    )
+                    pullRequestSection(
                         "OPEN",
                         developerLogin: developer.login,
-                        pullRequests: developer.pullRequests.filter(\.isOpen),
+                        pullRequests: developer.pullRequests.filter {
+                            $0.isOpen && !$0.isDraft
+                        },
                         color: Self.prGreen
                     )
                     pullRequestSection(
@@ -752,6 +777,7 @@ struct LeftPane: View {
     }
 
     private static let prGreen = Color(red: 0.18, green: 0.78, blue: 0.38)
+    private static let prOrange = Color(red: 0.94, green: 0.62, blue: 0.20)
     private static let prPurple = Color(red: 0.64, green: 0.42, blue: 0.94)
     private static let prPageSize = 20
 
@@ -848,9 +874,11 @@ struct LeftPane: View {
                         .foregroundStyle(Color.white.opacity(0.70))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(pullRequestDurationText(pullRequest))
-                        .font(.system(size: 8.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.24))
+                    if let timeframe = pullRequestTimeframeText(pullRequest) {
+                        Text(timeframe)
+                            .font(.system(size: 8.5, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.24))
+                    }
                 }
                 HStack(spacing: 5) {
                     Text(pullRequest.headRefName)
@@ -872,9 +900,25 @@ struct LeftPane: View {
         .pointerCursor()
     }
 
-    private func pullRequestDurationText(_ pullRequest: RepositoryPullRequest) -> String {
-        let endDate = pullRequest.isMerged ? (pullRequest.mergedAt ?? pullRequest.closedAt ?? Date()) : Date()
-        return PullRequestDurationFormatter.string(endDate.timeIntervalSince(pullRequest.createdAt))
+    private func pullRequestTimeframeText(_ pullRequest: RepositoryPullRequest) -> String? {
+        if pullRequest.isMerged {
+            let mergedAt = pullRequest.mergedAt ?? pullRequest.closedAt ?? pullRequest.updatedAt
+            return "merged \(relativePullRequestDate(mergedAt))"
+        }
+        guard pullRequest.isOpen, !pullRequest.isDraft else { return nil }
+        return PullRequestDurationFormatter.string(Date().timeIntervalSince(pullRequest.createdAt))
+    }
+
+    private func relativePullRequestDate(_ date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes == 1 { return "a minute ago" }
+        if minutes < 60 { return "\(minutes) minutes ago" }
+        let hours = minutes / 60
+        if hours == 1 { return "an hour ago" }
+        if hours < 24 { return "\(hours) hours ago" }
+        return clock(date)
     }
 
     private var runwayTab: some View {
@@ -1484,8 +1528,14 @@ struct LeftPane: View {
         _ issues: [AssignedIssue],
         lane: AssignedIssueLane
     ) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
+        ZStack(alignment: .top) {
+            if issues.isEmpty, !focusIssueDrag.shouldAppendBacklogPlaceholder(in: lane) {
+                issueLaneEmptyState(lane)
+                    .transition(.opacity)
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
                 ForEach(issues) { issue in
                     if focusIssueDrag.shouldInsertBacklogPlaceholder(
                         before: issue.number,
@@ -1545,19 +1595,20 @@ struct LeftPane: View {
                     Color.clear
                         .frame(height: focusIssueDrag.visualSize.height)
                 }
+                }
+                .animation(.easeInOut(duration: 0.16), value: focusIssueDrag.backlogPreviewKey)
+                .animation(
+                    .easeInOut(duration: 0.16),
+                    value: focusIssueDrag.isCrossingIssueTabs
+                )
+                .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .scrollAnchor(issueScrollAnchor(for: lane))
             }
-            .animation(.easeInOut(duration: 0.16), value: focusIssueDrag.backlogPreviewKey)
-            .animation(
-                .easeInOut(duration: 0.16),
-                value: focusIssueDrag.isCrossingIssueTabs
-            )
-            .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .scrollAnchor(issueScrollAnchor(for: lane))
+            .contentMargins(.top, 0, for: .scrollContent)
+            .scrollIndicators(.hidden)
         }
-        .contentMargins(.top, 0, for: .scrollContent)
-        .scrollIndicators(.hidden)
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(
@@ -1566,6 +1617,37 @@ struct LeftPane: View {
                 )
             }
         }
+    }
+
+    private func issueLaneEmptyState(_ lane: AssignedIssueLane) -> some View {
+        let searching = issueSearchVisible
+            && !issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isOpen = lane == .open
+        let title = searching
+            ? "No matching \(isOpen ? "open" : "closed") issues"
+            : "No \(isOpen ? "open" : "closed") issues"
+        let detail = searching
+            ? "Try another search."
+            : isOpen
+                ? "Assigned issues that are open will appear here."
+                : "Issues you close will appear here."
+
+        return VStack(spacing: 8) {
+            Image(systemName: searching ? "magnifyingglass" : isOpen ? "circle.dashed" : "checkmark.circle")
+                .font(.system(size: 19, weight: .light))
+                .foregroundStyle(Color.white.opacity(0.28))
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.62))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.white.opacity(0.36))
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 44)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .allowsHitTesting(false)
     }
 
     private var runwayIssueTabIndex: Int {
@@ -1587,9 +1669,12 @@ struct LeftPane: View {
     private func filteredIssues(_ issues: [AssignedIssue]) -> [AssignedIssue] {
         let query = issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard issueSearchVisible, !query.isEmpty else { return issues }
-        return issues.filter { issue in
-            "\(GitHubNumber.reference(issue.number)) \(issue.title) \(issueRepositoryName)"
-                .localizedCaseInsensitiveContains(query)
+        return issues.filter {
+            AssignedIssue.matchesSearchQuery(
+                query,
+                issue: $0,
+                repositoryName: issueRepositoryName
+            )
         }
     }
 

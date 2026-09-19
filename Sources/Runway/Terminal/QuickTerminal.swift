@@ -12,9 +12,11 @@ struct QuickTerminal: View {
     @Bindable var ws: Workspace
     let width: CGFloat            // left-pane width
     let availableHeight: CGFloat  // full pane height
+    let resizePane: (CGFloat) -> Void
 
     @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
     @State private var dragStartHeight: CGFloat?
+    @State private var dragStartPaneWidth: CGFloat?
     @State private var isHovered = false
     @State private var hideTask: Task<Void, Never>? = nil
     @State private var allowExpandOnHover = true
@@ -29,9 +31,13 @@ struct QuickTerminal: View {
     /// env is what previously left the quick panel outside Runway's `claude`
     /// wrapper, so it never kept a session.
     static func startupConfig() -> TerminalConfig {
+        let command = AgentControl.preferredAgentCommand(
+            fallback: SettingsKey.configuredAgentCommand,
+            quickTerminalSession: true
+        )
         let env = AgentControl.environment(
             for: quickBoxID,
-            autorun: SettingsKey.configuredAgentCommand,
+            autorun: command,
             quickTerminalSession: true
         )
 
@@ -179,6 +185,16 @@ struct QuickTerminal: View {
         // Invisible drag strip on the top edge to resize when visible.
         .overlay(alignment: .top) {
             if ws.quickVisible { resizeHandle }
+        }
+        // Dragging the panel's right edge also moves the main split divider,
+        // keeping the Quick Terminal edge and pane edge directly connected.
+        .overlay(alignment: .trailing) {
+            if ws.quickVisible { resizePaneHandle }
+        }
+        // The top-right corner is the combined resize affordance: diagonal
+        // drags change the Quick Terminal height and the left/right split.
+        .overlay(alignment: .topTrailing) {
+            if ws.quickVisible { combinedResizeHandle }
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
@@ -341,6 +357,77 @@ struct QuickTerminal: View {
                     }
                     .onEnded { _ in dragStartHeight = nil }
             )
+    }
+
+    /// The panel fills the left pane, so resizing its trailing edge resizes
+    /// both together. ContentView applies the same pane min/max limits as the
+    /// main divider. Keep the header clear so its buttons remain clickable.
+    private var resizePaneHandle: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: 32)
+            Color.clear
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
+                }
+                .highPriorityGesture(
+                    DragGesture(coordinateSpace: .global)
+                        .onChanged { value in
+                            if dragStartPaneWidth == nil { dragStartPaneWidth = width }
+                            let base = dragStartPaneWidth ?? width
+                            resizePane(base + value.translation.width)
+                        }
+                        .onEnded { _ in dragStartPaneWidth = nil }
+                )
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(width: 14)
+    }
+
+    private var combinedResizeHandle: some View {
+        Color.clear
+        // Stay inside the clear corner beyond the header's 12pt content inset,
+        // so the resize hit target never covers the header buttons.
+        .frame(width: 12, height: 12)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                diagonalResizeCursor.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+        .highPriorityGesture(
+            DragGesture(coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartHeight == nil { dragStartHeight = height }
+                    if dragStartPaneWidth == nil { dragStartPaneWidth = width }
+
+                    let baseHeight = dragStartHeight ?? height
+                    let baseWidth = dragStartPaneWidth ?? width
+                    ws.quickHeight = min(
+                        max(baseHeight - value.translation.height, minHeight),
+                        maxHeight
+                    )
+                    resizePane(baseWidth + value.translation.width)
+                }
+                .onEnded { _ in
+                    dragStartHeight = nil
+                    dragStartPaneWidth = nil
+                }
+        )
+    }
+
+    private var diagonalResizeCursor: NSCursor {
+        if #available(macOS 15.0, *) {
+            return .frameResize(position: .topRight, directions: .all)
+        }
+        let image = NSImage(
+            systemSymbolName: "arrow.up.left.and.arrow.down.right",
+            accessibilityDescription: "Resize diagonally"
+        ) ?? NSImage(size: NSSize(width: 16, height: 16))
+        return NSCursor(image: image, hotSpot: NSPoint(x: 8, y: 8))
     }
 
 

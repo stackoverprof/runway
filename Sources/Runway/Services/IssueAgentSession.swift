@@ -1,9 +1,19 @@
 import CryptoKit
 import Foundation
 
-enum IssueAgentProvider: String, CaseIterable {
+enum IssueAgentProvider: String, CaseIterable, Codable {
     case claude
+    case codex
     case gemini
+
+    func resumeCommand(sessionID: String) -> String {
+        switch self {
+        case .codex:
+            return "codex resume \(sessionID)"
+        case .claude, .gemini:
+            return "\(rawValue) --resume \(sessionID)"
+        }
+    }
 }
 
 /// Permanent provider conversation identities derived from immutable issue

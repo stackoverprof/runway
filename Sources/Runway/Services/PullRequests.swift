@@ -35,6 +35,35 @@ struct RepositoryPullRequest: Codable, Identifiable, Sendable {
         if isOpen { return createdAt }
         return closedAt ?? updatedAt
     }
+
+    static func displaySort(
+        _ lhs: RepositoryPullRequest,
+        _ rhs: RepositoryPullRequest
+    ) -> Bool {
+        let lhsCategory = displayCategory(lhs)
+        let rhsCategory = displayCategory(rhs)
+        if lhsCategory != rhsCategory { return lhsCategory < rhsCategory }
+
+        let lhsDate = displaySortDate(lhs)
+        let rhsDate = displaySortDate(rhs)
+        if lhsDate != rhsDate { return lhsDate > rhsDate }
+        return lhs.number > rhs.number
+    }
+
+    private static func displayCategory(_ pullRequest: RepositoryPullRequest) -> Int {
+        if pullRequest.isOpen && pullRequest.isDraft { return 0 }
+        if pullRequest.isOpen && !pullRequest.isDraft { return 1 }
+        if pullRequest.isMerged { return 2 }
+        return 3
+    }
+
+    private static func displaySortDate(_ pullRequest: RepositoryPullRequest) -> Date {
+        if pullRequest.isOpen { return pullRequest.createdAt }
+        if pullRequest.isMerged {
+            return pullRequest.mergedAt ?? pullRequest.closedAt ?? pullRequest.updatedAt
+        }
+        return pullRequest.closedAt ?? pullRequest.updatedAt
+    }
 }
 
 enum PullRequestDurationFormatter {
@@ -66,9 +95,12 @@ struct PullRequestDeveloper: Identifiable {
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? login : trimmed
     }
-    var openCount: Int { pullRequests.filter(\.isOpen).count }
+    var openCount: Int { pullRequests.filter { $0.isOpen && !$0.isDraft }.count }
+    var draftCount: Int { pullRequests.filter { $0.isOpen && $0.isDraft }.count }
     var mergedCount: Int { pullRequests.filter(\.isMerged).count }
-    var closedCount: Int { pullRequests.count - openCount }
+    var closedCount: Int {
+        pullRequests.filter { !$0.isOpen && !$0.isMerged }.count
+    }
     var totalCount: Int { pullRequests.count }
     var avatarURL: String { "https://github.com/\(login).png?size=96" }
 }
@@ -122,7 +154,7 @@ struct PullRequestDeveloper: Identifiable {
                 return PullRequestDeveloper(
                     login: login,
                     name: profileName == login ? author?.name : profileName,
-                    pullRequests: pullRequests.sorted(by: Self.pullRequestSort)
+                    pullRequests: pullRequests.sorted(by: RepositoryPullRequest.displaySort)
                 )
             }
             .sorted { lhs, rhs in
@@ -209,7 +241,7 @@ struct PullRequestDeveloper: Identifiable {
                 return
             }
             if needsFullRefresh {
-                pullRequests = fetched.sorted(by: Self.pullRequestSort)
+                pullRequests = fetched.sorted(by: RepositoryPullRequest.displaySort)
             } else {
                 var merged = Dictionary(
                     uniqueKeysWithValues: pullRequests.map { ($0.number, $0) }
@@ -217,7 +249,7 @@ struct PullRequestDeveloper: Identifiable {
                 for pullRequest in fetched {
                     merged[pullRequest.number] = pullRequest
                 }
-                pullRequests = merged.values.sorted(by: Self.pullRequestSort)
+                pullRequests = merged.values.sorted(by: RepositoryPullRequest.displaySort)
             }
             developerCache.removeAll()
             Self.discoverPeople(in: pullRequests)
@@ -237,15 +269,6 @@ struct PullRequestDeveloper: Identifiable {
             loadTask = nil
             loadTaskRepository = nil
         }
-    }
-
-    private static func pullRequestSort(
-        _ lhs: RepositoryPullRequest,
-        _ rhs: RepositoryPullRequest
-    ) -> Bool {
-        if lhs.isOpen != rhs.isOpen { return lhs.isOpen }
-        if lhs.isMerged != rhs.isMerged { return lhs.isMerged }
-        return lhs.updatedAt > rhs.updatedAt
     }
 
     static func discoverCachedPeople() {

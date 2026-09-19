@@ -123,15 +123,16 @@ repository's local clone as its starting directory. For example,
   starts in, `~/Developer` included; left empty, it reopens wherever the last
   shell was.
 - Right-click any terminal header to copy its agent resume command
-  (`claude --resume <id>`) or the bare session id, so the same conversation can
+  (`claude --resume <id>` or `codex resume <id>`) or the bare session id, so the same conversation can
   be reopened in any other terminal.
 - Switching repositories keeps each repository's Focus terminals and running
   agent sessions alive, then restores them when that repository is selected again.
 - **Conversation binding** gives each Focus issue a stable agent conversation, so
   a terminal resumes after a Runway relaunch or after the issue leaves and returns
-  to Focus. On by default, and switchable in Settings → Agents. Tested with Claude;
-  other agents are untested. Removing an issue or quitting Runway still stops its
-  process.
+  to Focus. If you stop Claude and run Codex in the same terminal, Runway captures
+  Codex's exact session and makes Codex that issue's preferred provider until you
+  switch again. On by default, and switchable in Settings → Agents. Removing an
+  issue or quitting Runway still stops its process.
 - **Terminal font** is set in Settings → Terminal: pick a family from
   the coding faces installed on this Mac, type any other family by hand, and set
   the size. Changes reach every open terminal immediately, without restarting a
@@ -181,6 +182,16 @@ Every issue entering or leaving the Focus board is appended to the machine-reada
 JSONL journal at `$RUNWAY_FOCUS_LOG`. Agents can filter it by timestamp to reconstruct
 what was in Focus during a time range, then enrich that history with git or session data.
 `runway-focus-log` prints the journal from any Runway terminal.
+
+Agents can manage the issue boards through the same local API:
+
+```sh
+runway-issue list
+runway-issue focus 123
+runway-issue open 123
+runway-issue closed 123
+runway-issue move 123 --to focus --before 456
+```
 
 Wrap any command-line agent for automatic running and idle status:
 

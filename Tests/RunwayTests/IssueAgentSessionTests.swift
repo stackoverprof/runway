@@ -30,6 +30,11 @@ struct IssueAgentSessionTests {
         )
 
         #expect(original != IssueAgentSession.id(
+            provider: .codex,
+            repository: "VISKA-IO/monorepo",
+            issueNumber: 10388
+        ))
+        #expect(original != IssueAgentSession.id(
             provider: .gemini,
             repository: "VISKA-IO/monorepo",
             issueNumber: 10388
@@ -79,11 +84,14 @@ struct IssueAgentSessionTests {
     @Test("Supported autorun commands use the scoped provider adapter")
     func scopedProviderAutorun() {
         let claude = AgentControl.environment(for: UUID(), autorun: "claude --model opus")
+        let codex = AgentControl.environment(for: UUID(), autorun: "codex --model gpt-5")
         let gemini = AgentControl.environment(for: UUID(), autorun: "gemini --yolo")
         let custom = AgentControl.environment(for: UUID(), autorun: "my-agent --fast")
 
         #expect(claude["RUNWAY_AUTORUN"]?.contains("Application Support/Runway/bin/claude'") == true)
         #expect(claude["RUNWAY_AUTORUN"]?.hasSuffix(" --model opus") == true)
+        #expect(codex["RUNWAY_AUTORUN"]?.contains("Application Support/Runway/bin/codex'") == true)
+        #expect(codex["RUNWAY_AUTORUN"]?.hasSuffix(" --model gpt-5") == true)
         #expect(gemini["RUNWAY_AUTORUN"]?.contains("Application Support/Runway/bin/gemini'") == true)
         #expect(gemini["RUNWAY_AUTORUN"]?.hasSuffix(" --yolo") == true)
         #expect(custom["RUNWAY_AUTORUN"] == "my-agent --fast")
@@ -94,6 +102,7 @@ struct IssueAgentSessionTests {
         let environment = AgentControl.environment(for: UUID())
 
         #expect(environment["RUNWAY_CLAUDE_SESSION_ID"] == nil)
+        #expect(environment["RUNWAY_CODEX_SESSION_ID"] == nil)
         #expect(environment["RUNWAY_GEMINI_SESSION_ID"] == nil)
     }
 
@@ -106,6 +115,44 @@ struct IssueAgentSessionTests {
         )
 
         #expect(environment["RUNWAY_CLAUDE_SESSION_ID"] == nil)
+        #expect(environment["RUNWAY_CODEX_SESSION_ID"] == nil)
         #expect(environment["RUNWAY_GEMINI_SESSION_ID"] == nil)
+    }
+
+    @Test("A captured Codex session controls the next issue launch")
+    func durableCodexBinding() throws {
+        let repository = "test/\(UUID().uuidString)"
+        let issueNumber = 91827
+        let sessionID = UUID().uuidString.lowercased()
+        let file = AgentControl.issueProviderSessionFile(
+            repository: repository,
+            issueNumber: issueNumber
+        )
+        defer { try? FileManager.default.removeItem(at: file) }
+        try #"{"provider":"codex","sessionId":"\#(sessionID)"}"#.write(
+            to: file,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(AgentControl.preferredAgentCommand(
+            fallback: "claude",
+            focusRepository: repository,
+            focusIssueNumber: issueNumber
+        ) == "codex")
+        #expect(AgentControl.preferredAgentCommand(
+            fallback: "codex --model gpt-5",
+            focusRepository: repository,
+            focusIssueNumber: issueNumber
+        ) == "codex --model gpt-5")
+
+        let environment = AgentControl.environment(
+            for: UUID(),
+            focusRepository: repository,
+            focusIssueNumber: issueNumber,
+            issueAgentSessionsEnabled: true
+        )
+        #expect(environment["RUNWAY_CODEX_SESSION_ID"] == sessionID)
+        #expect(environment["RUNWAY_DURABLE_SESSION_FILE"] == file.path)
     }
 }

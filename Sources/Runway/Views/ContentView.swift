@@ -2,14 +2,18 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var context = RunwayWindowContext()
+    @State private var splitDragStartWidth: CGFloat?
     // Keeps the rotating activity label and all four tabs usable on one line.
     private let minLeft: CGFloat = 440
     private let minRight: CGFloat = 320
+    /// The divider stays one point wide, but the full gutter accepts the drag.
+    private let splitHitWidth: CGFloat = 20
+    private let splitLayoutWidth: CGFloat = 1
 
     var body: some View {
         GeometryReader { geo in
             let total = geo.size.width
-            let maxLeft = max(minLeft, total - minRight)
+            let maxLeft = max(minLeft, total - minRight - splitLayoutWidth)
             let left = min(max(context.workspace.leftWidth, minLeft), maxLeft)
 
             ZStack(alignment: .bottomLeading) {
@@ -18,25 +22,36 @@ struct ContentView: View {
                         .frame(width: left)
                         .zIndex(context.workspace.isFocusCardDragging ? 2 : 0)
 
-                    Rectangle()
-                        .fill(Color.white.opacity(0.07))
-                        .frame(width: 1)
-                        .overlay(
-                            Rectangle()
-                                .fill(.clear)
-                                .frame(width: 12)          // wider invisible hit target
-                                .contentShape(Rectangle())
-                                .onHover { hovering in
-                                    if hovering { NSCursor.resizeLeftRight.set() }
-                                    else { NSCursor.arrow.set() }
-                                }
-                                .gesture(
-                                    DragGesture(coordinateSpace: .named("split"))
-                                        .onChanged { value in
-                                            context.workspace.leftWidth = min(max(value.location.x, minLeft), maxLeft)
-                                        }
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.07))
+                            .frame(width: 1)
+                    }
+                    .frame(width: splitHitWidth)
+                    .contentShape(Rectangle())
+                    // Keep only the hairline in layout. The transparent part
+                    // overlaps both panes instead of becoming a visible gutter.
+                    .padding(
+                        .horizontal,
+                        -(splitHitWidth - splitLayoutWidth) / 2
+                    )
+                    .onHover { hovering in
+                        if hovering { NSCursor.resizeLeftRight.set() }
+                        else { NSCursor.arrow.set() }
+                    }
+                    .gesture(
+                        DragGesture(coordinateSpace: .named("split"))
+                            .onChanged { value in
+                                let start = splitDragStartWidth ?? left
+                                splitDragStartWidth = start
+                                context.workspace.leftWidth = min(
+                                    max(start + value.translation.width, minLeft),
+                                    maxLeft
                                 )
-                        )
+                            }
+                            .onEnded { _ in splitDragStartWidth = nil }
+                    )
+                    .zIndex(3)
 
                     RightPane(ws: context.workspace)    // right: scrollable boxes + add button
                         .frame(maxWidth: .infinity)
@@ -48,7 +63,13 @@ struct ContentView: View {
                 QuickTerminal(
                     ws: context.workspace,
                     width: left,
-                    availableHeight: geo.size.height
+                    availableHeight: geo.size.height,
+                    resizePane: { proposedWidth in
+                        context.workspace.leftWidth = min(
+                            max(proposedWidth, minLeft),
+                            maxLeft
+                        )
+                    }
                 )
             }
         }

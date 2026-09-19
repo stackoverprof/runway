@@ -101,7 +101,8 @@ struct TerminalSurfaceView: View {
         let launch = GhosttyTerminalLaunchConfiguration(
             command: config.command,
             workingDirectory: config.workingDirectory,
-            environment: config.environment
+            environment: config.environment,
+            colorScheme: .dark
         )
         if let host = RunwayTerminalHost.shared {
             _session = State(initialValue: host.makeSession(configuration: launch))
@@ -167,6 +168,11 @@ struct TerminalSurfaceView: View {
 /// Force libghostty to update its display ID, backing scale factor, and physical surface size.
 @MainActor func forceTerminalLayoutUpdate(for session: GhosttyTerminalSession) {
     guard let view = session.view else { return }
+    // GhosttyKit paints the host view's layer with its own fallback color, chosen
+    // from the appearance: Rosé Pine purple (#191724) or cream (#faf4ed). It sits
+    // under the Metal surface and shows through the padding, so overwrite it with
+    // Runway's body color and the terminal stays one flat near-black.
+    view.layer?.backgroundColor = RunwayTerminal.bodyNSColor.cgColor
     let scale = view.window?.backingScaleFactor ?? 1.0
     view.layer?.contentsScale = scale
     view.viewDidChangeBackingProperties()
@@ -182,7 +188,8 @@ struct TerminalSurfaceView: View {
     let launch = GhosttyTerminalLaunchConfiguration(
         command: config.command,
         workingDirectory: config.workingDirectory,
-        environment: config.environment
+        environment: config.environment,
+        colorScheme: .dark
     )
     if let host = RunwayTerminalHost.shared { return host.makeSession(configuration: launch) }
     return GhosttyTerminalSession(configuration: launch)

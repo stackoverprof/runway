@@ -8,6 +8,8 @@ struct AssignedIssueCard: View {
     var onRename: ((String) -> Void)? = nil
     var onRemoveFromFocus: (() -> Void)? = nil
     @State private var hovering = false
+    @State private var isRenaming = false
+    @State private var titleDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -57,11 +59,33 @@ struct AssignedIssueCard: View {
                     .lineLimit(1)
             }
 
-            Text(issue.title)
-                .font(.system(size: 13.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.94))
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
+            if isRenaming {
+                InlineField(
+                    text: $titleDraft,
+                    font: .systemFont(ofSize: 13.5, weight: .medium),
+                    color: NSColor.white.withAlphaComponent(0.94),
+                    placeholder: "Issue title",
+                    onEnd: { finishRename() },
+                    onCancel: { cancelRename() }
+                )
+                .frame(maxWidth: .infinity, minHeight: 19, alignment: .leading)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.055))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
+            } else {
+                Text(issue.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+            }
 
             if let closedAt = issue.closedAt {
                 Text("Closed: \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
@@ -91,7 +115,7 @@ struct AssignedIssueCard: View {
         }
         .contextMenu {
             if onRename != nil {
-                Button("Rename issue…") { promptRename() }
+                Button("Rename issue") { beginRename() }
             }
             Button("Copy issue link") { copyIssueLink() }
             Button("Open link") { NSWorkspace.shared.open(issue.url) }
@@ -102,9 +126,24 @@ struct AssignedIssueCard: View {
         }
     }
 
-    private func promptRename() {
-        guard let newTitle = IssueRenamePrompt.ask(currentTitle: issue.title) else { return }
-        onRename?(newTitle)
+    private func beginRename() {
+        titleDraft = issue.title
+        isRenaming = true
+    }
+
+    private func finishRename() {
+        guard isRenaming else { return }
+        let trimmed = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        isRenaming = false
+        titleDraft = trimmed
+        guard !trimmed.isEmpty, trimmed != issue.title else { return }
+        onRename?(trimmed)
+    }
+
+    private func cancelRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        titleDraft = issue.title
     }
 
     private func copyIssueLink() {
@@ -148,26 +187,4 @@ struct AssignedIssueCard: View {
         blue: 0.94,
         alpha: 1
     )
-
-}
-
-@MainActor
-enum IssueRenamePrompt {
-    static func ask(currentTitle: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = "Rename issue"
-        alert.informativeText = "Updates the title on GitHub."
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.stringValue = currentTitle
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != currentTitle else { return nil }
-        return trimmed
-    }
 }

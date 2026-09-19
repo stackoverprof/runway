@@ -16,7 +16,8 @@ Each Runway terminal box exposes the following environment variables to its shel
 - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
 - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
 - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
-- `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Stable provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal always carries its own kept conversation, rotated only by the `+` button in its header. Runway's scoped wrappers use them to create or resume the bound conversation. This is tested with Claude only; other agents and models are untested.
+- `RUNWAY_DURABLE_SESSION_FILE`: The issue-owned provider binding that survives terminal-card removal and app relaunches.
+- `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_CODEX_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal carries its own kept conversation, rotated only by the `+` button in its header. Runway's wrappers create or resume Claude and Gemini IDs, capture Codex's generated UUID, and remember the last provider used.
 
 ---
 
@@ -70,3 +71,21 @@ Events contain `timestamp`, `timeZone`, `action`, `repository`, `issueNumber`, `
 `issueState`, `fromLane`, `toLane`, and `cause`. Pair `entered_focus` and
 `exited_focus` by repository and issue number to reconstruct work sessions.
 `cause: "initial_snapshot"` marks a card that was already focused when logging began.
+
+## 3. Manage the Issue Boards
+
+Runway exposes the board state through `runway-issue`. From a Runway terminal,
+the repository is inferred from `RUNWAY_REPOSITORY`; outside one, pass `--repo`.
+
+```bash
+runway-issue list
+runway-issue list --lane focus
+runway-issue focus 123
+runway-issue open 123
+runway-issue closed 123
+runway-issue move 123 --to focus --before 456
+```
+
+Moving between Open and Closed also updates GitHub. Moving into or out of Focus
+updates Runway immediately and persists the order. The command waits for Runway
+to acknowledge the request and returns JSON for agents to consume.

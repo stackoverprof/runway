@@ -11,12 +11,42 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
 
     var id: Int { number }
     var isClosed: Bool { state == "CLOSED" }
+
+    static func matchesSearchQuery(
+        _ query: String,
+        issue: AssignedIssue,
+        repositoryName: String
+    ) -> Bool {
+        let searchableText = "\(GitHubNumber.reference(issue.number)) \(issue.title) \(repositoryName)"
+        let tokens = query.split { $0.isWhitespace }
+        return !tokens.isEmpty && tokens.allSatisfy {
+            searchableText.localizedCaseInsensitiveContains(String($0))
+        }
+    }
 }
 
 enum AssignedIssueLane: String, Codable, Hashable {
     case focus
     case open
     case closed
+}
+
+private struct IssueBoardCommand: Codable {
+    let id: String
+    let action: String
+    let repository: String
+    let issueNumber: Int?
+    let destination: AssignedIssueLane?
+    let beforeNumber: Int?
+    let lane: AssignedIssueLane?
+}
+
+private struct IssueBoardResponse: Codable {
+    let success: Bool
+    let error: String?
+    let open: [AssignedIssue]
+    let focus: [AssignedIssue]
+    let closed: [AssignedIssue]
 }
 
 extension Notification.Name {
@@ -38,6 +68,7 @@ extension Notification.Name {
     private var loadTask: Task<Void, Never>?
     private var loadTaskRepository: String?
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
+    @ObservationIgnored private var pendingRenameTitles: [String: [Int: String]] = [:]
     private static let focusedIssuesKey = "runway.focusedAssignedIssueNumbers.v2"
     private static let backlogOrderKey = "runway.assignedIssueBacklogOrder.v2"
     private static var snapshotFile: URL {
@@ -95,6 +126,95 @@ extension Notification.Name {
         await revalidate(repository: repository)
     }
 
+    /// Consumes commands written by `runway-issue` while this board is mounted.
+    /// The short poll keeps the command channel independent of terminal focus.
+    func processIssueCommands(repository: String) async {
+        while !Task.isCancelled {
+            processPendingIssueCommands(repository: repository)
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func processPendingIssueCommands(repository: String) {
+        let directory = AgentControl.issueCommandDir
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+
+        for file in files where file.pathExtension == "json" {
+            let processing = file.deletingPathExtension().appendingPathExtension("processing")
+            guard (try? FileManager.default.moveItem(at: file, to: processing)) != nil else {
+                continue
+            }
+            defer { try? FileManager.default.removeItem(at: processing) }
+            guard let data = try? Data(contentsOf: processing),
+                  let command = try? JSONDecoder().decode(IssueBoardCommand.self, from: data) else {
+                continue
+            }
+
+            let response: IssueBoardResponse
+            if !command.repository.isEmpty, command.repository != repository {
+                response = issueBoardResponse(
+                    success: false,
+                    error: "Runway is currently showing \(repository), not \(command.repository)."
+                )
+            } else if command.action == "list" {
+                response = issueBoardResponse(success: true, error: nil)
+            } else if command.action == "move",
+                      let issueNumber = command.issueNumber,
+                      let destination = command.destination,
+                      issues.contains(where: { $0.number == issueNumber }),
+                      let source = lane(of: issueNumber) {
+                let accepted = move(
+                    issueNumber: issueNumber,
+                    from: source,
+                    to: destination,
+                    before: command.beforeNumber
+                )
+                response = issueBoardResponse(
+                    success: accepted,
+                    error: accepted ? nil : "Runway could not move issue \(GitHubNumber.reference(issueNumber)). The Focus board may already contain five issues, or the issue may not be in the requested lane."
+                )
+            } else {
+                response = issueBoardResponse(
+                    success: false,
+                    error: "Invalid issue board command."
+                )
+            }
+            writeIssueBoardResponse(response, id: command.id)
+        }
+    }
+
+    private func lane(of issueNumber: Int) -> AssignedIssueLane? {
+        if focusedIssueNumbers.contains(issueNumber) { return .focus }
+        if openIssueNumbers.contains(issueNumber) { return .open }
+        if closedIssueNumbers.contains(issueNumber) { return .closed }
+        return nil
+    }
+
+    private func issueBoardResponse(success: Bool, error: String?) -> IssueBoardResponse {
+        IssueBoardResponse(
+            success: success,
+            error: error,
+            open: open,
+            focus: focused,
+            closed: closed
+        )
+    }
+
+    private func writeIssueBoardResponse(_ response: IssueBoardResponse, id: String) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(response) else { return }
+        let responseFile = AgentControl.issueResponseDir.appendingPathComponent("\(id).json")
+        try? data.write(to: responseFile, options: .atomic)
+    }
+
     func revalidate(repository: String, minimumAge: TimeInterval = 0) async {
         restore(repository: repository)
         guard !repository.isEmpty, loadedRepository == repository else { return }
@@ -141,10 +261,21 @@ extension Notification.Name {
             }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            guard let fetched = try? decoder.decode([AssignedIssue].self, from: data) else {
+            guard let decoded = try? decoder.decode([AssignedIssue].self, from: data) else {
                 error = "Runway could not read the assigned issues returned by GitHub."
                 loading = false
                 return
+            }
+            let reconciledRenames = Self.preservingOptimisticTitles(
+                in: decoded,
+                pending: pendingRenameTitles[repository] ?? [:]
+            )
+            let fetched = reconciledRenames.issues
+            for issueNumber in reconciledRenames.confirmed {
+                pendingRenameTitles[repository]?[issueNumber] = nil
+            }
+            if pendingRenameTitles[repository]?.isEmpty == true {
+                pendingRenameTitles[repository] = nil
             }
             let previousNumbers = Set(previousSnapshot?.issues.map(\.number) ?? [])
             let orderingCutoff = previousSnapshot?.orderedThrough
@@ -307,6 +438,7 @@ extension Notification.Name {
 
         let previous = issues[issueIndex]
         issues[issueIndex].title = trimmed
+        pendingRenameTitles[repository, default: [:]][issueNumber] = trimmed
         saveSnapshot(for: repository)
         mutateGitHubTitle(
             issueNumber: issueNumber,
@@ -315,6 +447,26 @@ extension Notification.Name {
             rollback: previous
         )
         return true
+    }
+
+    /// A cached issue-list response can briefly trail a successful edit. Keep
+    /// the optimistic title until GitHub itself returns it, then retire the pin.
+    static func preservingOptimisticTitles(
+        in fetched: [AssignedIssue],
+        pending: [Int: String]
+    ) -> (issues: [AssignedIssue], confirmed: Set<Int>) {
+        var confirmed = Set<Int>()
+        let issues = fetched.map { issue -> AssignedIssue in
+            guard let optimisticTitle = pending[issue.number] else { return issue }
+            if issue.title == optimisticTitle {
+                confirmed.insert(issue.number)
+                return issue
+            }
+            var preserved = issue
+            preserved.title = optimisticTitle
+            return preserved
+        }
+        return (issues, confirmed)
     }
 
     @discardableResult
@@ -528,9 +680,13 @@ extension Notification.Name {
                 "--title",
                 title,
             ])
-            guard let self,
-                  loadedRepository == repository,
-                  result != nil else { return }
+            guard let self, loadedRepository == repository else { return }
+            guard result == nil else { return }
+            guard pendingRenameTitles[repository]?[issueNumber] == title else { return }
+            pendingRenameTitles[repository]?[issueNumber] = nil
+            if pendingRenameTitles[repository]?.isEmpty == true {
+                pendingRenameTitles[repository] = nil
+            }
             guard let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }) else { return }
             issues[issueIndex] = rollback
             saveSnapshot(for: repository)

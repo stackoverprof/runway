@@ -12,6 +12,7 @@ struct InlineField: NSViewRepresentable {
     var placeholder: String = ""
     var maxLength: Int? = nil
     var onEnd: () -> Void = {}
+    var onCancel: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> CaretEndTextField {
         let field = CaretEndTextField()
@@ -44,6 +45,7 @@ struct InlineField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: InlineField
+        private var cancelling = false
         init(_ parent: InlineField) { self.parent = parent }
 
         func controlTextDidChange(_ note: Notification) {
@@ -57,13 +59,22 @@ struct InlineField: NSViewRepresentable {
         }
 
         func controlTextDidEndEditing(_ note: Notification) {
+            if cancelling {
+                cancelling = false
+                return
+            }
             parent.onEnd()
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            if selector == #selector(NSResponder.insertNewline(_:))
-                || selector == #selector(NSResponder.cancelOperation(_:)) {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
                 control.window?.makeFirstResponder(nil)   // commit + blur
+                return true
+            }
+            if selector == #selector(NSResponder.cancelOperation(_:)), let onCancel = parent.onCancel {
+                cancelling = true
+                control.window?.makeFirstResponder(nil)
+                onCancel()
                 return true
             }
             return false

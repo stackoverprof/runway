@@ -71,6 +71,9 @@ struct RepoPicker: View {
             highlighted = filtered.firstIndex(of: current) ?? 0
         }
         .onChange(of: query) { _, _ in highlighted = 0 }
+        .onChange(of: repos) { _, _ in
+            highlighted = min(highlighted, max(filtered.count - 1, 0))
+        }
     }
 
     private func move(_ delta: Int) {
