@@ -20,6 +20,9 @@ enum SettingsKey {
     static let brandTitle = "runway.brandTitle"
     static let brandLogoFilename = "runway.brandLogoFilename"
     static let focusBoardCollapsed = "runway.focusBoardCollapsed"
+    static let focusVisibleCount = "runway.focusVisibleCount"
+    /// Most issues Focus holds. Zero means unlimited.
+    static let focusLimit = "runway.focusLimit"
     static let terminalFontFamily = "runway.terminalFontFamily"
     static let terminalFontSize = "runway.terminalFontSize"
     static let quickTerminalDirectory = "runway.quickTerminalDirectory"
@@ -87,6 +90,23 @@ enum SettingsKey {
         return TimeInterval(min(days, 365)) * 86_400
     }
 
+    /// How many Focus cards, and so terminals, the window shows at once.
+    static func configuredFocusVisibleCount(in defaults: UserDefaults = .standard) -> Int {
+        guard defaults.object(forKey: focusVisibleCount) != nil else {
+            return FocusReel.defaultVisibleCount
+        }
+        let range = FocusReel.visibleCountRange
+        return min(max(defaults.integer(forKey: focusVisibleCount), range.lowerBound), range.upperBound)
+    }
+
+    /// The most issues Focus takes, or nil for unlimited.
+    static func configuredFocusLimit(in defaults: UserDefaults = .standard) -> Int? {
+        guard defaults.object(forKey: focusLimit) != nil else { return FocusReel.defaultLimit }
+        let saved = defaults.integer(forKey: focusLimit)
+        guard saved > 0 else { return nil }
+        return min(saved, FocusReel.limitRange.upperBound)
+    }
+
     static func registerDefaults() {
         let defaults = UserDefaults.standard
         let legacyCommand = (defaults.string(forKey: initialCommand) ?? "")
@@ -107,6 +127,8 @@ enum SettingsKey {
             brandTitle: "Activity",
             brandLogoFilename: "",
             focusBoardCollapsed: false,
+            focusVisibleCount: FocusReel.defaultVisibleCount,
+            focusLimit: FocusReel.defaultLimit,
             terminalFontFamily: TerminalFont.defaultFamily,
             terminalFontSize: TerminalFont.defaultSize,
             quickTerminalDirectory: "",

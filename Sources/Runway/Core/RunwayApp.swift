@@ -277,7 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                axis: ws.terminalLayoutAxis,
                quickTerminalVisible: ws.quickVisible,
                quickTerminalFocused: ws.quickHasKeyboard?() ?? false,
-               focusedIsFirstAgent: ws.activeBoxes.first?.id == ws.focusedID
+               focusedIsFirstAgent: ws.focusedIsFirstAgent
            ) {
             switch outcome {
             case .focusPrevious:      ws.focus(offset: -1)

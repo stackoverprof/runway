@@ -86,6 +86,12 @@ polling pauses while Runway is inactive.
   refresh when the window becomes active, so no tab lags the others.
 - Click **On today's missions** to smoothly collapse or expand the Focus board
   while keeping the Open and Closed issue backlog visible.
+- Focus is one ordered list seen through a window of 4 cards. `▲ n` and
+  `▼ n` show how many cards sit outside it; click them, or scroll over the
+  list, to slide the window one card at a time. Dragging a card onto them
+  slides it too, so the card can land in a hidden spot. Cards outside the
+  window keep their terminals running. The window size and the most issues
+  Focus holds (10 by default, or unlimited) live in Settings → Agents.
 - `⌘F` opens tab-specific search for issues, feed events, or pull requests.
 - Picking the tab you are already on returns it to the top of its list and
   refetches it. On Feeds the tagline retypes itself so the refresh is visible
@@ -209,10 +215,10 @@ directory. Runway does not edit your shell or agent configuration files.
 
 | Move | Shortcut | Action |
 | --- | --- | --- |
-| Focus | `⌘⌥↑` / `⌘⌥↓`, or `⌘⌥←` / `⌘⌥→` in the horizontal layout | Move between agents |
+| Focus | `⌘⌥↑` / `⌘⌥↓`, or `⌘⌥←` / `⌘⌥→` in the horizontal layout | Move between agents, sliding the Focus window past its edge |
 | Reorder | `⌘⌥⇧` with any arrow | Move the focused agent along the stack or row |
 | Quick terminal focus | `⌘⌥←` / `⌘⌥→` | Jump to the open quick terminal and back. In the horizontal layout it is the cell left of the first agent, so `⌘⌥←` crosses over from that agent |
-| Jump | `⌘1` through `⌘9` | Focus a specific agent |
+| Jump | `⌘1` through `⌘9` | Focus the Nth Focus card, sliding the window to it |
 | Focus mode | `⌘⌥⏎` | Expand or restore the active terminal |
 | Quick terminal | `⌘⌥Q` | Show or hide the quick terminal |
 | Close window | `⌘⇧W` | Close the current window |

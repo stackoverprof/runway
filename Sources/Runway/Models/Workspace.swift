@@ -130,7 +130,9 @@ struct QuickTerminalTabRequest: Equatable {
     /// Repository currently projected into the right pane. Boxes belonging to
     /// other repositories remain mounted so their terminal sessions keep running.
     var activeFocusRepository: String?
-    var activeFocusBoardIndex = 0
+    /// The active repository's whole Focus list, in order, and the part of it
+    /// inside the window. Only the window's terminals are on screen.
+    var activeFocusOrder: [Int] = []
     var activeFocusIssueNumbers: Set<Int> = []
     var focusIssueRevealRequest: FocusIssueRevealRequest?
     /// The box the user last focused (click or keyboard). Drives the focus glow,
@@ -225,12 +227,9 @@ struct QuickTerminalTabRequest: Equatable {
             ? boxes.first?.focusRepository
             : GitHubFeed.shared.repo
         if let activeFocusRepository {
-            activeFocusBoardIndex = AssignedIssues.savedSelectedFocusBoardIndex(
-                for: activeFocusRepository
-            )
-            activeFocusIssueNumbers = Set(AssignedIssues.savedSelectedFocusIssues(
-                for: activeFocusRepository
-            ))
+            let reel = AssignedIssues.savedFocusReel(for: activeFocusRepository)
+            activeFocusOrder = reel.issues
+            activeFocusIssueNumbers = Set(reel.visible)
         }
         if boxes.contains(where: { $0.focusRepository != nil }) {
             focusBoardControlsBoxes = true
@@ -239,7 +238,7 @@ struct QuickTerminalTabRequest: Equatable {
         // where the keyboard actually lands (the terminal that auto-focuses).
         focusedID = activeBoxes.first?.id
         if let activeFocusRepository, let focusedID {
-            focusedBoxByRepository["\(activeFocusRepository)#\(activeFocusBoardIndex)"] = focusedID
+            focusedBoxByRepository[activeFocusRepository] = focusedID
         }
         // Quitting kills the processes, so reopen each restored card into the
         // provider that most recently owned its issue conversation.
@@ -501,10 +500,9 @@ struct QuickTerminalTabRequest: Equatable {
     private func noteAttentionIfOffScreen(id: UUID, repository: String?, title: String) {
         guard let repository, !repository.isEmpty,
               !activeBoxes.contains(where: { $0.id == id }) else { return }
-        let board = boxes.first(where: { $0.id == id })?.focusIssueNumber
-            .flatMap { AssignedIssues.savedBoardIndex(containing: $0, in: repository) }
+        let issueNumber = boxes.first(where: { $0.id == id })?.focusIssueNumber
         let location = repository.caseInsensitiveCompare(visibleRepository) == .orderedSame
-            ? "\(repository) · Board \((board ?? 0) + 1)"
+            ? "\(repository) · \(issueNumber.map(GitHubNumber.reference) ?? "Focus")"
             : repository
         appendAttention(
             AttentionAlert(
@@ -693,7 +691,19 @@ struct QuickTerminalTabRequest: Equatable {
         return true
     }
 
+    /// With Focus in charge, walks the whole Focus list (wrapping), sliding the
+    /// window when the next card is hidden.
     func focus(offset: Int) {
+        if focusBoardControlsBoxes, let repository = activeFocusRepository,
+           !activeFocusOrder.isEmpty {
+            let currentIssue = boxes.first { $0.id == focusedID }?.focusIssueNumber
+            let current = currentIssue.flatMap(activeFocusOrder.firstIndex(of:))
+            let count = activeFocusOrder.count
+            let next = current.map { (($0 + offset) % count + count) % count }
+                ?? (offset >= 0 ? 0 : count - 1)
+            focusIssue(activeFocusOrder[next], in: repository)
+            return
+        }
         let candidates = activeBoxes
         guard !candidates.isEmpty else { return }
         let current = candidates.firstIndex { $0.id == focusedID } ?? 0
@@ -701,10 +711,41 @@ struct QuickTerminalTabRequest: Equatable {
         setFocus(candidates[next].id)
     }
 
+    /// True on the first card of the whole Focus list (not merely the first
+    /// one in the window), so ← reaches the quick terminal only from there.
+    var focusedIsFirstAgent: Bool {
+        if focusBoardControlsBoxes, let first = activeFocusOrder.first {
+            return boxes.first { $0.id == focusedID }?.focusIssueNumber == first
+        }
+        return activeBoxes.first?.id == focusedID
+    }
+
+    /// ⌘1-9: the Nth card of the whole Focus list, sliding the window to it.
     func focus(index: Int) {
+        if focusBoardControlsBoxes, let repository = activeFocusRepository {
+            guard activeFocusOrder.indices.contains(index) else { return }
+            focusIssue(activeFocusOrder[index], in: repository)
+            return
+        }
         let candidates = activeBoxes
         guard candidates.indices.contains(index) else { return }
         setFocus(candidates[index].id)
+    }
+
+    /// Focuses an issue's terminal. A hidden one is revealed first: the left
+    /// pane slides the window, and the next reconciliation hands it the keyboard.
+    func focusIssue(_ issueNumber: Int, in repository: String) {
+        guard let box = boxes.first(where: {
+            $0.focusRepository == repository && $0.focusIssueNumber == issueNumber
+        }) else { return }
+        if activeBoxes.contains(where: { $0.id == box.id }) {
+            setFocus(box.id)
+            return
+        }
+        pendingAttention = (box.id, repository)
+        focusIssueRevealRequest = FocusIssueRevealRequest(
+            id: UUID(), repository: repository, issueNumber: issueNumber
+        )
     }
 
     func moveFocused(by delta: Int) {
@@ -734,18 +775,18 @@ struct QuickTerminalTabRequest: Equatable {
         focusedID = id
         if let id,
            let repository = boxes.first(where: { $0.id == id })?.focusRepository {
-            focusedBoxByRepository["\(repository)#\(activeFocusBoardIndex)"] = id
+            focusedBoxByRepository[repository] = id
         }
         guard moveKeyboard else { return }
         TerminalRegistry.shared.focusTerminal(id)
     }
 
-    /// Reconcile one repository's Focus board without disturbing terminal
-    /// sessions owned by other repositories.
+    /// Reconcile one repository's Focus list without disturbing terminal
+    /// sessions owned by other repositories. Every Focus issue keeps a box;
+    /// only those in `visibleIssueNumbers` (the window) are on screen.
     func syncFocusBoard(
         issues: [AssignedIssue],
         visibleIssueNumbers: [Int],
-        selectedBoardIndex: Int,
         repository: String
     ) {
         let wasFocusControlled = focusBoardControlsBoxes
@@ -755,14 +796,14 @@ struct QuickTerminalTabRequest: Equatable {
            previousBoxes.contains(where: {
                $0.id == focusedID && $0.focusRepository == activeFocusRepository
            }) {
-            focusedBoxByRepository["\(activeFocusRepository)#\(activeFocusBoardIndex)"] = focusedID
+            focusedBoxByRepository[activeFocusRepository] = focusedID
         }
 
         let previousRepositoryBoxes = previousBoxes.filter {
             $0.focusRepository == repository
         }
         let visibleSet = Set(visibleIssueNumbers)
-        let previousRepositoryFocusID = focusedBoxByRepository["\(repository)#\(selectedBoardIndex)"]
+        let previousRepositoryFocusID = focusedBoxByRepository[repository]
             ?? focusedID.flatMap { id in
                 previousRepositoryBoxes.contains(where: {
                     $0.id == id && $0.focusIssueNumber.map(visibleSet.contains) == true
@@ -806,7 +847,7 @@ struct QuickTerminalTabRequest: Equatable {
         }
         boxes = reconciliation.boxes
         activeFocusRepository = repository
-        activeFocusBoardIndex = selectedBoardIndex
+        activeFocusOrder = issues.map(\.number)
         activeFocusIssueNumbers = visibleSet
 
         if nextRepositoryBoxes.isEmpty {
@@ -825,6 +866,16 @@ struct QuickTerminalTabRequest: Equatable {
             } else if let previousRepositoryFocusID,
                nextRepositoryBoxes.contains(where: { $0.id == previousRepositoryFocusID }) {
                 nextFocusID = previousRepositoryFocusID
+            } else if let nearest = Self.nearestVisibleBox(
+                to: previousRepositoryFocusID.flatMap { id in
+                    previousRepositoryBoxes.first { $0.id == id }?.focusIssueNumber
+                },
+                in: nextRepositoryBoxes,
+                order: issues.map(\.number)
+            ) {
+                // The focused card slid out of the window: stay on the edge
+                // it left from rather than jumping across the window.
+                nextFocusID = nearest
             } else {
                 nextFocusID = nextRepositoryBoxes[
                     min(previousFocusedIndex, nextRepositoryBoxes.count - 1)
@@ -845,6 +896,23 @@ struct QuickTerminalTabRequest: Equatable {
             }
         }
         saveIfNeeded()
+    }
+
+    /// The on-screen box whose issue sits closest in Focus order to `issue`.
+    static func nearestVisibleBox(
+        to issueNumber: Int?,
+        in visibleBoxes: [AgentBox],
+        order: [Int]
+    ) -> UUID? {
+        guard let issueNumber, let position = order.firstIndex(of: issueNumber) else { return nil }
+        return visibleBoxes.min { lhs, rhs in
+            distance(lhs, from: position, order: order) < distance(rhs, from: position, order: order)
+        }?.id
+    }
+
+    private static func distance(_ box: AgentBox, from position: Int, order: [Int]) -> Int {
+        guard let index = box.focusIssueNumber.flatMap(order.firstIndex(of:)) else { return .max }
+        return abs(index - position)
     }
 }
 

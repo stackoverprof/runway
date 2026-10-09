@@ -9,12 +9,40 @@ struct AgentSettings: View {
     @AppStorage(SettingsKey.soundEnabled) private var soundEnabled = true
     @AppStorage(SettingsKey.alertSound) private var alertSound = "Glass"
     @AppStorage(SettingsKey.bannerWhileActive) private var bannerWhileActive = false
+    @AppStorage(SettingsKey.focusVisibleCount) private var focusVisibleCount = FocusReel.defaultVisibleCount
+    @AppStorage(SettingsKey.focusLimit) private var focusLimit = FocusReel.defaultLimit
     @State private var agentCommandChoice = "claude"
 
     private let sounds = ["Glass", "Ping", "Submarine", "Hero", "Pop", "Funk", "Blow"]
+    private static let focusLimitChoices = [3, 5, 8, 10, 12, 15, 20, 25, 30]
+
+    /// The fixed choices, plus a hand-edited value so the picker never blanks.
+    private var focusLimitOptions: [Int] {
+        let choices = Self.focusLimitChoices
+        guard focusLimit > 0, !choices.contains(focusLimit) else { return choices }
+        return (choices + [focusLimit]).sorted()
+    }
 
     var body: some View {
         Form {
+            Section("Focus") {
+                Stepper(
+                    "Terminals on screen: \(focusVisibleCount)",
+                    value: $focusVisibleCount,
+                    in: FocusReel.visibleCountRange
+                )
+                .pointerCursor()
+                Picker("Most issues in Focus", selection: $focusLimit) {
+                    ForEach(focusLimitOptions, id: \.self) { Text("\($0)").tag($0) }
+                    Divider()
+                    Text("Unlimited").tag(0)
+                }
+                .pointerCursor()
+                Text("Focus is one list seen through a window of this many cards. Cards outside the window keep their terminals running; scroll the list or use the arrows above and below it to bring them on screen. Lowering the limit never removes issues, it only stops new ones until Focus is under it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Command") {
                 Toggle("Run command in each agent", isOn: $agentCommandEnabled)
                     .pointerCursor()
