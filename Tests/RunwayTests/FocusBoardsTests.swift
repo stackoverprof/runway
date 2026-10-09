@@ -42,6 +42,41 @@ struct FocusBoardsTests {
         #expect(boards.selectedIndex == 1)
     }
 
+    @Test("Deleting a board hands back its issues and never removes the last one")
+    func removesBoard() {
+        var boards = FocusBoards(boards: [[1, 2], [3]])
+
+        #expect(boards.remove(at: 0) == [1, 2])
+        #expect(boards.boards == [[3]])
+        #expect(boards.all == [3])
+        #expect(boards.remove(at: 0) == nil)
+        #expect(boards.remove(at: 5) == nil)
+        #expect(boards.boards == [[3]])
+    }
+
+    @Test("Deleting a board keeps the selection on a sensible board")
+    func fixesSelectionAfterRemove() {
+        var earlier = FocusBoards(boards: [[1], [2], [3]], selectedIndex: 2)
+        earlier.remove(at: 0)
+        #expect(earlier.selectedIndex == 1)
+        #expect(earlier.selected == [3])
+
+        var later = FocusBoards(boards: [[1], [2], [3]], selectedIndex: 0)
+        later.remove(at: 2)
+        #expect(later.selectedIndex == 0)
+        #expect(later.selected == [1])
+
+        var selectedMiddle = FocusBoards(boards: [[1], [2], [3]], selectedIndex: 1)
+        selectedMiddle.remove(at: 1)
+        #expect(selectedMiddle.selectedIndex == 1)
+        #expect(selectedMiddle.selected == [3])
+
+        var selectedLast = FocusBoards(boards: [[1], [2], [3]], selectedIndex: 2)
+        selectedLast.remove(at: 2)
+        #expect(selectedLast.selectedIndex == 1)
+        #expect(selectedLast.selected == [2])
+    }
+
     @Test("Board membership and selection survive persistence")
     func roundTrip() throws {
         let boards = FocusBoards(boards: [[1, 2], [3]], selectedIndex: 1)

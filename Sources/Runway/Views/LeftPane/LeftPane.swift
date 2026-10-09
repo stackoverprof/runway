@@ -19,15 +19,6 @@ struct RunwayIssueListIdentity: Hashable {
     }
 }
 
-private struct FocusBoardMenuAnchorKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next != .zero { value = next }
-    }
-}
-
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
     @Bindable var ws: Workspace
@@ -35,9 +26,6 @@ struct LeftPane: View {
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
     @State private var hoveringNewIssue = false
-    @State private var focusBoardMenuOpen = false
-    @State private var focusBoardMenuAnchor: CGRect = .zero
-    @State private var hoveredFocusBoardMenuItem: Int?
     @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
     @State private var focusIssueDrag = FocusIssueDrag()
@@ -120,20 +108,8 @@ struct LeftPane: View {
             .clipped()
 
             focusDragOverlay
-
-            if focusBoardMenuOpen {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { focusBoardMenuOpen = false }
-
-                focusBoardDropdown
-                    .offset(x: focusBoardMenuAnchor.minX + 16, y: focusBoardMenuAnchor.maxY + 5)
-            }
         }
         .coordinateSpace(name: FocusIssueDrag.coordinateSpaceName)
-        .onPreferenceChange(FocusBoardMenuAnchorKey.self) {
-            focusBoardMenuAnchor = $0
-        }
         .onPreferenceChange(RunwayIssueCardFramePreferenceKey.self) {
             focusIssueDrag.updateCardFrames($0)
         }
@@ -177,7 +153,6 @@ struct LeftPane: View {
         // Runway tab. Only the selected tab stays mounted, and hanging this off
         // that tab left the terminals on the old repository until it reappeared.
         .task(id: feed.repo) {
-            focusBoardMenuOpen = false
             assignedIssues.restore(repository: feed.repo)
             revealRequestedFocusIssue()
             syncFocusBoard()
@@ -203,7 +178,6 @@ struct LeftPane: View {
             revealRequestedFocusIssue()
         }
         .onChange(of: ws.selectedTab) { previousTab, tab in
-            focusBoardMenuOpen = false
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
             refreshSource(for: tab, minimumAge: 15)
@@ -461,22 +435,8 @@ struct LeftPane: View {
         HStack(alignment: .center, spacing: 8) {
             if ws.selectedTab == .runway {
                 HStack(spacing: 6) {
-                    Button {
-                        focusBoardMenuOpen.toggle()
-                    } label: {
-                        Text(assignedIssues.focusBoardCount == 1
-                             ? subHeaderText
-                             : "\(subHeaderText) · \(assignedIssues.activeFocusBoardIndex + 1)/\(assignedIssues.focusBoardCount)")
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.3))
-                            .tracking(0.8)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .fixedSize()
-                    .pointerCursor()
-                    .disabled(feed.repo.isEmpty || !assignedIssues.hasSnapshot)
-                    .help("Switch Focus board")
+                    Text(subHeaderText)
+                        .fixedSize()
 
                     Button {
                         withAnimation(focusBoardCollapseAnimation) {
@@ -491,6 +451,8 @@ struct LeftPane: View {
                     .buttonStyle(.plain)
                     .pointerCursor()
                     .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
+
+                    focusBoardPills
                 }
             } else {
                 Text(subHeaderText)
@@ -521,14 +483,6 @@ struct LeftPane: View {
             rotateTagline()
         }
         .onDisappear { taglineTask?.cancel() }
-        .background {
-            GeometryReader { geometry in
-                Color.clear.preference(
-                    key: FocusBoardMenuAnchorKey.self,
-                    value: geometry.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                )
-            }
-        }
     }
 
     private var focusBoardCollapseAnimation: Animation {
@@ -543,85 +497,70 @@ struct LeftPane: View {
         }
     }
 
-    private var focusBoardDropdown: some View {
-        VStack(spacing: 2) {
-            ForEach(0..<assignedIssues.focusBoardCount, id: \.self) { index in
-                focusBoardDropdownRow(
-                    title: "Board \(index + 1)",
-                    detail: "\(assignedIssues.focusBoards.boards[index].count)/5",
-                    selected: index == assignedIssues.activeFocusBoardIndex,
-                    id: index
-                ) {
-                    assignedIssues.selectFocusBoard(index)
-                    focusBoardCollapsed = false
-                    syncFocusBoard()
+    /// Board switcher styled like the Quick Agent tab strip: one numbered
+    /// pill per board once there are two, then `+` for a new board.
+    private var focusBoardPills: some View {
+        HStack(spacing: 3) {
+            if assignedIssues.focusBoardCount > 1 {
+                ForEach(0..<assignedIssues.focusBoardCount, id: \.self) { index in
+                    focusBoardPill(index)
                 }
             }
 
-            Rectangle()
-                .fill(Color.white.opacity(0.09))
-                .frame(height: 1)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-
-            focusBoardDropdownRow(
-                title: "New Focus board",
-                detail: nil,
-                selected: false,
-                id: -1
-            ) {
-                assignedIssues.createFocusBoard()
-                focusBoardCollapsed = false
-                syncFocusBoard()
+            Button {
+                createFocusBoard()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.48))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("New Focus board")
         }
-        .padding(6)
-        .frame(width: 194)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.10)))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.45), radius: 12, y: 5)
+        .tracking(0)
+        .fixedSize()
+        .padding(.leading, 4)
+        .disabled(feed.repo.isEmpty || !assignedIssues.hasSnapshot)
     }
 
-    private func focusBoardDropdownRow(
-        title: String,
-        detail: String?,
-        selected: Bool,
-        id: Int,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            action()
-            focusBoardMenuOpen = false
+    private func focusBoardPill(_ index: Int) -> some View {
+        let selected = index == assignedIssues.activeFocusBoardIndex
+        return Button {
+            assignedIssues.selectFocusBoard(index)
+            focusBoardCollapsed = false
+            syncFocusBoard()
         } label: {
-            HStack(spacing: 8) {
-                Text(title)
-                Spacer(minLength: 4)
-                if let detail {
-                    Text(detail)
-                        .foregroundStyle(Color.white.opacity(0.38))
-                }
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.5))
-                }
-            }
-            .font(.system(size: 11, weight: selected ? .semibold : .medium, design: .monospaced))
-            .foregroundStyle(Color.white.opacity(selected ? 0.9 : 0.7))
-            .padding(.horizontal, 9)
-            .frame(height: 29)
-            .background {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.white.opacity(selected ? 0.09 : hoveredFocusBoardMenuItem == id ? 0.06 : 0))
-            }
-            .contentShape(Rectangle())
+            Text("\(index + 1)")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(selected ? 0.9 : 0.42))
+                .frame(minWidth: 18, minHeight: 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(selected ? RunwayTerminal.body : .clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
         .pointerCursor()
-        .onHover { hoveredFocusBoardMenuItem = $0 ? id : nil }
+        .help("Focus board \(index + 1)")
+        .contextMenu {
+            Button("New Board") { createFocusBoard() }
+            Divider()
+            Button("Delete Board", role: .destructive) {
+                assignedIssues.deleteFocusBoard(index)
+                syncFocusBoard()
+            }
+            .disabled(assignedIssues.focusBoardCount < 2)
+        }
+    }
+
+    private func createFocusBoard() {
+        assignedIssues.createFocusBoard()
+        focusBoardCollapsed = false
+        syncFocusBoard()
     }
 
     private var selectedTabIndex: Int {

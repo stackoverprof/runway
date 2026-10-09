@@ -47,6 +47,22 @@ struct FocusBoards: Codable, Equatable {
         selectedIndex = boards.count - 1
     }
 
+    /// Drops one board and returns the issues it held, so the caller can send
+    /// them back to their lane. The last board is never removed. Selection
+    /// stays on the same board when another one goes, and moves to the board
+    /// that slides into the deleted slot when the selected one goes.
+    @discardableResult
+    mutating func remove(at index: Int) -> [Int]? {
+        guard boards.count > 1, boards.indices.contains(index) else { return nil }
+        let removed = boards.remove(at: index)
+        if index < selectedIndex {
+            selectedIndex -= 1
+        } else {
+            selectedIndex = min(selectedIndex, boards.count - 1)
+        }
+        return removed
+    }
+
     mutating func replaceSelected(with numbers: [Int]) {
         var seen = Set(boards.enumerated()
             .filter { $0.offset != selectedIndex }
