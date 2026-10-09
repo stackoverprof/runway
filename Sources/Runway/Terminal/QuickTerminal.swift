@@ -3,6 +3,13 @@ import AppKit
 import GhosttyKit
 import UniformTypeIdentifiers
 
+@MainActor private struct QuickTerminalTab: Identifiable {
+    let root: String
+    let session: GhosttyTerminalSession
+
+    nonisolated var id: String { root }
+}
+
 /// A persistent "quick" terminal overlaid on the bottom-left of the left pane.
 /// Toggled with ⌘⌥Q or by hovering/peeking the bottom-left corner of the window.
 /// It stays mounted while hidden (shid-off/shrunk) so its shell keeps running.
@@ -14,7 +21,8 @@ struct QuickTerminal: View {
     let availableHeight: CGFloat  // full pane height
     let resizePane: (CGFloat) -> Void
 
-    @State private var session: GhosttyTerminalSession = makeRunwaySession(QuickTerminal.startupConfig())
+    @State private var tabs = Self.makeInitialTabs()
+    @State private var selectedRoot = QuickTerminalSession.selectedRoot()
     @State private var dragStartHeight: CGFloat?
     @State private var dragStartPaneWidth: CGFloat?
     @State private var isHovered = false
@@ -24,29 +32,50 @@ struct QuickTerminal: View {
     @State private var shimmerOffset: CGFloat = -0.8
     @State private var pulseTask: Task<Void, Never>? = nil
     @State private var isHoveringHeader = false
+    @State private var isHeaderRevealedByShortcut = false
+    @State private var headerRevealTask: Task<Void, Never>?
+    @State private var focusTask: Task<Void, Never>?
 
     /// The quick terminal runs the configured command on launch, through the
     /// same environment the right-pane terminals get: identical control paths,
     /// wrapper-resolved autorun, and a bound conversation. Hand-rolling this
     /// env is what previously left the quick panel outside Runway's `claude`
     /// wrapper, so it never kept a session.
-    static func startupConfig() -> TerminalConfig {
+    private static func makeTab(root: String) -> QuickTerminalTab {
+        QuickTerminalTab(root: root, session: makeRunwaySession(startupConfig(root: root)))
+    }
+
+    private static func makeInitialTabs() -> [QuickTerminalTab] {
+        QuickTerminalSession.tabRoots().map(makeTab(root:))
+    }
+
+    static func startupConfig(root: String) -> TerminalConfig {
+        let boxID = QuickTerminalSession.boxID(root: root)
         let command = AgentControl.preferredAgentCommand(
             fallback: SettingsKey.configuredAgentCommand,
-            quickTerminalSession: true
+            quickTerminalSession: true,
+            quickTerminalRoot: root
         )
         let env = AgentControl.environment(
-            for: quickBoxID,
+            for: boxID,
             autorun: command,
-            quickTerminalSession: true
+            quickTerminalSession: true,
+            quickTerminalRoot: root
         )
 
         // A folder picked in Settings wins; otherwise reopen where the last
         // shell was left, and fall back to the shell's own default.
-        let recordedCwd = (try? Data(contentsOf: AgentControl.cwdFile(for: quickBoxID)))
+        let recordedCwd = (try? Data(contentsOf: AgentControl.cwdFile(for: boxID)))
             .flatMap { String(data: $0, encoding: .utf8) }?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let lastDirectory = (recordedCwd?.isEmpty == false) ? recordedCwd : nil
+        let legacyCwd = root == QuickTerminalSession.root()
+            ? (try? Data(contentsOf: AgentControl.cwdFile(for: quickBoxID)))
+                .flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+        let lastDirectory = [recordedCwd, legacyCwd]
+            .compactMap { $0 }
+            .first { !$0.isEmpty }
 
         return TerminalConfig(
             workingDirectory: QuickTerminalDirectory.startupPath ?? lastDirectory,
@@ -57,24 +86,129 @@ struct QuickTerminal: View {
     /// Abandon the kept conversation and spawn a fresh shell on a new id. The
     /// only way the quick terminal ever starts over: quitting Runway, switching
     /// repositories, and rebuilding all resume what was there.
-    private func startNewSession() {
-        QuickTerminalSession.rotate()
-        try? FileManager.default.removeItem(at: AgentControl.sessionFile(for: Self.quickBoxID))
-        session = makeRunwaySession(Self.startupConfig())
-        bindSession()
-        applyRunwayTheme(to: session)
+    private var activeTab: QuickTerminalTab {
+        tabs.first { $0.root == selectedRoot } ?? tabs[0]
     }
 
-    /// Point the workspace's quick-terminal hooks at the mounted session. Must
-    /// re-run after a respawn or they keep driving the dead shell.
-    private func bindSession() {
-        let session = session
+    private var session: GhosttyTerminalSession { activeTab.session }
+
+    private func startNewSession(in root: String) {
+        guard let index = tabs.firstIndex(where: { $0.root == root }) else { return }
+        let freshRoot = QuickTerminalSession.replaceTab(root)
+        guard freshRoot != root else { return }
+        let tab = Self.makeTab(root: freshRoot)
+        tabs[index] = tab
+        QuickTerminalSession.selectTab(freshRoot)
+        selectedRoot = freshRoot
+        applyRunwayTheme(to: tab.session)
+    }
+
+    private func addTab() {
+        let root = QuickTerminalSession.addTab()
+        let tab = Self.makeTab(root: root)
+        tabs.append(tab)
+        selectedRoot = root
+        applyRunwayTheme(to: tab.session)
+    }
+
+    private func closeTab(_ root: String) {
+        guard tabs.count > 1,
+              let index = tabs.firstIndex(where: { $0.root == root }) else { return }
+        let nextRoot = QuickTerminalSession.closeTab(root)
+        tabs.remove(at: index)
+        if selectedRoot == root { selectedRoot = nextRoot }
+    }
+
+    private func closeSelectedTab() {
+        guard tabs.count > 1 else {
+            // ⌘W on the only tab means "close this conversation and start
+            // another one", not "hide the Quick Agent". Keep the panel open
+            // and replace the selected durable session in place.
+            startNewSession(in: selectedRoot)
+            return
+        }
+        closeTab(selectedRoot)
+    }
+
+    private func selectTab(shortcutIndex: Int) {
+        guard !tabs.isEmpty, (1...9).contains(shortcutIndex) else { return }
+        let index = shortcutIndex == 9 ? tabs.count - 1 : shortcutIndex - 1
+        guard tabs.indices.contains(index) else { return }
+        selectTab(tabs[index].root)
+    }
+
+    private func cycleTabs(by offset: Int) {
+        guard tabs.count > 1,
+              let index = tabs.firstIndex(where: { $0.root == selectedRoot }) else { return }
+        let nextIndex = (index + offset + tabs.count) % tabs.count
+        selectTab(tabs[nextIndex].root)
+    }
+
+    private func handleShortcut(_ action: QuickTerminalTabAction) {
+        revealHeaderControls()
+        switch action {
+        case .new:
+            addTab()
+        case .close:
+            closeSelectedTab()
+        case .select(let index):
+            selectTab(shortcutIndex: index)
+        case .selectRoot(let root):
+            guard tabs.contains(where: { $0.root == root }) else { return }
+            selectTab(root)
+            focusActiveTab()
+        case .cycle(let offset):
+            cycleTabs(by: offset)
+        }
+    }
+
+    private var headerControlsVisible: Bool {
+        isHoveringHeader || ws.quickPinned || isHeaderRevealedByShortcut
+    }
+
+    private func revealHeaderControls() {
+        headerRevealTask?.cancel()
+        isHeaderRevealedByShortcut = true
+        headerRevealTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            isHeaderRevealedByShortcut = false
+        }
+    }
+
+    private func selectTab(_ root: String) {
+        guard selectedRoot != root else {
+            focusActiveTab()
+            return
+        }
+        QuickTerminalSession.selectTab(root)
+        selectedRoot = root
+        ws.quickState = ws.quickTabStates[root] ?? .idle
+    }
+
+    /// Point keyboard shortcuts at the selected tab's still-mounted terminal.
+    private func bindSession(to tab: QuickTerminalTab) {
+        let session = tab.session
         ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
         ws.quickHasKeyboard = {
             guard let view = session.view, let window = view.window else {
                 return false
             }
             return window.firstResponder === view
+        }
+    }
+
+    private func focusActiveTab() {
+        let tab = activeTab
+        bindSession(to: tab)
+        focusTask?.cancel()
+        focusTask = Task { @MainActor in
+            for _ in 0..<20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard !Task.isCancelled, ws.quickVisible, selectedRoot == tab.root else { return }
+                if let view = tab.session.view, let window = view.window,
+                   window.makeFirstResponder(view) { return }
+            }
         }
     }
 
@@ -105,6 +239,44 @@ struct QuickTerminal: View {
         return false
     }
 
+    private func terminalSurface(for tab: QuickTerminalTab) -> some View {
+        GhosttyTerminalRepresentable(session: tab.session, configuration: .default)
+            .id(tab.root)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 5)
+            .padding(.bottom, 5)
+            .opacity(tab.root == selectedRoot ? 1 : 0)
+            .allowsHitTesting(tab.root == selectedRoot)
+            .accessibilityHidden(tab.root != selectedRoot)
+            .onAppear {
+                applyRunwayTheme(to: tab.session)
+                if tab.root == selectedRoot { bindSession(to: tab) }
+                Task { @MainActor in
+                    for _ in 0..<100 {
+                        if let view = tab.session.view {
+                            for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
+                                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                                if view.window != nil {
+                                    forceTerminalLayoutUpdate(for: tab.session)
+                                }
+                            }
+                            break
+                        }
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in
+                forceTerminalLayoutUpdate(for: tab.session)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
+                forceTerminalLayoutUpdate(for: tab.session)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
+                forceTerminalLayoutUpdate(for: tab.session)
+            }
+    }
+
     var body: some View {
         ZStack {
             // Keep the Ghostty view permanently mounted in the ZStack.
@@ -112,38 +284,11 @@ struct QuickTerminal: View {
             // This prevents the Metal GPU renderer from locking up due to nil window context.
             VStack(spacing: 0) {
                 header
-                GhosttyTerminalRepresentable(session: session, configuration: .default)
-                    .id(ObjectIdentifier(session))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.horizontal, 5)
-                    .padding(.bottom, 5)
-                    .onAppear {
-                        applyRunwayTheme(to: session)
-                        bindSession()
-                        Task { @MainActor in
-                            for _ in 0..<100 {
-                                if let view = session.view {
-                                    for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
-                                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                                        if view.window != nil {
-                                            forceTerminalLayoutUpdate(for: session)
-                                        }
-                                    }
-                                    break
-                                }
-                                try? await Task.sleep(nanoseconds: 50_000_000)
-                            }
-                        }
+                ZStack(alignment: .topLeading) {
+                    ForEach(tabs) { tab in
+                        terminalSurface(for: tab)
                     }
-                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in
-                        forceTerminalLayoutUpdate(for: session)
-                    }
-                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
-                        forceTerminalLayoutUpdate(for: session)
-                    }
-                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
-                        forceTerminalLayoutUpdate(for: session)
-                    }
+                }
             }
             .opacity(ws.quickVisible ? 1 : 0)
             .allowsHitTesting(ws.quickVisible)
@@ -191,8 +336,8 @@ struct QuickTerminal: View {
         .overlay(alignment: .trailing) {
             if ws.quickVisible { resizePaneHandle }
         }
-        // The top-right corner is the combined resize affordance: diagonal
-        // drags change the Quick Terminal height and the left/right split.
+        // The corner sits in the header's existing trailing padding. Keep it
+        // above the edge handles so its invisible hit area owns the diagonal drag.
         .overlay(alignment: .topTrailing) {
             if ws.quickVisible { combinedResizeHandle }
         }
@@ -218,15 +363,20 @@ struct QuickTerminal: View {
         .onChange(of: ws.quickVisible) { _, visible in
             if !visible {
                 allowExpandOnHover = false // Require mouse exit before next expand
-            }
-            DispatchQueue.main.async {
-                if visible {
-                    if let view = session.view { view.window?.makeFirstResponder(view) }
-                } else {
+                focusTask?.cancel()
+                DispatchQueue.main.async {
                     TerminalRegistry.shared.focusTerminal(ws.focusedID)
                 }
+            } else {
+                focusActiveTab()
             }
         }
+        .onChange(of: selectedRoot) { _, _ in focusActiveTab() }
+        .onChange(of: ws.quickTabRequest) { _, request in
+            guard let request else { return }
+            handleShortcut(request.action)
+        }
+        .onAppear { focusActiveTab() }
         .onChange(of: ws.focusedID) { _, _ in
             if !isHovered {
                 triggerAutoHide()
@@ -282,23 +432,55 @@ struct QuickTerminal: View {
             Text("quick")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
-            Spacer()
+            Spacer(minLength: 8)
 
-            if isHoveringHeader {
-                Button {
-                    startNewSession()
-                } label: {
-                    Image(systemName: "plus.bubble")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Color.white.opacity(0.4))
+            if tabs.count > 1 && headerControlsVisible {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 3) {
+                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                            Button {
+                                selectTab(tab.root)
+                            } label: {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(
+                                        tab.root == selectedRoot
+                                            ? Color.white.opacity(0.9)
+                                            : Color.white.opacity(0.42)
+                                    )
+                                    .frame(minWidth: 18, minHeight: 18)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .fill(tab.root == selectedRoot ? RunwayTerminal.body : .clear)
+                                    )
+                                    .contentShape(RoundedRectangle(cornerRadius: 5))
+                            }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
+                            .help("Quick tab \(index + 1)")
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .frame(height: 18)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if headerControlsVisible {
+                Button(action: addTab) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.48))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help("Start a new agent session, abandoning the kept conversation")
+                .help("New quick tab")
             }
 
             // Pin button (only show on hover or when pinned)
-            if isHoveringHeader || ws.quickPinned {
+            if headerControlsVisible {
                 Button {
                     ws.quickPinned.toggle()
                 } label: {
@@ -311,8 +493,10 @@ struct QuickTerminal: View {
                 .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
             }
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 18)
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.vertical, 5)
         .onHover { hovering in
             isHoveringHeader = hovering
         }
@@ -339,24 +523,28 @@ struct QuickTerminal: View {
     }
 
     /// Drag the top edge to resize (the panel is bottom-anchored, so dragging up
-    /// makes it taller). Invisible — just a hit strip.
+    /// makes it taller). Leave the far corner to the simultaneous diagonal drag.
     private var resizeHandle: some View {
-        Color.clear
-            .frame(height: 8)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
-            }
-            .highPriorityGesture(
-                DragGesture(coordinateSpace: .global)
-                    .onChanged { value in
-                        if dragStartHeight == nil { dragStartHeight = height }
-                        let base = dragStartHeight ?? height
-                        ws.quickHeight = min(max(base - value.translation.height, minHeight), maxHeight)
-                    }
-                    .onEnded { _ in dragStartHeight = nil }
-            )
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: 8)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
+                }
+                .highPriorityGesture(
+                    DragGesture(coordinateSpace: .global)
+                        .onChanged { value in
+                            if dragStartHeight == nil { dragStartHeight = height }
+                            let base = dragStartHeight ?? height
+                            ws.quickHeight = min(max(base - value.translation.height, minHeight), maxHeight)
+                        }
+                        .onEnded { _ in dragStartHeight = nil }
+                )
+            Color.clear.frame(width: 16, height: 8)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// The panel fills the left pane, so resizing its trailing edge resizes
@@ -385,38 +573,33 @@ struct QuickTerminal: View {
         .frame(width: 14)
     }
 
+    /// Use the existing empty header corner as the diagonal resize hit target.
+    /// This is layered above both edge strips but inside the 12pt trailing inset.
     private var combinedResizeHandle: some View {
         Color.clear
-        // Stay inside the clear corner beyond the header's 12pt content inset,
-        // so the resize hit target never covers the header buttons.
-        .frame(width: 12, height: 12)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            if hovering {
-                diagonalResizeCursor.set()
-            } else {
-                NSCursor.arrow.set()
+            .frame(width: 12, height: 28)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering { diagonalResizeCursor.set() } else { NSCursor.arrow.set() }
             }
-        }
-        .highPriorityGesture(
-            DragGesture(coordinateSpace: .global)
-                .onChanged { value in
-                    if dragStartHeight == nil { dragStartHeight = height }
-                    if dragStartPaneWidth == nil { dragStartPaneWidth = width }
-
-                    let baseHeight = dragStartHeight ?? height
-                    let baseWidth = dragStartPaneWidth ?? width
-                    ws.quickHeight = min(
-                        max(baseHeight - value.translation.height, minHeight),
-                        maxHeight
-                    )
-                    resizePane(baseWidth + value.translation.width)
-                }
-                .onEnded { _ in
-                    dragStartHeight = nil
-                    dragStartPaneWidth = nil
-                }
-        )
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .onChanged { value in
+                        if dragStartHeight == nil { dragStartHeight = height }
+                        if dragStartPaneWidth == nil { dragStartPaneWidth = width }
+                        let baseHeight = dragStartHeight ?? height
+                        let baseWidth = dragStartPaneWidth ?? width
+                        ws.quickHeight = min(
+                            max(baseHeight - value.translation.height, minHeight),
+                            maxHeight
+                        )
+                        resizePane(baseWidth + value.translation.width)
+                    }
+                    .onEnded { _ in
+                        dragStartHeight = nil
+                        dragStartPaneWidth = nil
+                    }
+            )
     }
 
     private var diagonalResizeCursor: NSCursor {

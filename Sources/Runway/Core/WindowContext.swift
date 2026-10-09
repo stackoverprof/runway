@@ -130,6 +130,7 @@ final class WindowDragNSView: NSView {
     func startIfNeeded() {
         guard !started else { return }
         started = true
+        workspace.repositoryFeed = githubFeed
         workspace.startAgentWatch()
         githubFeed.startPolling()
     }
@@ -160,6 +161,10 @@ final class WindowDragNSView: NSView {
 
     func activeContext() -> RunwayWindowContext? {
         context(for: NSApp.keyWindow)
+    }
+
+    func mainWindow() -> NSWindow? {
+        NSApp.windows.first { contexts[ObjectIdentifier($0)] != nil }
     }
 }
 

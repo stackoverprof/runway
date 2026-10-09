@@ -3,6 +3,45 @@ import Testing
 @testable import Runway
 
 @MainActor struct AssignedIssuesTests {
+    @Test func fullRefreshFindsUnassignedIssuesWithinOneMinute() {
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        #expect(AssignedIssues.needsFullRefresh(
+            lastFullFetchedAt: nil, now: now, explicitlyRequested: false
+        ))
+        #expect(!AssignedIssues.needsFullRefresh(
+            lastFullFetchedAt: now.addingTimeInterval(-59),
+            now: now, explicitlyRequested: false
+        ))
+        #expect(AssignedIssues.needsFullRefresh(
+            lastFullFetchedAt: now.addingTimeInterval(-60),
+            now: now, explicitlyRequested: false
+        ))
+        #expect(AssignedIssues.needsFullRefresh(
+            lastFullFetchedAt: now,
+            now: now, explicitlyRequested: true
+        ))
+    }
+
+    @Test func fullRefreshRemovesIssuesMissingAfterUnassignment() {
+        let formerlyAssigned = issue(number: 14395, title: "Formerly assigned")
+        let stillAssigned = issue(number: 14373, title: "Still assigned")
+
+        let refreshed = AssignedIssues.issuesAfterRefresh(
+            current: [formerlyAssigned, stillAssigned],
+            fetched: [stillAssigned],
+            fullRefresh: true
+        )
+        #expect(refreshed.map(\.number) == [14373])
+
+        let incremental = AssignedIssues.issuesAfterRefresh(
+            current: [formerlyAssigned, stillAssigned],
+            fetched: [stillAssigned],
+            fullRefresh: false
+        )
+        #expect(Set(incremental.map(\.number)) == [14395, 14373])
+    }
+
     @Test func returningToBacklogWithoutTargetRestoresSavedPosition() {
         let order = [10675, 10674, 10597]
 

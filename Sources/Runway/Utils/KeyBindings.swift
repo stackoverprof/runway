@@ -4,6 +4,8 @@ import AppKit
 /// A keyboard chord: a physical key (matched by keyCode so Option-composed
 /// characters don't break it) plus modifier flags.
 struct KeyChord: Codable, Equatable {
+    static let functionKeyCode: UInt16 = 63
+
     var keyCode: UInt16
     var modifiers: UInt   // NSEvent.ModifierFlags rawValue, masked to the four below
 
@@ -15,11 +17,26 @@ struct KeyChord: Codable, Equatable {
     }
 
     func matches(_ event: NSEvent) -> Bool {
-        event.keyCode == keyCode &&
+        if keyCode == Self.functionKeyCode {
+            guard event.type == .flagsChanged,
+                  event.modifierFlags.contains(.function),
+                  event.modifierFlags.intersection(Self.relevant).rawValue == modifiers else {
+                return false
+            }
+            let leftShiftKeyCode: UInt16 = 56
+            let rightShiftKeyCode: UInt16 = 60
+            return event.keyCode == Self.functionKeyCode
+                || (modifiers == NSEvent.ModifierFlags.shift.rawValue
+                    && [leftShiftKeyCode, rightShiftKeyCode].contains(event.keyCode))
+        }
+        return event.keyCode == keyCode &&
         event.modifierFlags.intersection(Self.relevant).rawValue == modifiers
     }
 
     var display: String {
+        if keyCode == Self.functionKeyCode {
+            return modifiers == NSEvent.ModifierFlags.shift.rawValue ? "fn⇧" : "fn"
+        }
         var s = ""
         let m = NSEvent.ModifierFlags(rawValue: modifiers)
         if m.contains(.control) { s += "⌃" }
@@ -36,6 +53,7 @@ struct KeyChord: Codable, Equatable {
             26:"7",28:"8",29:"0",31:"O",32:"U",34:"I",35:"P",37:"L",38:"J",40:"K",45:"N",46:"M",
             36:"↩",48:"⇥",49:"Space",51:"⌫",53:"esc",123:"←",124:"→",125:"↓",126:"↑",
             47:".",43:",",44:"/",27:"-",30:"]",33:"[",39:"'",41:";",42:"\\",50:"`",
+            63:"fn",
         ]
         return map[c] ?? "key\(c)"
     }
@@ -207,8 +225,20 @@ struct KeyRecorderRow: View {
         if recording { stop(); return }
         recording = true
         bindings.recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { ev in
             if ev.keyCode == 53 { stop(); return nil }   // esc cancels
+            if ev.type == .flagsChanged,
+               ev.modifierFlags.contains(.function),
+               ev.modifierFlags.intersection(KeyChord.relevant) == .shift,
+               KeyChord(keyCode: KeyChord.functionKeyCode, modifiers: [.shift]).matches(ev) {
+                bindings.set(
+                    KeyChord(keyCode: KeyChord.functionKeyCode, modifiers: [.shift]),
+                    for: action
+                )
+                stop()
+                return nil
+            }
+            guard ev.type == .keyDown else { return ev }
             // Require at least one of ⌘/⌥/⌃ so a bare key can't hijack typing.
             guard !ev.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
             bindings.set(KeyChord(keyCode: ev.keyCode, modifiers: ev.modifierFlags), for: action)

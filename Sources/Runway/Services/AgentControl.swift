@@ -133,11 +133,14 @@ enum AgentControl {
     static func durableSession(
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
-        quickTerminalSession: Bool = false
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
     ) -> AgentSessionLocator.Resolved? {
         let file: URL?
         if quickTerminalSession {
-            file = quickProviderSessionFile()
+            file = quickProviderSessionFile(
+                root: quickTerminalRoot ?? QuickTerminalSession.root()
+            )
         } else if let focusRepository, let focusIssueNumber {
             file = issueProviderSessionFile(
                 repository: focusRepository,
@@ -155,12 +158,14 @@ enum AgentControl {
         fallback: String,
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
-        quickTerminalSession: Bool = false
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
     ) -> String {
         guard let provider = durableSession(
             focusRepository: focusRepository,
             focusIssueNumber: focusIssueNumber,
-            quickTerminalSession: quickTerminalSession
+            quickTerminalSession: quickTerminalSession,
+            quickTerminalRoot: quickTerminalRoot
         )?.provider.rawValue else { return fallback }
         if fallback == provider || fallback.hasPrefix("\(provider) ") {
             return fallback
@@ -176,7 +181,8 @@ enum AgentControl {
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
         issueAgentSessionsEnabled: Bool = false,
-        quickTerminalSession: Bool = false
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
     ) -> [String: String] {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
         let binPath = binDir.path
@@ -197,7 +203,9 @@ enum AgentControl {
         ]
         let durableFile: URL?
         if quickTerminalSession {
-            durableFile = quickProviderSessionFile()
+            durableFile = quickProviderSessionFile(
+                root: quickTerminalRoot ?? QuickTerminalSession.root()
+            )
         } else if issueAgentSessionsEnabled,
                   let focusRepository,
                   let focusIssueNumber {
@@ -232,7 +240,10 @@ enum AgentControl {
                 sessionID = recorded?.provider == .codex ? recorded?.sessionID : nil
             } else {
                 let deterministicID: UUID? = quickTerminalSession
-                    ? QuickTerminalSession.id(provider: provider)
+                    ? QuickTerminalSession.id(
+                        provider: provider,
+                        root: quickTerminalRoot ?? QuickTerminalSession.root()
+                    )
                     : (issueAgentSessionsEnabled
                         ? IssueAgentSession.id(
                             provider: provider,

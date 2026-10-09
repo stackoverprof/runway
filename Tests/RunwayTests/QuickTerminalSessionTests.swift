@@ -34,6 +34,64 @@ struct QuickTerminalSessionTests {
         #expect(QuickTerminalSession.id(provider: .claude, in: defaults) == after)
     }
 
+    @Test("Replacing the only quick tab keeps it open but starts a new session")
+    func replacingOnlyTabKeepsOneSelectedRoot() {
+        let defaults = store("replace-only")
+        let before = QuickTerminalSession.root(in: defaults)
+
+        let after = QuickTerminalSession.replaceTab(before, in: defaults)
+
+        #expect(after != before)
+        #expect(QuickTerminalSession.tabRoots(in: defaults) == [after])
+        #expect(QuickTerminalSession.selectedRoot(in: defaults) == after)
+    }
+
+    @Test("Quick tabs migrate the original session and persist independent roots")
+    func tabsMigrateAndPersist() {
+        let defaults = store("tabs")
+        let legacy = QuickTerminalSession.root(in: defaults)
+
+        #expect(QuickTerminalSession.tabRoots(in: defaults) == [legacy])
+
+        let second = QuickTerminalSession.addTab(in: defaults)
+        #expect(QuickTerminalSession.tabRoots(in: defaults) == [legacy, second])
+        #expect(QuickTerminalSession.selectedRoot(in: defaults) == second)
+
+        QuickTerminalSession.selectTab(legacy, in: defaults)
+        #expect(QuickTerminalSession.selectedRoot(in: defaults) == legacy)
+        #expect(QuickTerminalSession.closeTab(second, in: defaults) == legacy)
+        #expect(QuickTerminalSession.tabRoots(in: defaults) == [legacy])
+        #expect(QuickTerminalSession.closeTab(legacy, in: defaults) == legacy)
+    }
+
+    @Test("Each quick tab has its own shell and provider conversation identity")
+    func tabsHaveIndependentIdentities() {
+        let first = "quick-tab-first"
+        let second = "quick-tab-second"
+
+        #expect(QuickTerminalSession.boxID(root: first) != QuickTerminalSession.boxID(root: second))
+        #expect(
+            QuickTerminalSession.id(provider: .claude, root: first)
+                != QuickTerminalSession.id(provider: .claude, root: second)
+        )
+
+        let firstEnvironment = AgentControl.environment(
+            for: QuickTerminalSession.boxID(root: first),
+            autorun: "claude",
+            quickTerminalSession: true,
+            quickTerminalRoot: first
+        )
+        let secondEnvironment = AgentControl.environment(
+            for: QuickTerminalSession.boxID(root: second),
+            autorun: "claude",
+            quickTerminalSession: true,
+            quickTerminalRoot: second
+        )
+        #expect(firstEnvironment["RUNWAY_BOX"] != secondEnvironment["RUNWAY_BOX"])
+        #expect(firstEnvironment["RUNWAY_DURABLE_SESSION_FILE"] != secondEnvironment["RUNWAY_DURABLE_SESSION_FILE"])
+        #expect(firstEnvironment["RUNWAY_CLAUDE_SESSION_ID"] != secondEnvironment["RUNWAY_CLAUDE_SESSION_ID"])
+    }
+
     @Test("Quick, Focus, and each provider stay in their own namespace")
     func distinctNamespaces() {
         let root = "0a4f8f1e-1111-4222-8333-444455556666"

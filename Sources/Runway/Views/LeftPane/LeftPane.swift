@@ -1,6 +1,33 @@
 import SwiftUI
 import AppKit
 
+/// A changed set of cards needs a fresh scroll container. AppKit can retain an
+/// old clip origin after the lazy stack gets shorter, hiding its first card
+/// even though the board model and count still include it. Reordering within
+/// the same lane keeps the container so a drag does not jump the scroll.
+struct RunwayIssueListIdentity: Hashable {
+    let repository: String
+    let lane: AssignedIssueLane
+    let members: [Int]
+    let resetGeneration: Int
+
+    init(repository: String, lane: AssignedIssueLane, issues: [AssignedIssue], resetGeneration: Int) {
+        self.repository = repository
+        self.lane = lane
+        self.members = issues.map(\.number).sorted()
+        self.resetGeneration = resetGeneration
+    }
+}
+
+private struct FocusBoardMenuAnchorKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
     @Bindable var ws: Workspace
@@ -8,6 +35,9 @@ struct LeftPane: View {
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
     @State private var hoveringNewIssue = false
+    @State private var focusBoardMenuOpen = false
+    @State private var focusBoardMenuAnchor: CGRect = .zero
+    @State private var hoveredFocusBoardMenuItem: Int?
     @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
     @State private var focusIssueDrag = FocusIssueDrag()
@@ -15,6 +45,7 @@ struct LeftPane: View {
     @State private var pullScrollAnchor = RunwayScrollAnchor()
     @State private var openIssueScrollAnchor = RunwayScrollAnchor()
     @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
+    @State private var issueListResetGeneration = 0
     @State private var issueSearchVisible = false
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
@@ -89,8 +120,20 @@ struct LeftPane: View {
             .clipped()
 
             focusDragOverlay
+
+            if focusBoardMenuOpen {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusBoardMenuOpen = false }
+
+                focusBoardDropdown
+                    .offset(x: focusBoardMenuAnchor.minX + 16, y: focusBoardMenuAnchor.maxY + 5)
+            }
         }
         .coordinateSpace(name: FocusIssueDrag.coordinateSpaceName)
+        .onPreferenceChange(FocusBoardMenuAnchorKey.self) {
+            focusBoardMenuAnchor = $0
+        }
         .onPreferenceChange(RunwayIssueCardFramePreferenceKey.self) {
             focusIssueDrag.updateCardFrames($0)
         }
@@ -104,12 +147,13 @@ struct LeftPane: View {
             withAnimation(.easeInOut(duration: 0.16)) {
                 assignedIssues.resetBacklogOrder()
             }
+            issueListResetGeneration &+= 1
         }
         // Coming back to the window refreshes everything, not only the tab in
         // front. Feeds used to be the only source that refreshed here, which is
         // why Pulls and Runway lagged behind it.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            syncAllSources(tick: 15)
+            syncAllSources(tick: 15, forceIssuesFullRefresh: true)
         }
         // One clock for all three sources. They used to poll on separate timers,
         // and Pulls and Runway only while their own tab was on screen, so those
@@ -133,9 +177,12 @@ struct LeftPane: View {
         // Runway tab. Only the selected tab stays mounted, and hanging this off
         // that tab left the terminals on the old repository until it reappeared.
         .task(id: feed.repo) {
+            focusBoardMenuOpen = false
             assignedIssues.restore(repository: feed.repo)
+            revealRequestedFocusIssue()
             syncFocusBoard()
             await assignedIssues.revalidate(repository: feed.repo)
+            revealRequestedFocusIssue()
             syncFocusBoard()
         }
         .task(id: feed.repo) {
@@ -144,11 +191,19 @@ struct LeftPane: View {
         // Observe the complete Focus records, not only membership. GitHub title
         // edits must refresh the issue-owned terminal header without replacing
         // its stable box and live shell session.
-        .onChange(of: assignedIssues.focused) { _, _ in
+        .onChange(of: assignedIssues.allFocused) { _, _ in
             guard focusIssueDrag.issueNumber == nil else { return }
             syncFocusBoard()
         }
+        .onChange(of: assignedIssues.focusBoards) { _, _ in
+            guard focusIssueDrag.issueNumber == nil else { return }
+            syncFocusBoard()
+        }
+        .onChange(of: ws.focusIssueRevealRequest) { _, _ in
+            revealRequestedFocusIssue()
+        }
         .onChange(of: ws.selectedTab) { previousTab, tab in
+            focusBoardMenuOpen = false
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
             refreshSource(for: tab, minimumAge: 15)
@@ -405,22 +460,38 @@ struct LeftPane: View {
     private var subHeader: some View {
         HStack(alignment: .center, spacing: 8) {
             if ws.selectedTab == .runway {
-                Button {
-                    withAnimation(focusBoardCollapseAnimation) {
-                        focusBoardCollapsed.toggle()
+                HStack(spacing: 6) {
+                    Button {
+                        focusBoardMenuOpen.toggle()
+                    } label: {
+                        Text(assignedIssues.focusBoardCount == 1
+                             ? subHeaderText
+                             : "\(subHeaderText) · \(assignedIssues.activeFocusBoardIndex + 1)/\(assignedIssues.focusBoardCount)")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.3))
+                            .tracking(0.8)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(subHeaderText)
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .pointerCursor()
+                    .disabled(feed.repo.isEmpty || !assignedIssues.hasSnapshot)
+                    .help("Switch Focus board")
+
+                    Button {
+                        withAnimation(focusBoardCollapseAnimation) {
+                            focusBoardCollapsed.toggle()
+                        }
+                    } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 7.5, weight: .bold))
                             .rotationEffect(.degrees(focusBoardCollapsed ? -90 : 0))
+                            .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
             } else {
                 Text(subHeaderText)
                     .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
@@ -450,6 +521,14 @@ struct LeftPane: View {
             rotateTagline()
         }
         .onDisappear { taglineTask?.cancel() }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: FocusBoardMenuAnchorKey.self,
+                    value: geometry.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
+                )
+            }
+        }
     }
 
     private var focusBoardCollapseAnimation: Animation {
@@ -462,6 +541,87 @@ struct LeftPane: View {
         case .feeds: displayedTagline
         case .pullRequests: "PULL REQUESTS BY DEV"
         }
+    }
+
+    private var focusBoardDropdown: some View {
+        VStack(spacing: 2) {
+            ForEach(0..<assignedIssues.focusBoardCount, id: \.self) { index in
+                focusBoardDropdownRow(
+                    title: "Board \(index + 1)",
+                    detail: "\(assignedIssues.focusBoards.boards[index].count)/5",
+                    selected: index == assignedIssues.activeFocusBoardIndex,
+                    id: index
+                ) {
+                    assignedIssues.selectFocusBoard(index)
+                    focusBoardCollapsed = false
+                    syncFocusBoard()
+                }
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.09))
+                .frame(height: 1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+
+            focusBoardDropdownRow(
+                title: "New Focus board",
+                detail: nil,
+                selected: false,
+                id: -1
+            ) {
+                assignedIssues.createFocusBoard()
+                focusBoardCollapsed = false
+                syncFocusBoard()
+            }
+        }
+        .padding(6)
+        .frame(width: 194)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.10)))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.45), radius: 12, y: 5)
+    }
+
+    private func focusBoardDropdownRow(
+        title: String,
+        detail: String?,
+        selected: Bool,
+        id: Int,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            action()
+            focusBoardMenuOpen = false
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                Spacer(minLength: 4)
+                if let detail {
+                    Text(detail)
+                        .foregroundStyle(Color.white.opacity(0.38))
+                }
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                }
+            }
+            .font(.system(size: 11, weight: selected ? .semibold : .medium, design: .monospaced))
+            .foregroundStyle(Color.white.opacity(selected ? 0.9 : 0.7))
+            .padding(.horizontal, 9)
+            .frame(height: 29)
+            .background {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.white.opacity(selected ? 0.09 : hoveredFocusBoardMenuItem == id ? 0.06 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .onHover { hoveredFocusBoardMenuItem = $0 ? id : nil }
     }
 
     private var selectedTabIndex: Int {
@@ -668,10 +828,9 @@ struct LeftPane: View {
             )
         }
         .sorted { lhs, rhs in
-            if lhs.mergedCount != rhs.mergedCount { return lhs.mergedCount > rhs.mergedCount }
-            if lhs.totalCount != rhs.totalCount { return lhs.totalCount > rhs.totalCount }
-            return pullRequestDeveloperDisplayName(lhs)
-                .localizedCaseInsensitiveCompare(pullRequestDeveloperDisplayName(rhs)) == .orderedAscending
+            PullRequestDeveloper.ranksAbove(
+                lhs, rhs, displayName: pullRequestDeveloperDisplayName
+            )
         }
     }
 
@@ -958,7 +1117,7 @@ struct LeftPane: View {
             }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+                .padding(.bottom, 10)
 
             if assignedIssues.loading && assignedIssues.issues.isEmpty {
                 ProgressView()
@@ -1608,6 +1767,12 @@ struct LeftPane: View {
             }
             .contentMargins(.top, 0, for: .scrollContent)
             .scrollIndicators(.hidden)
+            .id(RunwayIssueListIdentity(
+                repository: feed.repo,
+                lane: lane,
+                issues: issues,
+                resetGeneration: issueListResetGeneration
+            ))
         }
         .background {
             GeometryReader { proxy in
@@ -1698,7 +1863,22 @@ struct LeftPane: View {
 
     private func syncFocusBoard() {
         guard assignedIssues.hasSnapshot else { return }
-        ws.syncFocusBoard(issues: assignedIssues.focused, repository: feed.repo)
+        ws.syncFocusBoard(
+            issues: assignedIssues.allFocused,
+            visibleIssueNumbers: assignedIssues.focusedIssueNumbers,
+            selectedBoardIndex: assignedIssues.activeFocusBoardIndex,
+            repository: feed.repo
+        )
+    }
+
+    private func revealRequestedFocusIssue() {
+        guard let request = ws.focusIssueRevealRequest,
+              request.repository.caseInsensitiveCompare(feed.repo) == .orderedSame,
+              assignedIssues.hasSnapshot,
+              let index = assignedIssues.boardIndex(containing: request.issueNumber) else { return }
+        assignedIssues.selectFocusBoard(index)
+        ws.focusIssueRevealRequest = nil
+        syncFocusBoard()
     }
 
     private func revalidateFocusBoard(minimumAge: TimeInterval = 15) {
@@ -1717,10 +1897,10 @@ struct LeftPane: View {
     /// board and the pull requests describe the same moment; each service still
     /// throttles itself, so the tab in front leads and the others follow closely
     /// instead of drifting minutes behind.
-    private func syncAllSources(tick: TimeInterval) {
+    private func syncAllSources(tick: TimeInterval, forceIssuesFullRefresh: Bool = false) {
         let ages = RepositorySyncCadence.ages(for: ws.selectedTab, tick: tick)
         Task { await feed.refresh(minimumAge: ages.feed) }
-        revalidateFocusBoard(minimumAge: ages.issues)
+        revalidateFocusBoard(minimumAge: forceIssuesFullRefresh ? 0 : ages.issues)
         Task {
             await pullRequests.revalidate(
                 repository: feed.repo,
@@ -1748,7 +1928,11 @@ struct LeftPane: View {
     /// Picking the tab already showing: back to the top of its list, and refetch
     /// straight away rather than waiting for the next tick.
     private func resetActiveTab() {
-        scrollAnchor(for: ws.selectedTab).scrollToTop()
+        if ws.selectedTab == .runway {
+            issueListResetGeneration &+= 1
+        } else {
+            scrollAnchor(for: ws.selectedTab).scrollToTop()
+        }
         refreshSource(for: ws.selectedTab, minimumAge: 0)
         // A refresh that turns up nothing new still has to look like one. The
         // tagline retypes on the tap itself rather than on an event arriving,

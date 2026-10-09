@@ -68,7 +68,10 @@ enum SettingsKey {
     }
 
     static func configuredPullsTimeframe(in defaults: UserDefaults = .standard) -> PRTimeframe {
-        PRTimeframe(rawValue: defaults.string(forKey: pullsTimeframe) ?? "") ?? .monthToDate
+        let stored = defaults.string(forKey: pullsTimeframe) ?? ""
+        // Keep existing installations on the same selection after renaming 1d.
+        if stored == "1d" { return .oneDay }
+        return PRTimeframe(rawValue: stored) ?? .monthToDate
     }
 
     static func configuredLayoutAxis(in defaults: UserDefaults = .standard) -> TerminalLayoutAxis {

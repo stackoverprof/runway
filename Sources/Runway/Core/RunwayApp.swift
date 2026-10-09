@@ -2,6 +2,54 @@ import SwiftUI
 import AppKit
 import GhosttyKit
 
+/// Ghostty receives every mouse event so selecting text in an unfocused box
+/// still works. Only a click without a drag changes the expanded Focus box.
+struct TerminalClickFocusPolicy {
+    struct Target: Equatable {
+        let window: ObjectIdentifier
+        let boxID: UUID
+    }
+
+    enum Decision: Equatable {
+        case passThrough
+        case focus(UUID)
+        case restoreKeyboard(UUID?)
+    }
+
+    private struct Pending {
+        let target: Target
+        let origin: CGPoint
+        let previousFocusID: UUID?
+        var dragged = false
+    }
+
+    private var pending: Pending?
+
+    mutating func mouseDown(over target: Target?, focusedID: UUID?, at point: CGPoint) -> Decision {
+        pending = nil
+        guard let target, target.boxID != focusedID else { return .passThrough }
+        pending = Pending(target: target, origin: point, previousFocusID: focusedID)
+        return .passThrough
+    }
+
+    mutating func mouseDragged(in window: ObjectIdentifier?, to point: CGPoint) {
+        guard var pending, pending.target.window == window else { return }
+        let dx = point.x - pending.origin.x
+        let dy = point.y - pending.origin.y
+        if dx * dx + dy * dy >= 9 { pending.dragged = true }
+        self.pending = pending
+    }
+
+    mutating func mouseUp(over target: Target?) -> Decision {
+        guard let pending else { return .passThrough }
+        self.pending = nil
+        guard !pending.dragged, pending.target == target else {
+            return .restoreKeyboard(pending.previousFocusID)
+        }
+        return .focus(pending.target.boxID)
+    }
+}
+
 @main
 struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -107,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// these even while a terminal is first responder (⌘-combos don't reach the
     /// shell anyway), and swallows the ones it handles.
     private func installShortcutMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             nonisolated(unsafe) let ev = event
             let handled: Bool = MainActor.assumeIsolated { AppDelegate.handleShortcut(ev) }
             return handled ? nil : event
@@ -131,6 +179,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let ws = context.workspace
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
+        let quickTerminalFocused = ws.quickVisible && ws.quickHasKeyboard?() == true
+
+        // ⌘W closes the selected Quick Agent tab when its terminal is focused.
+        // Closing its last tab hides the panel but keeps the session mounted.
+        if KeyBindings.shared.chord(for: .closeBox).matches(ev),
+           quickTerminalFocused {
+            ws.requestQuickTabAction(.close)
+            return true
+        }
+
+        if quickTerminalFocused, mods == [.command] {
+            if ev.keyCode == 17 { // ⌘T
+                ws.requestQuickTabAction(.new)
+                return true
+            }
+            if let key = ev.charactersIgnoringModifiers,
+               let index = Int(key), (1...9).contains(index) {
+                ws.requestQuickTabAction(.select(index))
+                return true
+            }
+        }
+
+        if quickTerminalFocused, mods == [.command, .shift] {
+            if ev.keyCode == 33 { // ⌘⇧[
+                ws.requestQuickTabAction(.cycle(-1))
+                return true
+            }
+            if ev.keyCode == 30 { // ⌘⇧]
+                ws.requestQuickTabAction(.cycle(1))
+                return true
+            }
+        }
 
         // Fixed: ⌘F toggles search for whichever left-pane tab is active.
         if mods == [.command], ev.keyCode == 3 {
@@ -144,11 +224,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ws.focus(index: d - 1); return true
         }
 
-        // Option-Command-1/2/3 jumps to Runway/Feeds/PR tab.
+        // Option-Command-1/2/3 jumps to Runway/Feeds/PR tab. Repeating the
+        // shortcut for the active tab performs the same refresh-and-top reset
+        // as clicking that tab again.
         if mods == [.command, .option], let key = ev.charactersIgnoringModifiers,
            let d = Int(key), (1...3).contains(d) {
             let tabs = FeedTab.allCases
-            ws.selectedTab = tabs[d - 1]
+            let tab = tabs[d - 1]
+            if ws.selectedTab == tab {
+                ws.requestTabReset()
+            } else {
+                ws.selectedTab = tab
+            }
             return true
         }
 
@@ -243,27 +330,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Clicking inside a terminal focuses its box (resolved via the registry).
-    /// Doesn't swallow the click — the terminal still gets it.
+    /// Let Ghostty receive the down, drag, and up for text selection. A simple
+    /// click focuses on release; a drag only selects and restores the previous
+    /// keyboard responder after Ghostty finishes its copy-on-select handling.
     private func installClickFocusMonitor() {
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+        clickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+        ) { event in
             nonisolated(unsafe) let ev = event
-            let swallow: Bool = MainActor.assumeIsolated {
-                guard let window = ev.window else { return false }
-                guard
-                      let hit = window.contentView?.hitTest(ev.locationInWindow),
-                      let id = TerminalRegistry.shared.boxID(under: hit) else { return false }
-                guard let ws = RunwayWindowRegistry.shared.context(for: window)?.workspace else { return false }
-                let changingFocus = id != ws.focusedID
-                // setFocus (not just focusedID) so the clicked terminal also becomes
-                // the keyboard first responder — otherwise the glow moves but typing
-                // stays on the previously-focused terminal.
-                ws.setFocus(id)
-                // A focus change resizes the accordion. Swallow that first click so
-                // the terminal does not begin a stray selection while it reflows.
-                return changingFocus
+            MainActor.assumeIsolated {
+                let registry = TerminalRegistry.shared
+                let window = ev.window
+                let workspace = RunwayWindowRegistry.shared.context(for: window)?.workspace
+                let target = window.flatMap { window -> TerminalClickFocusPolicy.Target? in
+                    guard workspace != nil,
+                          let hit = window.contentView?.hitTest(ev.locationInWindow),
+                          let id = registry.boxID(under: hit) else { return nil }
+                    return .init(window: ObjectIdentifier(window), boxID: id)
+                }
+                let decision: TerminalClickFocusPolicy.Decision
+                switch ev.type {
+                case .leftMouseDown:
+                    decision = registry.clickFocusPolicy.mouseDown(
+                        over: target, focusedID: workspace?.focusedID,
+                        at: ev.locationInWindow
+                    )
+                case .leftMouseDragged:
+                    registry.clickFocusPolicy.mouseDragged(
+                        in: window.map(ObjectIdentifier.init), to: ev.locationInWindow
+                    )
+                    return
+                case .leftMouseUp:
+                    decision = registry.clickFocusPolicy.mouseUp(over: target)
+                default:
+                    return
+                }
+                switch decision {
+                case .passThrough: break
+                case .focus(let id):
+                    // The terminal receives mouse-up before the accordion moves.
+                    Task { @MainActor in
+                        guard workspace?.activeBoxes.contains(where: { $0.id == id }) == true else { return }
+                        workspace?.setFocus(id)
+                    }
+                case .restoreKeyboard(let id):
+                    Task { @MainActor in
+                        TerminalRegistry.shared.focusTerminal(id)
+                    }
+                }
             }
-            return swallow ? nil : event
+            return event
         }
     }
 

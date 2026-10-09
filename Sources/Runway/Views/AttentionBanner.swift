@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// In-app alerts for agents waiting in a repository that is not on screen.
+/// In-app alerts for agents whose Focus card or Quick tab is not on screen.
 ///
-/// A card in the selected repository pulses where the user can see it. A parked
-/// one cannot, so it says so here, and clicking it goes straight there.
+/// A visible terminal pulses where the user can see it. A parked terminal
+/// cannot, so this banner provides a direct route to it.
 struct AttentionBanners: View {
     @Bindable var ws: Workspace
 
@@ -27,7 +27,7 @@ struct AttentionBanners: View {
                 .shadow(color: Color(red: 0.91, green: 0.62, blue: 0.20).opacity(0.7), radius: 4)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(shortRepository(alert.repository))
+                Text(shortRepository(alert.location))
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.45))
                 Text("\(alert.title) needs you")
@@ -64,7 +64,7 @@ struct AttentionBanners: View {
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .pointerCursor()
         .onTapGesture { ws.openAttention(alert) }
-        .help("Switch to \(alert.repository) and focus this agent")
+        .help("Focus \(alert.location) agent")
     }
 
     private func shortRepository(_ repository: String) -> String {

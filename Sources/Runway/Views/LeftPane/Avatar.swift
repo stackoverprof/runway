@@ -24,25 +24,46 @@ struct Avatar: View {
     let login: String
     var url: String? = nil
     let size: CGFloat
-    @State private var image: NSImage?
+    @State private var loadedAvatar: LoadedAvatar?
+
+    private struct LoadedAvatar {
+        let login: String
+        let url: String
+        let image: NSImage
+    }
+
+    private var customImage: NSImage? {
+        PersonProfileManager.shared.customImage(for: login)
+    }
+
+    private var loadTaskID: String {
+        "\(login.lowercased())\u{0}\(url ?? "")\u{0}\(customImage == nil)"
+    }
 
     var body: some View {
         Group {
-            if let customImg = PersonProfileManager.shared.customImage(for: login) {
+            if let customImg = customImage {
                 Image(nsImage: customImg).resizable().scaledToFill()
-            } else if let image {
-                Image(nsImage: image).resizable().scaledToFill()
+            } else if let loadedAvatar,
+                      loadedAvatar.login == login.lowercased(),
+                      loadedAvatar.url == url {
+                Image(nsImage: loadedAvatar.image).resizable().scaledToFill()
             } else {
                 initialsCircle
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .task(id: url) {
-            guard PersonProfileManager.shared.customImage(for: login) == nil else { return }
-            guard let url else { image = nil; return }
-            if let hit = AvatarCache.shared.cached(url) { image = hit; return }
-            if let loaded = await AvatarCache.shared.load(url) { image = loaded }
+        .task(id: loadTaskID) {
+            guard customImage == nil else { return }
+            guard let url else { loadedAvatar = nil; return }
+            if let hit = AvatarCache.shared.cached(url) {
+                loadedAvatar = LoadedAvatar(login: login.lowercased(), url: url, image: hit)
+                return
+            }
+            if let loaded = await AvatarCache.shared.load(url), !Task.isCancelled {
+                loadedAvatar = LoadedAvatar(login: login.lowercased(), url: url, image: loaded)
+            }
         }
     }
 

@@ -103,6 +103,22 @@ struct PullRequestDeveloper: Identifiable {
     }
     var totalCount: Int { pullRequests.count }
     var avatarURL: String { "https://github.com/\(login).png?size=96" }
+
+    static func ranksAbove(
+        _ lhs: PullRequestDeveloper,
+        _ rhs: PullRequestDeveloper,
+        displayName: (PullRequestDeveloper) -> String = { $0.displayName }
+    ) -> Bool {
+        if lhs.mergedCount != rhs.mergedCount { return lhs.mergedCount > rhs.mergedCount }
+        // An open PR counts twice as much as a draft. Keep open PRs ahead
+        // when the weighted totals tie, then use other activity as a tiebreaker.
+        let lhsActiveScore = lhs.openCount * 2 + lhs.draftCount
+        let rhsActiveScore = rhs.openCount * 2 + rhs.draftCount
+        if lhsActiveScore != rhsActiveScore { return lhsActiveScore > rhsActiveScore }
+        if lhs.openCount != rhs.openCount { return lhs.openCount > rhs.openCount }
+        if lhs.totalCount != rhs.totalCount { return lhs.totalCount > rhs.totalCount }
+        return displayName(lhs).localizedCaseInsensitiveCompare(displayName(rhs)) == .orderedAscending
+    }
 }
 
 @MainActor @Observable final class PullRequests {
@@ -157,11 +173,7 @@ struct PullRequestDeveloper: Identifiable {
                     pullRequests: pullRequests.sorted(by: RepositoryPullRequest.displaySort)
                 )
             }
-            .sorted { lhs, rhs in
-                if lhs.mergedCount != rhs.mergedCount { return lhs.mergedCount > rhs.mergedCount }
-                if lhs.totalCount != rhs.totalCount { return lhs.totalCount > rhs.totalCount }
-                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-            }
+            .sorted { PullRequestDeveloper.ranksAbove($0, $1) }
         developerCache[key] = developers
         return developers
     }

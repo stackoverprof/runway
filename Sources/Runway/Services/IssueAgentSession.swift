@@ -67,6 +67,8 @@ enum DeterministicSessionID {
 /// anything on screen: nothing but the "new session" button can change it.
 enum QuickTerminalSession {
     static let rootKey = "runway.quickSessionRoot.v1"
+    static let tabRootsKey = "runway.quickSessionTabs.v1"
+    static let selectedRootKey = "runway.quickSelectedSessionTab.v1"
 
     /// Reads the stored root, minting and saving one on first use.
     static func root(in defaults: UserDefaults = .standard) -> String {
@@ -100,5 +102,76 @@ enum QuickTerminalSession {
         in defaults: UserDefaults = .standard
     ) -> UUID {
         id(provider: provider, root: root(in: defaults))
+    }
+
+    static func boxID(root: String) -> UUID {
+        DeterministicSessionID.uuid(for: "runway-quick-box-v1:\(root)")
+    }
+
+    /// Migrates the original single Quick Terminal conversation into tab one.
+    static func tabRoots(in defaults: UserDefaults = .standard) -> [String] {
+        if let saved = defaults.stringArray(forKey: tabRootsKey) {
+            let roots = saved.filter { !$0.isEmpty }
+            if !roots.isEmpty { return roots }
+        }
+        let legacyRoot = root(in: defaults)
+        defaults.set([legacyRoot], forKey: tabRootsKey)
+        return [legacyRoot]
+    }
+
+    static func selectedRoot(in defaults: UserDefaults = .standard) -> String {
+        let roots = tabRoots(in: defaults)
+        if let selected = defaults.string(forKey: selectedRootKey),
+           roots.contains(selected) {
+            return selected
+        }
+        defaults.set(roots[0], forKey: selectedRootKey)
+        return roots[0]
+    }
+
+    @discardableResult
+    static func addTab(in defaults: UserDefaults = .standard) -> String {
+        let fresh = UUID().uuidString.lowercased()
+        var roots = tabRoots(in: defaults)
+        roots.append(fresh)
+        defaults.set(roots, forKey: tabRootsKey)
+        defaults.set(fresh, forKey: selectedRootKey)
+        return fresh
+    }
+
+    @discardableResult
+    static func replaceTab(_ root: String, in defaults: UserDefaults = .standard) -> String {
+        let fresh = UUID().uuidString.lowercased()
+        var roots = tabRoots(in: defaults)
+        guard let index = roots.firstIndex(of: root) else { return root }
+        roots[index] = fresh
+        defaults.set(roots, forKey: tabRootsKey)
+        if defaults.string(forKey: selectedRootKey) == root {
+            defaults.set(fresh, forKey: selectedRootKey)
+        }
+        return fresh
+    }
+
+    /// Keeps at least one Quick Terminal tab and selects a neighbor if needed.
+    @discardableResult
+    static func closeTab(_ root: String, in defaults: UserDefaults = .standard) -> String {
+        var roots = tabRoots(in: defaults)
+        guard roots.count > 1, let index = roots.firstIndex(of: root) else {
+            return selectedRoot(in: defaults)
+        }
+        roots.remove(at: index)
+        defaults.set(roots, forKey: tabRootsKey)
+        let selected = defaults.string(forKey: selectedRootKey)
+        if selected == root || !roots.contains(selected ?? "") {
+            let neighbor = roots[min(index, roots.count - 1)]
+            defaults.set(neighbor, forKey: selectedRootKey)
+            return neighbor
+        }
+        return selected ?? roots[0]
+    }
+
+    static func selectTab(_ root: String, in defaults: UserDefaults = .standard) {
+        guard tabRoots(in: defaults).contains(root) else { return }
+        defaults.set(root, forKey: selectedRootKey)
     }
 }

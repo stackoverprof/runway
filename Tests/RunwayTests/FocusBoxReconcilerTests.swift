@@ -54,6 +54,32 @@ struct FocusBoxReconcilerTests {
         #expect(result.removedBoxes.isEmpty)
     }
 
+    @Test("Switching Focus pages keeps both pages' terminal identities alive")
+    func keepsParkedFocusPageTerminals() {
+        let first = AgentBox(
+            name: "Board one",
+            focusRepository: "owner/repository",
+            focusIssueNumber: 101
+        )
+        let second = AgentBox(
+            name: "Board two",
+            focusRepository: "owner/repository",
+            focusIssueNumber: 202
+        )
+
+        let result = FocusBoxReconciler.reconcile(
+            previousBoxes: [first, second],
+            issues: [issue(number: 101, title: "Board one"), issue(number: 202, title: "Board two")],
+            repository: "owner/repository",
+            workingDirectory: "/repos/repository",
+            command: "claude",
+            retainUnmanagedBoxes: true
+        )
+
+        #expect(result.repositoryBoxes.map(\.id) == [first.id, second.id])
+        #expect(result.removedBoxes.isEmpty)
+    }
+
     @Test("Removing focus only closes terminals from that repository")
     func removesOnlyCurrentRepositoryBoxes() {
         let repositoryABox = AgentBox(

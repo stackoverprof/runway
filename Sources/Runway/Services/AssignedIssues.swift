@@ -60,7 +60,7 @@ extension Notification.Name {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var hasSnapshot = false
-    private(set) var focusedIssueNumbers: [Int] = []
+    private(set) var focusBoards = FocusBoards()
     private(set) var openIssueNumbers: [Int] = []
     private(set) var closedIssueNumbers: [Int] = []
 
@@ -70,32 +70,55 @@ extension Notification.Name {
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
     @ObservationIgnored private var pendingRenameTitles: [String: [Int: String]] = [:]
     private static let focusedIssuesKey = "runway.focusedAssignedIssueNumbers.v2"
+    private static let focusBoardsKey = "runway.focusBoards.v1"
     private static let backlogOrderKey = "runway.assignedIssueBacklogOrder.v2"
     private static var snapshotFile: URL {
         AgentControl.supportDir.appendingPathComponent("assigned-issues-cache.json")
     }
 
     var open: [AssignedIssue] {
-        orderedIssues(openIssueNumbers)
-            .filter { !$0.isClosed && !focusedIssueNumbers.contains($0.number) }
+        let focused = focusBoards.allSet
+        return orderedIssues(openIssueNumbers)
+            .filter { !$0.isClosed && !focused.contains($0.number) }
     }
 
     var closed: [AssignedIssue] {
-        orderedIssues(closedIssueNumbers)
-            .filter { $0.isClosed && !focusedIssueNumbers.contains($0.number) }
+        let focused = focusBoards.allSet
+        return orderedIssues(closedIssueNumbers)
+            .filter { $0.isClosed && !focused.contains($0.number) }
     }
 
+    var focusedIssueNumbers: [Int] { focusBoards.selected }
+    var activeFocusBoardIndex: Int { focusBoards.selectedIndex }
+    var focusBoardCount: Int { focusBoards.count }
+    var allFocused: [AssignedIssue] { orderedIssues(focusBoards.all) }
+
     var focused: [AssignedIssue] {
-        focusedIssueNumbers.compactMap { number in
-            issues.first { $0.number == number }
-        }
+        orderedIssues(focusedIssueNumbers)
+    }
+
+    func boardIndex(containing issueNumber: Int) -> Int? {
+        focusBoards.boardIndex(containing: issueNumber)
+    }
+
+    func selectFocusBoard(_ index: Int) {
+        guard let repository = loadedRepository, focusBoards.selectedIndex != index,
+              (0..<focusBoards.count).contains(index) else { return }
+        focusBoards.select(index)
+        saveFocus(for: repository)
+    }
+
+    func createFocusBoard() {
+        guard let repository = loadedRepository else { return }
+        focusBoards.create()
+        saveFocus(for: repository)
     }
 
     func restore(repository: String) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
             issues = []
-            focusedIssueNumbers = []
+            focusBoards = FocusBoards()
             openIssueNumbers = []
             closedIssueNumbers = []
             loadedRepository = nil
@@ -110,13 +133,14 @@ extension Notification.Name {
         let snapshot = snapshots[repository]
         issues = snapshot?.issues ?? []
         hasSnapshot = snapshot != nil
-        focusedIssueNumbers = Self.savedFocus[repository] ?? []
+        focusBoards = Self.savedFocusBoards[repository]
+            ?? FocusBoards(boards: [Self.savedFocus[repository] ?? []])
         let savedOrder = Self.savedBacklogOrder[repository]
         openIssueNumbers = savedOrder?.open ?? []
         closedIssueNumbers = savedOrder?.closed ?? []
         if let snapshot {
             reconcileOrders(with: snapshot.issues)
-            FocusActivityLog.seedCurrentFocus(repository: repository, issues: focused)
+            FocusActivityLog.seedCurrentFocus(repository: repository, issues: allFocused)
         }
         error = nil
     }
@@ -191,7 +215,7 @@ extension Notification.Name {
     }
 
     private func lane(of issueNumber: Int) -> AssignedIssueLane? {
-        if focusedIssueNumbers.contains(issueNumber) { return .focus }
+        if focusBoards.allSet.contains(issueNumber) { return .focus }
         if openIssueNumbers.contains(issueNumber) { return .open }
         if closedIssueNumbers.contains(issueNumber) { return .closed }
         return nil
@@ -224,8 +248,11 @@ extension Notification.Name {
             return
         }
         if let loadTask, loadTaskRepository == repository {
+            let previousFullFetch = snapshots[repository]?.lastFullFetchedAt
             await loadTask.value
-            return
+            if minimumAge > 0 || snapshots[repository]?.lastFullFetchedAt != previousFullFetch {
+                return
+            }
         }
 
         loading = true
@@ -235,9 +262,11 @@ extension Notification.Name {
             guard let self else { return }
             let previousSnapshot = snapshots[repository]
             let now = Date()
-            let needsFullRefresh = previousSnapshot == nil
-                || previousSnapshot?.lastFullFetchedAt == nil
-                || now.timeIntervalSince(previousSnapshot?.lastFullFetchedAt ?? .distantPast) > 6 * 3_600
+            let needsFullRefresh = Self.needsFullRefresh(
+                lastFullFetchedAt: previousSnapshot?.lastFullFetchedAt,
+                now: now,
+                explicitlyRequested: minimumAge == 0
+            )
             var arguments = [
                 "issue", "list",
                 "--repo", repository,
@@ -252,7 +281,10 @@ extension Notification.Name {
                     "updated:>=\(Self.iso8601.string(from: fetchedAt.addingTimeInterval(-300)))",
                 ])
             }
-            let data = await GH.query(arguments, cacheFor: 20)
+            // A full assigned-issue list is the only response that can prove an
+            // issue disappeared after unassignment. Do not reuse a cached full
+            // response when the user explicitly refreshes the board.
+            let data = await GH.query(arguments, cacheFor: needsFullRefresh ? 0 : 20)
             guard !Task.isCancelled, loadedRepository == repository else { return }
             guard let data else {
                 error = GitHubFeed.ghHint
@@ -291,7 +323,7 @@ extension Notification.Name {
             })
             if needsFullRefresh {
                 let fetchedNumbers = Set(fetched.map(\.number))
-                for issueNumber in focusedIssueNumbers where !fetchedNumbers.contains(issueNumber) {
+                for issueNumber in focusBoards.all where !fetchedNumbers.contains(issueNumber) {
                     guard let issue = issues.first(where: { $0.number == issueNumber }) else { continue }
                     FocusActivityLog.record(
                         action: .exitedFocus,
@@ -302,17 +334,13 @@ extension Notification.Name {
                         cause: "revalidation"
                     )
                 }
-                issues = fetched
-            } else {
-                var merged = Dictionary(uniqueKeysWithValues: issues.map { ($0.number, $0) })
-                for issue in fetched { merged[issue.number] = issue }
-                issues = merged.values.sorted {
-                    ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
-                }
             }
+            issues = Self.issuesAfterRefresh(
+                current: issues, fetched: fetched, fullRefresh: needsFullRefresh
+            )
             hasSnapshot = true
             reconcileOrders(with: issues, prioritizing: newlyDiscovered)
-            FocusActivityLog.seedCurrentFocus(repository: repository, issues: focused)
+            FocusActivityLog.seedCurrentFocus(repository: repository, issues: allFocused)
             saveSnapshot(
                 for: repository,
                 fetchedAt: now,
@@ -331,6 +359,28 @@ extension Notification.Name {
         if loadTaskRepository == repository {
             loadTask = nil
             loadTaskRepository = nil
+        }
+    }
+
+    static func needsFullRefresh(
+        lastFullFetchedAt: Date?,
+        now: Date,
+        explicitlyRequested: Bool
+    ) -> Bool {
+        guard !explicitlyRequested, let lastFullFetchedAt else { return true }
+        return now.timeIntervalSince(lastFullFetchedAt) >= 60
+    }
+
+    static func issuesAfterRefresh(
+        current: [AssignedIssue],
+        fetched: [AssignedIssue],
+        fullRefresh: Bool
+    ) -> [AssignedIssue] {
+        if fullRefresh { return fetched }
+        var merged = Dictionary(uniqueKeysWithValues: current.map { ($0.number, $0) })
+        for issue in fetched { merged[issue.number] = issue }
+        return merged.values.sorted {
+            ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
         }
     }
 
@@ -356,9 +406,7 @@ extension Notification.Name {
             available: defaultClosed,
             prioritizing: issueNumbers
         )
-        focusedIssueNumbers = Array(focusedIssueNumbers.filter { number in
-            availableIssues.contains { $0.number == number }
-        }.prefix(5))
+        focusBoards.reconcile(available: Set(availableIssues.map(\.number)))
     }
 
     static func resetSavedBacklogOrder() {
@@ -382,9 +430,9 @@ extension Notification.Name {
     func promoteToFocus(issueNumber: Int) {
         guard let repository = loadedRepository,
               issues.contains(where: { $0.number == issueNumber }),
-              !focusedIssueNumbers.contains(issueNumber),
+              !focusBoards.allSet.contains(issueNumber),
               focusedIssueNumbers.count < 5 else { return }
-        focusedIssueNumbers.append(issueNumber)
+        focusBoards.replaceSelected(with: focusedIssueNumbers + [issueNumber])
         saveFocus(for: repository)
         if let issue = issues.first(where: { $0.number == issueNumber }) {
             FocusActivityLog.record(
@@ -401,7 +449,7 @@ extension Notification.Name {
         guard let repository = loadedRepository,
               let issue = issues.first(where: { $0.number == issueNumber }),
               focusedIssueNumbers.contains(issueNumber) else { return }
-        focusedIssueNumbers.removeAll { $0 == issueNumber }
+        focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
         saveFocus(for: repository)
         FocusActivityLog.record(
             action: .exitedFocus,
@@ -424,7 +472,7 @@ extension Notification.Name {
     func restoreFocusedOrder(_ order: [Int]) {
         guard let repository = loadedRepository else { return }
         let available = Set(focusedIssueNumbers)
-        focusedIssueNumbers = order.filter(available.contains)
+        focusBoards.replaceSelected(with: order.filter(available.contains))
         saveFocus(for: repository)
     }
 
@@ -520,7 +568,10 @@ extension Notification.Name {
             guard let targetNumber, issueNumber != targetNumber else { return true }
             switch destination {
             case .focus:
-                move(issueNumber, before: targetNumber, in: &focusedIssueNumbers)
+                guard focusedIssueNumbers.contains(issueNumber) else { return false }
+                var order = focusedIssueNumbers
+                move(issueNumber, before: targetNumber, in: &order)
+                focusBoards.replaceSelected(with: order)
                 saveFocus(for: repository)
             case .open:
                 move(issueNumber, before: targetNumber, in: &openIssueNumbers)
@@ -534,9 +585,11 @@ extension Notification.Name {
 
         switch (source, destination) {
         case (.open, .focus), (.closed, .focus):
-            guard !focusedIssueNumbers.contains(issueNumber),
+            guard !focusBoards.allSet.contains(issueNumber),
                   focusedIssueNumbers.count < 5 else { return false }
-            insert(issueNumber, before: targetNumber, in: &focusedIssueNumbers)
+            var order = focusedIssueNumbers
+            insert(issueNumber, before: targetNumber, in: &order)
+            focusBoards.replaceSelected(with: order)
             saveFocus(for: repository)
             FocusActivityLog.record(
                 action: .enteredFocus,
@@ -548,6 +601,7 @@ extension Notification.Name {
             return true
 
         case (.focus, .open), (.focus, .closed):
+            guard focusedIssueNumbers.contains(issueNumber) else { return false }
             let shouldClose = destination == .closed
             let needsGitHubMutation = issue.isClosed != shouldClose
             let rollback = IssueMoveRollback(
@@ -559,7 +613,7 @@ extension Notification.Name {
                 shouldLogFocusReturn: true
             )
 
-            focusedIssueNumbers.removeAll { $0 == issueNumber }
+            focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
             if destination == .open {
                 closedIssueNumbers.removeAll { $0 == issueNumber }
                 openIssueNumbers = Self.returnedBacklogOrder(
@@ -723,10 +777,12 @@ extension Notification.Name {
     ) {
         guard let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }) else { return }
         issues[issueIndex] = rollback.issue
-        focusedIssueNumbers.removeAll { $0 == issueNumber }
+        focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
         openIssueNumbers.removeAll { $0 == issueNumber }
         closedIssueNumbers.removeAll { $0 == issueNumber }
-        restore(issueNumber, at: rollback.focusIndex, in: &focusedIssueNumbers)
+        var focusOrder = focusedIssueNumbers
+        restore(issueNumber, at: rollback.focusIndex, in: &focusOrder)
+        focusBoards.replaceSelected(with: focusOrder)
         restore(issueNumber, at: rollback.openIndex, in: &openIssueNumbers)
         restore(issueNumber, at: rollback.closedIndex, in: &closedIssueNumbers)
         if let repository = loadedRepository {
@@ -752,10 +808,10 @@ extension Notification.Name {
     }
 
     private func saveFocus(for repository: String) {
-        var saved = Self.savedFocus
-        saved[repository] = focusedIssueNumbers
+        var saved = Self.savedFocusBoards
+        saved[repository] = focusBoards
         guard let data = try? JSONEncoder().encode(saved) else { return }
-        UserDefaults.standard.set(data, forKey: Self.focusedIssuesKey)
+        UserDefaults.standard.set(data, forKey: Self.focusBoardsKey)
     }
 
     private func saveBacklogOrder(for repository: String) {
@@ -799,6 +855,29 @@ extension Notification.Name {
             return [:]
         }
         return saved
+    }
+
+    private static var savedFocusBoards: [String: FocusBoards] {
+        guard let data = UserDefaults.standard.data(forKey: focusBoardsKey),
+              let saved = try? JSONDecoder().decode([String: FocusBoards].self, from: data) else {
+            return [:]
+        }
+        return saved
+    }
+
+    static func savedSelectedFocusIssues(for repository: String) -> [Int] {
+        (savedFocusBoards[repository]
+            ?? FocusBoards(boards: [savedFocus[repository] ?? []])).selected
+    }
+
+    static func savedSelectedFocusBoardIndex(for repository: String) -> Int {
+        savedFocusBoards[repository]?.selectedIndex ?? 0
+    }
+
+    static func savedBoardIndex(containing issueNumber: Int, in repository: String) -> Int? {
+        (savedFocusBoards[repository]
+            ?? FocusBoards(boards: [savedFocus[repository] ?? []]))
+            .boardIndex(containing: issueNumber)
     }
 
     private struct SavedBacklogOrder: Codable {

@@ -113,6 +113,46 @@ struct PullRequestsTests {
         #expect(developer.closedCount == 0)
     }
 
+    @Test("One open PR ranks above one draft PR")
+    func openOutranksDraft() {
+        let draft = PullRequestDeveloper(
+            login: "fahri", name: "Fahri",
+            pullRequests: [makePullRequest(
+                state: "OPEN", createdAt: start, updatedAt: start, isDraft: true
+            )]
+        )
+        let open = PullRequestDeveloper(
+            login: "zul", name: "Zul",
+            pullRequests: [makePullRequest(
+                state: "OPEN", createdAt: start, updatedAt: start
+            )]
+        )
+
+        #expect([draft, open].sorted { PullRequestDeveloper.ranksAbove($0, $1) }
+            .map(\.login) == ["zul", "fahri"])
+    }
+
+    @Test("Two drafts tie one open PR, with the open PR winning the tie")
+    func openWinsWeightedTie() {
+        let drafts = PullRequestDeveloper(
+            login: "drafts", name: "Drafts",
+            pullRequests: [1, 2].map { number in
+                makePullRequest(
+                    number: number, state: "OPEN", createdAt: start,
+                    updatedAt: start, isDraft: true
+                )
+            }
+        )
+        let open = PullRequestDeveloper(
+            login: "open", name: "Open",
+            pullRequests: [makePullRequest(
+                state: "OPEN", createdAt: start, updatedAt: start
+            )]
+        )
+
+        #expect(PullRequestDeveloper.ranksAbove(open, drafts))
+    }
+
     private func makePullRequest(
         number: Int = 1234,
         state: String,
