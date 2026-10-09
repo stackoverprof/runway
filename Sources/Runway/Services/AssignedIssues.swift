@@ -57,7 +57,7 @@ extension Notification.Name {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var hasSnapshot = false
-    private(set) var focusBoards = FocusBoards()
+    private(set) var focusReel = FocusReel(visibleCount: SettingsKey.configuredFocusVisibleCount())
     private(set) var openIssueNumbers: [Int] = []
     private(set) var closedIssueNumbers: [Int] = []
 
@@ -67,75 +67,83 @@ extension Notification.Name {
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
     @ObservationIgnored private var pendingRenameTitles: [String: [Int: String]] = [:]
     private static let focusedIssuesKey = "runway.focusedAssignedIssueNumbers.v2"
-    private static let focusBoardsKey = "runway.focusBoards.v1"
+    /// Paginated boards, read once per repository to migrate into the reel.
+    private static let legacyFocusBoardsKey = "runway.focusBoards.v1"
+    private static let focusReelKey = "runway.focusReel.v1"
     private static let backlogOrderKey = "runway.assignedIssueBacklogOrder.v2"
     private static var snapshotFile: URL {
         AgentControl.supportDir.appendingPathComponent("assigned-issues-cache.json")
     }
 
     var open: [AssignedIssue] {
-        let focused = focusBoards.allSet
+        let focused = focusReel.allSet
         return orderedIssues(openIssueNumbers)
             .filter { !$0.isClosed && !focused.contains($0.number) }
     }
 
     var closed: [AssignedIssue] {
-        let focused = focusBoards.allSet
+        let focused = focusReel.allSet
         return orderedIssues(closedIssueNumbers)
             .filter { $0.isClosed && !focused.contains($0.number) }
     }
 
-    var focusedIssueNumbers: [Int] { focusBoards.selected }
-    var activeFocusBoardIndex: Int { focusBoards.selectedIndex }
-    var focusBoardCount: Int { focusBoards.count }
-    var allFocused: [AssignedIssue] { orderedIssues(focusBoards.all) }
+    /// Issues in the window, the ones whose terminals are on screen.
+    var focusedIssueNumbers: [Int] { focusReel.visible }
+    var allFocusedIssueNumbers: [Int] { focusReel.issues }
+    var allFocused: [AssignedIssue] { orderedIssues(focusReel.issues) }
+    var hiddenAboveCount: Int { focusReel.hiddenAbove }
+    var hiddenBelowCount: Int { focusReel.hiddenBelow }
+    var firstHiddenBelowFocusIssue: Int? { focusReel.firstHiddenBelow }
 
     var focused: [AssignedIssue] {
         orderedIssues(focusedIssueNumbers)
     }
 
-    func boardIndex(containing issueNumber: Int) -> Int? {
-        focusBoards.boardIndex(containing: issueNumber)
+    /// Whether Focus takes one more issue under the configured limit.
+    var canAddToFocus: Bool {
+        FocusReel.canAdd(count: focusReel.count, limit: SettingsKey.configuredFocusLimit())
     }
 
-    func selectFocusBoard(_ index: Int) {
-        guard let repository = loadedRepository, focusBoards.selectedIndex != index,
-              (0..<focusBoards.count).contains(index) else { return }
-        focusBoards.select(index)
+    func focusContains(_ issueNumber: Int) -> Bool {
+        focusReel.contains(issueNumber)
+    }
+
+    /// Slides the window. Never a Focus entry or exit, so nothing is logged.
+    @discardableResult
+    func shiftFocusWindow(by delta: Int) -> Bool {
+        guard let repository = loadedRepository, focusReel.shift(by: delta) else { return false }
         saveFocus(for: repository)
+        return true
     }
 
-    func createFocusBoard() {
-        guard let repository = loadedRepository else { return }
-        focusBoards.create()
-        saveFocus(for: repository)
-    }
-
-    /// Deleting a board returns its issues to Open or Closed, the same as
-    /// taking each one out of Focus. Their lanes already hold them, so only
-    /// the board membership changes; the log records each exit.
-    func deleteFocusBoard(_ index: Int) {
+    /// Slides the window while a Focus card is dragged, keeping that card in it.
+    @discardableResult
+    func shiftFocusWindow(by delta: Int, carrying issueNumber: Int) -> Bool {
         guard let repository = loadedRepository,
-              let removed = focusBoards.remove(at: index) else { return }
+              focusReel.shift(by: delta, carrying: issueNumber) else { return false }
         saveFocus(for: repository)
-        for issueNumber in removed {
-            guard let issue = issues.first(where: { $0.number == issueNumber }) else { continue }
-            FocusActivityLog.record(
-                action: .exitedFocus,
-                repository: repository,
-                issue: issue,
-                from: .focus,
-                to: issue.isClosed ? .closed : .open,
-                cause: "board_deleted"
-            )
-        }
+        return true
+    }
+
+    @discardableResult
+    func revealInFocus(_ issueNumber: Int) -> Bool {
+        guard let repository = loadedRepository, focusReel.reveal(issueNumber) else { return false }
+        saveFocus(for: repository)
+        return true
+    }
+
+    func setFocusVisibleCount(_ count: Int) {
+        let previous = focusReel
+        focusReel.setVisibleCount(count)
+        guard focusReel != previous, let repository = loadedRepository else { return }
+        saveFocus(for: repository)
     }
 
     func restore(repository: String) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
             issues = []
-            focusBoards = FocusBoards()
+            focusReel = FocusReel(visibleCount: SettingsKey.configuredFocusVisibleCount())
             openIssueNumbers = []
             closedIssueNumbers = []
             loadedRepository = nil
@@ -150,8 +158,7 @@ extension Notification.Name {
         let snapshot = snapshots[repository]
         issues = snapshot?.issues ?? []
         hasSnapshot = snapshot != nil
-        focusBoards = Self.savedFocusBoards[repository]
-            ?? FocusBoards(boards: [Self.savedFocus[repository] ?? []])
+        focusReel = Self.savedFocusReel(for: repository)
         let savedOrder = Self.savedBacklogOrder[repository]
         openIssueNumbers = savedOrder?.open ?? []
         closedIssueNumbers = savedOrder?.closed ?? []
@@ -219,7 +226,7 @@ extension Notification.Name {
                 )
                 response = issueBoardResponse(
                     success: accepted,
-                    error: accepted ? nil : "Runway could not move issue \(GitHubNumber.reference(issueNumber)). The Focus board may already contain five issues, or the issue may not be in the requested lane."
+                    error: accepted ? nil : "Runway could not move issue \(GitHubNumber.reference(issueNumber)). \(Self.focusFullHint) Or the issue may not be in the requested lane."
                 )
             } else {
                 response = issueBoardResponse(
@@ -232,7 +239,7 @@ extension Notification.Name {
     }
 
     private func lane(of issueNumber: Int) -> AssignedIssueLane? {
-        if focusBoards.allSet.contains(issueNumber) { return .focus }
+        if focusReel.contains(issueNumber) { return .focus }
         if openIssueNumbers.contains(issueNumber) { return .open }
         if closedIssueNumbers.contains(issueNumber) { return .closed }
         return nil
@@ -243,7 +250,7 @@ extension Notification.Name {
             success: success,
             error: error,
             open: open,
-            focus: focused,
+            focus: allFocused,
             closed: closed
         )
     }
@@ -340,7 +347,7 @@ extension Notification.Name {
             })
             if needsFullRefresh {
                 let fetchedNumbers = Set(fetched.map(\.number))
-                for issueNumber in focusBoards.all where !fetchedNumbers.contains(issueNumber) {
+                for issueNumber in focusReel.issues where !fetchedNumbers.contains(issueNumber) {
                     guard let issue = issues.first(where: { $0.number == issueNumber }) else { continue }
                     FocusActivityLog.record(
                         action: .exitedFocus,
@@ -423,7 +430,7 @@ extension Notification.Name {
             available: defaultClosed,
             prioritizing: issueNumbers
         )
-        focusBoards.reconcile(available: Set(availableIssues.map(\.number)))
+        focusReel.reconcile(available: Set(availableIssues.map(\.number)))
     }
 
     static func resetSavedBacklogOrder() {
@@ -447,9 +454,10 @@ extension Notification.Name {
     func promoteToFocus(issueNumber: Int) {
         guard let repository = loadedRepository,
               issues.contains(where: { $0.number == issueNumber }),
-              !focusBoards.allSet.contains(issueNumber),
-              focusedIssueNumbers.count < 5 else { return }
-        focusBoards.replaceSelected(with: focusedIssueNumbers + [issueNumber])
+              !focusReel.contains(issueNumber),
+              canAddToFocus else { return }
+        focusReel.replace(with: focusReel.issues + [issueNumber])
+        focusReel.reveal(issueNumber)
         saveFocus(for: repository)
         if let issue = issues.first(where: { $0.number == issueNumber }) {
             FocusActivityLog.record(
@@ -465,8 +473,8 @@ extension Notification.Name {
     func removeFromFocus(issueNumber: Int) {
         guard let repository = loadedRepository,
               let issue = issues.first(where: { $0.number == issueNumber }),
-              focusedIssueNumbers.contains(issueNumber) else { return }
-        focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
+              focusReel.contains(issueNumber) else { return }
+        focusReel.replace(with: focusReel.issues.filter { $0 != issueNumber })
         saveFocus(for: repository)
         FocusActivityLog.record(
             action: .exitedFocus,
@@ -484,13 +492,6 @@ extension Notification.Name {
             to: .focus,
             before: targetNumber
         )
-    }
-
-    func restoreFocusedOrder(_ order: [Int]) {
-        guard let repository = loadedRepository else { return }
-        let available = Set(focusedIssueNumbers)
-        focusBoards.replaceSelected(with: order.filter(available.contains))
-        saveFocus(for: repository)
     }
 
     @discardableResult
@@ -543,7 +544,7 @@ extension Notification.Name {
         let issue = issues[issueIndex]
         let rollback = IssueMoveRollback(
             issue: issue,
-            focusIndex: focusedIssueNumbers.firstIndex(of: issueNumber),
+            focusIndex: focusReel.issues.firstIndex(of: issueNumber),
             openIndex: openIssueNumbers.firstIndex(of: issueNumber),
             closedIndex: closedIssueNumbers.firstIndex(of: issueNumber),
             attemptedDestination: closed ? .closed : .open,
@@ -585,10 +586,10 @@ extension Notification.Name {
             guard let targetNumber, issueNumber != targetNumber else { return true }
             switch destination {
             case .focus:
-                guard focusedIssueNumbers.contains(issueNumber) else { return false }
-                var order = focusedIssueNumbers
+                guard focusReel.contains(issueNumber) else { return false }
+                var order = focusReel.issues
                 move(issueNumber, before: targetNumber, in: &order)
-                focusBoards.replaceSelected(with: order)
+                focusReel.replace(with: order)
                 saveFocus(for: repository)
             case .open:
                 move(issueNumber, before: targetNumber, in: &openIssueNumbers)
@@ -602,11 +603,11 @@ extension Notification.Name {
 
         switch (source, destination) {
         case (.open, .focus), (.closed, .focus):
-            guard !focusBoards.allSet.contains(issueNumber),
-                  focusedIssueNumbers.count < 5 else { return false }
-            var order = focusedIssueNumbers
+            guard !focusReel.contains(issueNumber), canAddToFocus else { return false }
+            var order = focusReel.issues
             insert(issueNumber, before: targetNumber, in: &order)
-            focusBoards.replaceSelected(with: order)
+            focusReel.replace(with: order)
+            focusReel.reveal(issueNumber)
             saveFocus(for: repository)
             FocusActivityLog.record(
                 action: .enteredFocus,
@@ -618,19 +619,19 @@ extension Notification.Name {
             return true
 
         case (.focus, .open), (.focus, .closed):
-            guard focusedIssueNumbers.contains(issueNumber) else { return false }
+            guard focusReel.contains(issueNumber) else { return false }
             let shouldClose = destination == .closed
             let needsGitHubMutation = issue.isClosed != shouldClose
             let rollback = IssueMoveRollback(
                 issue: issue,
-                focusIndex: focusedIssueNumbers.firstIndex(of: issueNumber),
+                focusIndex: focusReel.issues.firstIndex(of: issueNumber),
                 openIndex: openIssueNumbers.firstIndex(of: issueNumber),
                 closedIndex: closedIssueNumbers.firstIndex(of: issueNumber),
                 attemptedDestination: destination,
                 shouldLogFocusReturn: true
             )
 
-            focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
+            focusReel.replace(with: focusReel.issues.filter { $0 != issueNumber })
             if destination == .open {
                 closedIssueNumbers.removeAll { $0 == issueNumber }
                 openIssueNumbers = Self.returnedBacklogOrder(
@@ -794,12 +795,11 @@ extension Notification.Name {
     ) {
         guard let issueIndex = issues.firstIndex(where: { $0.number == issueNumber }) else { return }
         issues[issueIndex] = rollback.issue
-        focusBoards.replaceSelected(with: focusedIssueNumbers.filter { $0 != issueNumber })
         openIssueNumbers.removeAll { $0 == issueNumber }
         closedIssueNumbers.removeAll { $0 == issueNumber }
-        var focusOrder = focusedIssueNumbers
+        var focusOrder = focusReel.issues.filter { $0 != issueNumber }
         restore(issueNumber, at: rollback.focusIndex, in: &focusOrder)
-        focusBoards.replaceSelected(with: focusOrder)
+        focusReel.replace(with: focusOrder)
         restore(issueNumber, at: rollback.openIndex, in: &openIssueNumbers)
         restore(issueNumber, at: rollback.closedIndex, in: &closedIssueNumbers)
         if let repository = loadedRepository {
@@ -825,10 +825,10 @@ extension Notification.Name {
     }
 
     private func saveFocus(for repository: String) {
-        var saved = Self.savedFocusBoards
-        saved[repository] = focusBoards
+        var saved = Self.savedFocusReels
+        saved[repository] = focusReel
         guard let data = try? JSONEncoder().encode(saved) else { return }
-        UserDefaults.standard.set(data, forKey: Self.focusBoardsKey)
+        UserDefaults.standard.set(data, forKey: Self.focusReelKey)
     }
 
     private func saveBacklogOrder(for repository: String) {
@@ -874,27 +874,46 @@ extension Notification.Name {
         return saved
     }
 
-    private static var savedFocusBoards: [String: FocusBoards] {
-        guard let data = UserDefaults.standard.data(forKey: focusBoardsKey),
-              let saved = try? JSONDecoder().decode([String: FocusBoards].self, from: data) else {
+    private static var savedFocusReels: [String: FocusReel] {
+        decodedFocus(forKey: focusReelKey)
+    }
+
+    private static func decodedFocus(forKey key: String) -> [String: FocusReel] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let saved = try? JSONDecoder().decode([String: FocusReel].self, from: data) else {
             return [:]
         }
         return saved
     }
 
-    static func savedSelectedFocusIssues(for repository: String) -> [Int] {
-        (savedFocusBoards[repository]
-            ?? FocusBoards(boards: [savedFocus[repository] ?? []])).selected
+    /// The reel for a repository, migrating older formats on first read: the
+    /// paginated boards flatten in board order, and the single list before them
+    /// becomes the whole reel. Older keys stay untouched.
+    static func savedFocusReel(
+        for repository: String,
+        visibleCount: Int = SettingsKey.configuredFocusVisibleCount()
+    ) -> FocusReel {
+        var reel = savedFocusReels[repository]
+            ?? decodedFocus(forKey: legacyFocusBoardsKey)[repository]
+            ?? FocusReel(issues: savedFocus[repository] ?? [])
+        reel.setVisibleCount(visibleCount)
+        return reel
     }
 
-    static func savedSelectedFocusBoardIndex(for repository: String) -> Int {
-        savedFocusBoards[repository]?.selectedIndex ?? 0
+    static func savedVisibleFocusIssues(for repository: String) -> [Int] {
+        savedFocusReel(for: repository).visible
     }
 
-    static func savedBoardIndex(containing issueNumber: Int, in repository: String) -> Int? {
-        (savedFocusBoards[repository]
-            ?? FocusBoards(boards: [savedFocus[repository] ?? []]))
-            .boardIndex(containing: issueNumber)
+    static func savedFocusIssues(for repository: String) -> [Int] {
+        savedFocusReel(for: repository).issues
+    }
+
+    /// Shown when Focus refuses another issue.
+    static var focusFullHint: String {
+        guard let limit = SettingsKey.configuredFocusLimit() else {
+            return "The issue may already be in Focus."
+        }
+        return "Focus may already hold its limit of \(limit) issues (Settings, Agents)."
     }
 
     private struct SavedBacklogOrder: Codable {

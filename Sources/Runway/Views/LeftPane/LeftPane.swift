@@ -48,6 +48,13 @@ struct LeftPane: View {
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
     @AppStorage(SettingsKey.focusBoardCollapsed) private var focusBoardCollapsed = false
+    @AppStorage(SettingsKey.focusVisibleCount) private var focusVisibleCount = FocusReel.defaultVisibleCount
+    @AppStorage(SettingsKey.focusLimit) private var focusLimit = FocusReel.defaultLimit
+    /// Which way the reel last moved, so cards enter and leave from the right edge.
+    @State private var focusReelDirection = 1
+    @State private var focusReelEdgeFrames: [FocusReelEdge: CGRect] = [:]
+    @State private var focusReelHoverEdge: FocusReelEdge?
+    @State private var focusReelHoverTask: Task<Void, Never>?
 
     private static let taglines = [
         "WHAT HAS BEEN HAPPENING",
@@ -119,6 +126,9 @@ struct LeftPane: View {
         .onPreferenceChange(RunwayIssueTabsFramePreferenceKey.self) {
             focusIssueDrag.updateIssueTabsFrame($0)
         }
+        .onPreferenceChange(FocusReelEdgeFramePreferenceKey.self) {
+            focusReelEdgeFrames = $0
+        }
         .onReceive(NotificationCenter.default.publisher(for: .assignedIssueBacklogOrderReset)) { _ in
             withAnimation(.easeInOut(duration: 0.16)) {
                 assignedIssues.resetBacklogOrder()
@@ -170,9 +180,12 @@ struct LeftPane: View {
             guard focusIssueDrag.issueNumber == nil else { return }
             syncFocusBoard()
         }
-        .onChange(of: assignedIssues.focusBoards) { _, _ in
+        .onChange(of: assignedIssues.focusReel) { _, _ in
             guard focusIssueDrag.issueNumber == nil else { return }
             syncFocusBoard()
+        }
+        .onChange(of: focusVisibleCount) { _, count in
+            assignedIssues.setFocusVisibleCount(count)
         }
         .onChange(of: ws.focusIssueRevealRequest) { _, _ in
             revealRequestedFocusIssue()
@@ -451,8 +464,6 @@ struct LeftPane: View {
                     .buttonStyle(.plain)
                     .pointerCursor()
                     .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
-
-                    focusBoardPills
                 }
             } else {
                 Text(subHeaderText)
@@ -495,72 +506,6 @@ struct LeftPane: View {
         case .feeds: displayedTagline
         case .pullRequests: "PULL REQUESTS BY DEV"
         }
-    }
-
-    /// Board switcher styled like the Quick Agent tab strip: one numbered
-    /// pill per board once there are two, then `+` for a new board.
-    private var focusBoardPills: some View {
-        HStack(spacing: 3) {
-            if assignedIssues.focusBoardCount > 1 {
-                ForEach(0..<assignedIssues.focusBoardCount, id: \.self) { index in
-                    focusBoardPill(index)
-                }
-            }
-
-            Button {
-                createFocusBoard()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.48))
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-            .help("New Focus board")
-        }
-        .tracking(0)
-        .fixedSize()
-        .padding(.leading, 4)
-        .disabled(feed.repo.isEmpty || !assignedIssues.hasSnapshot)
-    }
-
-    private func focusBoardPill(_ index: Int) -> some View {
-        let selected = index == assignedIssues.activeFocusBoardIndex
-        return Button {
-            assignedIssues.selectFocusBoard(index)
-            focusBoardCollapsed = false
-            syncFocusBoard()
-        } label: {
-            Text("\(index + 1)")
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(selected ? 0.9 : 0.42))
-                .frame(minWidth: 18, minHeight: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(selected ? RunwayTerminal.body : .clear)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 5))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("Focus board \(index + 1)")
-        .contextMenu {
-            Button("New Board") { createFocusBoard() }
-            Divider()
-            Button("Delete Board", role: .destructive) {
-                assignedIssues.deleteFocusBoard(index)
-                syncFocusBoard()
-            }
-            .disabled(assignedIssues.focusBoardCount < 2)
-        }
-    }
-
-    private func createFocusBoard() {
-        assignedIssues.createFocusBoard()
-        focusBoardCollapsed = false
-        syncFocusBoard()
     }
 
     private var selectedTabIndex: Int {
@@ -1100,77 +1045,37 @@ struct LeftPane: View {
 
     private var runwayEmptyContainer: some View {
         ZStack(alignment: .topLeading) {
-            if assignedIssues.focused.isEmpty,
+            if assignedIssues.allFocused.isEmpty,
                focusIssueDrag.focusPreviewKey == nil {
                 focusEmptyState
                     .transition(.opacity)
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                if assignedIssues.hiddenAboveCount > 0 {
+                    focusReelEdgeButton(.above, count: assignedIssues.hiddenAboveCount)
+                        .transition(.opacity)
+                }
+
                 ForEach(assignedIssues.focused) { issue in
                     if focusIssueDrag.shouldInsertFocusPlaceholder(before: issue.number),
-                       !assignedIssues.focusedIssueNumbers.contains(
-                           focusIssueDrag.issueNumber ?? -1
-                       ),
-                       assignedIssues.focused.count < 5 {
+                       showsFocusDropPlaceholder {
                         Color.clear
                             .frame(height: focusIssueDrag.visualSize.height)
                     }
 
-                    AssignedIssueCard(
-                        issue: issue,
-                        repository: issueRepositoryName,
-                        onClosedChange: { closed in
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                _ = assignedIssues.setClosed(
-                                    issueNumber: issue.number,
-                                    closed: closed
-                                )
-                            }
-                        },
-                        onRename: { newTitle in
-                            if assignedIssues.renameIssue(
-                                issueNumber: issue.number,
-                                newTitle: newTitle
-                            ) {
-                                syncFocusBoard()
-                            }
-                        },
-                        onRemoveFromFocus: {
-                            assignedIssues.removeFromFocus(issueNumber: issue.number)
-                        }
-                    )
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: RunwayIssueCardFramePreferenceKey.self,
-                                value: [
-                                    RunwayIssueCardKey(
-                                        lane: .focus,
-                                        issueNumber: issue.number
-                                    ): proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                                ]
-                            )
-                        }
-                    }
-                    .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
-                    .animation(nil, value: focusIssueDrag.issueNumber)
-                    .simultaneousGesture(issueDragGesture(for: issue, lane: .focus))
-                    .frame(
-                        height: focusIssueDrag.shouldReleaseFocusSlot(for: issue.number)
-                            ? 0
-                            : nil
-                    )
-                    .clipped()
+                    focusCard(issue)
+                        .transition(focusReelTransition)
                 }
 
-                if focusIssueDrag.shouldAppendFocusPlaceholder,
-                   !assignedIssues.focusedIssueNumbers.contains(
-                       focusIssueDrag.issueNumber ?? -1
-                   ),
-                   assignedIssues.focused.count < 5 {
+                if focusIssueDrag.shouldAppendFocusPlaceholder, showsFocusDropPlaceholder {
                     Color.clear
                         .frame(height: focusIssueDrag.visualSize.height)
+                }
+
+                if assignedIssues.hiddenBelowCount > 0 {
+                    focusReelEdgeButton(.below, count: assignedIssues.hiddenBelowCount)
+                        .transition(.opacity)
                 }
             }
         }
@@ -1178,6 +1083,7 @@ struct LeftPane: View {
         .animation(.easeInOut(duration: 0.16), value: focusIssueDrag.focusPreviewKey)
         .padding(8)
         .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+        .clipped()
         .background {
             GeometryReader { proxy in
                 Color.clear.preference(
@@ -1188,9 +1094,14 @@ struct LeftPane: View {
                 )
             }
         }
+        .background {
+            FocusReelScrollCatcher(isEnabled: focusIssueDrag.issueNumber == nil) { step in
+                slideFocusReel { assignedIssues.shiftFocusWindow(by: step) }
+            }
+        }
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(assignedIssues.focused.isEmpty ? 0.015 : 0.025))
+                .fill(Color.white.opacity(assignedIssues.allFocused.isEmpty ? 0.015 : 0.025))
         )
         .overlay {
             RoundedRectangle(cornerRadius: 9)
@@ -1198,10 +1109,153 @@ struct LeftPane: View {
                     Color.white.opacity(0.11),
                     style: StrokeStyle(
                         lineWidth: 1,
-                        dash: assignedIssues.focused.isEmpty ? [5, 5] : []
+                        dash: assignedIssues.allFocused.isEmpty ? [5, 5] : []
                     )
                 )
         }
+        .onChange(of: focusIssueDrag.issueNumber) { _, dragged in
+            if dragged == nil { stopFocusReelHover() }
+        }
+    }
+
+    /// A card dragged in from Open or Closed gets a slot only while Focus is
+    /// under its limit, the same as the drop itself.
+    private var showsFocusDropPlaceholder: Bool {
+        !assignedIssues.focusContains(focusIssueDrag.issueNumber ?? -1)
+            && assignedIssues.canAddToFocus
+    }
+
+    /// Cards slide through the window like a reel: moving down, the top card
+    /// leaves upward and the next one rises in from the bottom.
+    private var focusReelTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: focusReelDirection > 0 ? .bottom : .top)
+                .combined(with: .opacity),
+            removal: .move(edge: focusReelDirection > 0 ? .top : .bottom)
+                .combined(with: .opacity)
+        )
+    }
+
+    private static let focusReelAnimation = Animation.spring(response: 0.3, dampingFraction: 0.9)
+
+    /// Applies a window change with the reel animation, then shows the new
+    /// window's terminals. While a card is dragged the right pane waits for
+    /// the drop, as it does for any reorder.
+    private func slideFocusReel(_ change: () -> Bool) {
+        let before = assignedIssues.hiddenAboveCount
+        var moved = false
+        withAnimation(Self.focusReelAnimation) {
+            moved = change()
+            let after = assignedIssues.hiddenAboveCount
+            if after != before { focusReelDirection = after > before ? 1 : -1 }
+        }
+        if moved, focusIssueDrag.issueNumber == nil { syncFocusBoard() }
+    }
+
+    private func focusReelEdgeButton(_ edge: FocusReelEdge, count: Int) -> some View {
+        FocusReelEdgeButton(
+            edge: edge,
+            count: count,
+            isDropTarget: focusReelHoverEdge == edge
+        ) {
+            slideFocusReel { assignedIssues.shiftFocusWindow(by: edge.step) }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: FocusReelEdgeFramePreferenceKey.self,
+                    value: [edge: proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))]
+                )
+            }
+        }
+    }
+
+    /// While a card is dragged over ▲ or ▼, the window steps one card at a
+    /// time so the card can be dropped into a spot that was hidden. A Focus
+    /// card rides along at the edge of the window; a card from Open or Closed
+    /// just gets the new window to drop into.
+    private func updateFocusReelHover(pointer: CGPoint, issueNumber: Int, lane: AssignedIssueLane) {
+        let edge = focusReelEdgeFrames.first { $0.value.contains(pointer) }?.key
+        guard edge != focusReelHoverEdge else { return }
+        focusReelHoverTask?.cancel()
+        focusReelHoverEdge = edge
+        guard let edge else { return }
+        focusReelHoverTask = Task { @MainActor in
+            var delay: UInt64 = 250_000_000
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: delay) } catch { return }
+                guard focusReelHoverEdge == edge,
+                      focusIssueDrag.issueNumber == issueNumber else { return }
+                let carries = lane == .focus && !focusIssueDrag.isCrossingIssueTabs
+                    && assignedIssues.focusContains(issueNumber)
+                var moved = false
+                slideFocusReel {
+                    moved = carries
+                        ? assignedIssues.shiftFocusWindow(by: edge.step, carrying: issueNumber)
+                        : assignedIssues.shiftFocusWindow(by: edge.step)
+                    return moved
+                }
+                guard moved else {
+                    focusReelHoverEdge = nil
+                    return
+                }
+                delay = 400_000_000
+            }
+        }
+    }
+
+    private func stopFocusReelHover() {
+        focusReelHoverTask?.cancel()
+        focusReelHoverTask = nil
+        focusReelHoverEdge = nil
+    }
+
+    private func focusCard(_ issue: AssignedIssue) -> some View {
+        AssignedIssueCard(
+            issue: issue,
+            repository: issueRepositoryName,
+            onClosedChange: { closed in
+                withAnimation(.easeOut(duration: 0.18)) {
+                    _ = assignedIssues.setClosed(
+                        issueNumber: issue.number,
+                        closed: closed
+                    )
+                }
+            },
+            onRename: { newTitle in
+                if assignedIssues.renameIssue(
+                    issueNumber: issue.number,
+                    newTitle: newTitle
+                ) {
+                    syncFocusBoard()
+                }
+            },
+            onRemoveFromFocus: {
+                assignedIssues.removeFromFocus(issueNumber: issue.number)
+            }
+        )
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: RunwayIssueCardFramePreferenceKey.self,
+                    value: [
+                        RunwayIssueCardKey(
+                            lane: .focus,
+                            issueNumber: issue.number
+                        ): proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
+                    ]
+                )
+            }
+        }
+        .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
+        .animation(nil, value: focusIssueDrag.issueNumber)
+        .simultaneousGesture(issueDragGesture(for: issue, lane: .focus))
+        .frame(
+            height: focusIssueDrag.shouldReleaseFocusSlot(for: issue.number)
+                ? 0
+                : nil
+        )
+        .clipped()
     }
 
     /// Nothing at all is assigned in this repository. Runway only ever shows
@@ -1315,6 +1369,7 @@ struct LeftPane: View {
             guard focusIssueDrag.issueNumber == issue.number else { return }
             focusIssueDrag.move(pointer: value.location)
             autoScrollBacklog(pointer: value.location)
+            updateFocusReelHover(pointer: value.location, issueNumber: issue.number, lane: lane)
 
             let hoveredLane = focusIssueDrag.lane(at: value.location)
             if lane == .focus, focusIssueDrag.isCrossingIssueTabs {
@@ -1374,6 +1429,7 @@ struct LeftPane: View {
         }
         .onEnded { value in
             stopBacklogAutoScroll()
+            stopFocusReelHover()
             guard focusIssueDrag.issueNumber == issue.number,
                   let sourceLane = focusIssueDrag.sourceLane else { return }
             let proposedLane = focusIssueDrag.proposedLane(
@@ -1391,7 +1447,7 @@ struct LeftPane: View {
                     at: value.location,
                     in: proposedLane,
                     excluding: issue.number
-                )
+                ) ?? focusAppendTarget(for: proposedLane)
             let accepted = sourceLane == proposedLane || assignedIssues.move(
                 issueNumber: issue.number,
                 from: sourceLane,
@@ -1414,6 +1470,12 @@ struct LeftPane: View {
                 }
             }
         }
+    }
+
+    /// Dropping below the last card in the window lands just after it, not
+    /// after cards still hidden below the window.
+    private func focusAppendTarget(for lane: AssignedIssueLane) -> Int? {
+        lane == .focus ? assignedIssues.firstHiddenBelowFocusIssue : nil
     }
 
     private var runwayIssueTabs: some View {
@@ -1807,7 +1869,6 @@ struct LeftPane: View {
         ws.syncFocusBoard(
             issues: assignedIssues.allFocused,
             visibleIssueNumbers: assignedIssues.focusedIssueNumbers,
-            selectedBoardIndex: assignedIssues.activeFocusBoardIndex,
             repository: feed.repo
         )
     }
@@ -1816,8 +1877,10 @@ struct LeftPane: View {
         guard let request = ws.focusIssueRevealRequest,
               request.repository.caseInsensitiveCompare(feed.repo) == .orderedSame,
               assignedIssues.hasSnapshot,
-              let index = assignedIssues.boardIndex(containing: request.issueNumber) else { return }
-        assignedIssues.selectFocusBoard(index)
+              assignedIssues.focusContains(request.issueNumber) else { return }
+        slideFocusReel {
+            assignedIssues.revealInFocus(request.issueNumber)
+        }
         ws.focusIssueRevealRequest = nil
         syncFocusBoard()
     }

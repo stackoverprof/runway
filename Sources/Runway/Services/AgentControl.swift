@@ -876,8 +876,9 @@ enum AgentControl {
         number to reconstruct work sessions. An entry with
         `cause: "initial_snapshot"` marks an issue that was already focused when
         logging began. `cause: "github_rollback"` compensates for a move that
-        GitHub rejected. `cause: "board_deleted"` marks an issue that left Focus
-        because its Focus board was deleted.
+        GitHub rejected. Focus is one list seen through a window of a few
+        cards; sliding that window never logs anything, because a card scrolled
+        out of view is still in Focus.
 
         ## 3. Manage the Issue Boards
 
