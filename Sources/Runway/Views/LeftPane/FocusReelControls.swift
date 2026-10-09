@@ -21,7 +21,7 @@ struct FocusReelEdgeFramePreferenceKey: PreferenceKey {
     }
 }
 
-/// "▲ 1" / "▼ 2": how many cards sit past this end of the window. Styled
+/// "⌃ 1" / "⌄ 2": how many cards sit past this end of the window. Styled
 /// like the Quick Agent tab strip so it reads as a quiet control, not a card.
 struct FocusReelEdgeButton: View {
     let edge: FocusReelEdge
@@ -34,8 +34,8 @@ struct FocusReelEdgeButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: edge == .above ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
-                    .font(.system(size: 7, weight: .semibold))
+                Image(systemName: edge == .above ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
                 Text("\(count)")
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
             }
