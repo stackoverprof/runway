@@ -813,12 +813,14 @@ struct LeftPane: View {
 
         return developers.compactMap { developer in
             let developerText = "\(developer.login) \(pullRequestDeveloperUsername(developer)) \(pullRequestDeveloperDisplayName(developer))"
-            if developerText.localizedCaseInsensitiveContains(query) {
+            if SearchText.contains(developerText, query) {
                 return developer
             }
             let matches = developer.pullRequests.filter { pullRequest in
-                "\(GitHubNumber.reference(pullRequest.number)) \(pullRequest.title) \(pullRequest.headRefName) \(pullRequest.baseRefName)"
-                    .localizedCaseInsensitiveContains(query)
+                SearchText.contains(
+                    "\(GitHubNumber.reference(pullRequest.number)) \(pullRequest.title) \(pullRequest.headRefName) \(pullRequest.baseRefName)",
+                    query
+                )
             }
             guard !matches.isEmpty else { return nil }
             return PullRequestDeveloper(
@@ -1652,7 +1654,7 @@ struct LeftPane: View {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isSearching, !normalized.isEmpty else { return events }
         return events.filter {
-            feedEventSearchText($0).localizedCaseInsensitiveContains(normalized)
+            SearchText.contains(feedEventSearchText($0), normalized)
         }
     }
 

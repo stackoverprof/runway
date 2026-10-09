@@ -9,7 +9,7 @@ struct RepoPicker: View {
     @FocusState private var searchFocused: Bool
 
     private var filtered: [String] {
-        query.isEmpty ? repos : repos.filter { $0.localizedCaseInsensitiveContains(query) }
+        query.isEmpty ? repos : repos.filter { SearchText.contains($0, query) }
     }
 
     var body: some View {

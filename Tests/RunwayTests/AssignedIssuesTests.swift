@@ -135,6 +135,18 @@ import Testing
         )
     }
 
+    @Test func issueSearchIgnoresAccents() {
+        let target = issue(number: 11300, title: "Cust: KSÍ smoke")
+
+        #expect(
+            AssignedIssue.matchesSearchQuery(
+                "ksi smoke",
+                issue: target,
+                repositoryName: "monorepo"
+            )
+        )
+    }
+
     private func issue(number: Int, title: String) -> AssignedIssue {
         AssignedIssue(
             number: number,
