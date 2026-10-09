@@ -223,46 +223,57 @@ struct PullRequestDeveloper: Identifiable {
             } ?? .infinity
             let needsFullRefresh = previousSnapshot?.historyComplete != true
                 || cacheAge > 90 * 86_400
+            let fields = "number,title,state,isDraft,author,createdAt,updatedAt,mergedAt,closedAt,url,headRefName,baseRefName"
             var arguments = [
                 "pr", "list",
                 "--repo", repository,
                 "--state", "all",
                 "--limit", needsFullRefresh ? "20000" : "1000",
-                "--json",
-                "number,title,state,isDraft,author,createdAt,updatedAt,mergedAt,closedAt,url,headRefName,baseRefName",
+                "--json", fields,
             ]
             if !needsFullRefresh, let fetchedAt = previousSnapshot?.fetchedAt {
-                let overlapStart = fetchedAt.addingTimeInterval(-300)
+                let windowStart = Self.incrementalWindowStart(
+                    fetchedAt: fetchedAt,
+                    newestUpdatedAt: previousSnapshot?.pullRequests.map(\.updatedAt).max()
+                )
                 arguments.append(contentsOf: [
                     "--search",
-                    "updated:>=\(Self.iso8601.string(from: overlapStart))",
+                    "updated:>=\(Self.iso8601.string(from: windowStart))",
                 ])
             }
-            let data = await GH.query(arguments, cacheFor: 30)
+            // The search window rides GitHub's search index, which can lag a
+            // fresh edit like a retitle. Open PRs are the ones that get renamed,
+            // so an incremental refresh also lists them without search.
+            async let windowData = GH.query(arguments, cacheFor: 30)
+            async let openData: Data? = needsFullRefresh ? nil : GH.query([
+                "pr", "list",
+                "--repo", repository,
+                "--state", "open",
+                "--limit", "1000",
+                "--json", fields,
+            ], cacheFor: 30)
+            let (data, open) = await (windowData, openData)
             guard !Task.isCancelled, loadedRepository == repository else { return }
-            guard let data else {
+            guard let data, needsFullRefresh || open != nil else {
                 error = GitHubFeed.ghHint
                 loading = false
                 return
             }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            guard let fetched = try? decoder.decode([RepositoryPullRequest].self, from: data) else {
+            guard let fetched = try? decoder.decode([RepositoryPullRequest].self, from: data),
+                  let fetchedOpen = try? open.map({
+                      try decoder.decode([RepositoryPullRequest].self, from: $0)
+                  }) ?? [] else {
                 error = "Runway could not read the pull requests returned by GitHub."
                 loading = false
                 return
             }
-            if needsFullRefresh {
-                pullRequests = fetched.sorted(by: RepositoryPullRequest.displaySort)
-            } else {
-                var merged = Dictionary(
-                    uniqueKeysWithValues: pullRequests.map { ($0.number, $0) }
-                )
-                for pullRequest in fetched {
-                    merged[pullRequest.number] = pullRequest
-                }
-                pullRequests = merged.values.sorted(by: RepositoryPullRequest.displaySort)
-            }
+            pullRequests = Self.pullRequestsAfterRefresh(
+                current: pullRequests,
+                fetched: fetched + fetchedOpen,
+                fullRefresh: needsFullRefresh
+            )
             developerCache.removeAll()
             Self.discoverPeople(in: pullRequests)
             hasSnapshot = true
@@ -281,6 +292,36 @@ struct PullRequestDeveloper: Identifiable {
             loadTask = nil
             loadTaskRepository = nil
         }
+    }
+
+    /// Where an incremental search starts. Anchored on the newest edit already
+    /// cached as well as the last fetch, with an hour of overlap, so a search
+    /// index that lags an edit gets several more chances to return it. Never
+    /// reaches more than a day back, which keeps quiet repos cheap.
+    nonisolated static func incrementalWindowStart(fetchedAt: Date, newestUpdatedAt: Date?) -> Date {
+        let anchored = min(fetchedAt, newestUpdatedAt ?? fetchedAt).addingTimeInterval(-3_600)
+        return max(anchored, fetchedAt.addingTimeInterval(-86_400))
+    }
+
+    /// Merges fetched PRs over the cache. A PR can arrive from both the search
+    /// window and the open list, so the most recently updated copy wins.
+    nonisolated static func pullRequestsAfterRefresh(
+        current: [RepositoryPullRequest],
+        fetched: [RepositoryPullRequest],
+        fullRefresh: Bool
+    ) -> [RepositoryPullRequest] {
+        var newest: [Int: RepositoryPullRequest] = [:]
+        for pullRequest in fetched
+        where newest[pullRequest.number].map({ $0.updatedAt <= pullRequest.updatedAt }) ?? true {
+            newest[pullRequest.number] = pullRequest
+        }
+        if fullRefresh { return newest.values.sorted(by: RepositoryPullRequest.displaySort) }
+        var merged = Dictionary(
+            current.map { ($0.number, $0) },
+            uniquingKeysWith: { $1 }
+        )
+        merged.merge(newest) { $1 }
+        return merged.values.sorted(by: RepositoryPullRequest.displaySort)
     }
 
     static func discoverCachedPeople() {

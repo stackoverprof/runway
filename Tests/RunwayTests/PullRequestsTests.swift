@@ -153,8 +153,70 @@ struct PullRequestsTests {
         #expect(PullRequestDeveloper.ranksAbove(open, drafts))
     }
 
+    @Test("Incremental window overlaps the newest cached edit by an hour")
+    func incrementalWindowAnchorsOnNewestEdit() {
+        let fetchedAt = start
+        #expect(PullRequests.incrementalWindowStart(
+            fetchedAt: fetchedAt, newestUpdatedAt: nil
+        ) == fetchedAt.addingTimeInterval(-3_600))
+        #expect(PullRequests.incrementalWindowStart(
+            fetchedAt: fetchedAt, newestUpdatedAt: fetchedAt.addingTimeInterval(-600)
+        ) == fetchedAt.addingTimeInterval(-4_200))
+        #expect(PullRequests.incrementalWindowStart(
+            fetchedAt: fetchedAt, newestUpdatedAt: fetchedAt.addingTimeInterval(600)
+        ) == fetchedAt.addingTimeInterval(-3_600))
+        #expect(PullRequests.incrementalWindowStart(
+            fetchedAt: fetchedAt, newestUpdatedAt: fetchedAt.addingTimeInterval(-30 * 86_400)
+        ) == fetchedAt.addingTimeInterval(-86_400))
+    }
+
+    @Test("Open list retitles a PR the search window missed")
+    func openListRefreshesRenamedTitle() {
+        let stale = makePullRequest(
+            number: 7, title: "Ship it", state: "OPEN",
+            createdAt: start, updatedAt: start
+        )
+        let other = makePullRequest(
+            number: 8, state: "MERGED", createdAt: start, updatedAt: start,
+            mergedAt: start
+        )
+        let renamed = makePullRequest(
+            number: 7, title: "[MERGE AFTER WEEKEND] Ship it", state: "OPEN",
+            createdAt: start, updatedAt: start.addingTimeInterval(60)
+        )
+
+        let refreshed = PullRequests.pullRequestsAfterRefresh(
+            current: [stale, other], fetched: [renamed], fullRefresh: false
+        )
+        #expect(refreshed.map(\.number) == [7, 8])
+        #expect(refreshed.first?.title == "[MERGE AFTER WEEKEND] Ship it")
+    }
+
+    @Test("The most recently updated duplicate wins the merge")
+    func newestDuplicateWins() {
+        let older = makePullRequest(
+            number: 7, title: "Old", state: "OPEN",
+            createdAt: start, updatedAt: start
+        )
+        let newer = makePullRequest(
+            number: 7, title: "New", state: "OPEN",
+            createdAt: start, updatedAt: start.addingTimeInterval(60)
+        )
+
+        for fetched in [[older, newer], [newer, older]] {
+            let refreshed = PullRequests.pullRequestsAfterRefresh(
+                current: [], fetched: fetched, fullRefresh: false
+            )
+            #expect(refreshed.map(\.title) == ["New"])
+        }
+        #expect(PullRequests.pullRequestsAfterRefresh(
+            current: [older], fetched: [], fullRefresh: true
+        ).isEmpty)
+    }
+
     private func makePullRequest(
         number: Int = 1234,
+        title: String = "Test pull request",
         state: String,
         createdAt: Date,
         updatedAt: Date,
@@ -164,7 +226,7 @@ struct PullRequestsTests {
     ) -> RepositoryPullRequest {
         RepositoryPullRequest(
             number: number,
-            title: "Test pull request",
+            title: title,
             state: state,
             isDraft: isDraft,
             author: .init(login: "developer", name: "Developer", isBot: false),
