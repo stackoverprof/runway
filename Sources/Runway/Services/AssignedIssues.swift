@@ -18,10 +18,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         repositoryName: String
     ) -> Bool {
         let searchableText = "\(GitHubNumber.reference(issue.number)) \(issue.title) \(repositoryName)"
-        let tokens = query.split { $0.isWhitespace }
-        return !tokens.isEmpty && tokens.allSatisfy {
-            searchableText.localizedCaseInsensitiveContains(String($0))
-        }
+        return SearchText.containsAllTokens(of: query, in: searchableText)
     }
 }
 
