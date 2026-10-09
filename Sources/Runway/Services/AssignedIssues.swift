@@ -111,6 +111,26 @@ extension Notification.Name {
         saveFocus(for: repository)
     }
 
+    /// Deleting a board returns its issues to Open or Closed, the same as
+    /// taking each one out of Focus. Their lanes already hold them, so only
+    /// the board membership changes; the log records each exit.
+    func deleteFocusBoard(_ index: Int) {
+        guard let repository = loadedRepository,
+              let removed = focusBoards.remove(at: index) else { return }
+        saveFocus(for: repository)
+        for issueNumber in removed {
+            guard let issue = issues.first(where: { $0.number == issueNumber }) else { continue }
+            FocusActivityLog.record(
+                action: .exitedFocus,
+                repository: repository,
+                issue: issue,
+                from: .focus,
+                to: issue.isClosed ? .closed : .open,
+                cause: "board_deleted"
+            )
+        }
+    }
+
     func restore(repository: String) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
