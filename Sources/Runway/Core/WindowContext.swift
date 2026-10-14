@@ -159,6 +159,8 @@ final class WindowDragNSView: NSView {
         return contexts[ObjectIdentifier(window)]
     }
 
+    var allContexts: [RunwayWindowContext] { Array(contexts.values) }
+
     func activeContext() -> RunwayWindowContext? {
         context(for: NSApp.keyWindow)
     }

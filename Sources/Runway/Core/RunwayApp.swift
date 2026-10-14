@@ -92,6 +92,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// whatever the Mac is set to.
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
+        // `runway://` links arrive as a GetURL Apple event. Handling it here,
+        // rather than through SwiftUI's scene routing, keeps a link from opening
+        // a second window or activating the app.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURL(_:withReply:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
+
+    @objc private func handleGetURL(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let link = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: link) else { return }
+        MainActor.assumeIsolated { RunwayURLCommand.handle(url) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

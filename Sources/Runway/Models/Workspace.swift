@@ -166,6 +166,11 @@ struct QuickTerminalTabRequest: Equatable {
     /// Incremented when the already-selected tab is picked again: the tab jumps
     /// back to the top of its list and refetches.
     var tabResetRequestID = 0
+    /// Incremented by a `runway://refresh` link: refetch `sourceRefreshTab` now,
+    /// without switching tab or scrolling, so a script that just changed an
+    /// issue can show it without taking focus.
+    var sourceRefreshRequestID = 0
+    var sourceRefreshTab: FeedTab = .runway
     /// Incremented by the repo-switcher shortcut so the left pane opens its
     /// searchable repository picker.
     var repoPickerRequestID = 0
@@ -316,6 +321,12 @@ struct QuickTerminalTabRequest: Equatable {
 
     /// Picking the tab you are already on: back to the top, and refetch.
     func requestTabReset() { tabResetRequestID &+= 1 }
+
+    /// Refetch one tab's source in place (see `RunwayURLCommand`).
+    func requestSourceRefresh(_ tab: FeedTab) {
+        sourceRefreshTab = tab
+        sourceRefreshRequestID &+= 1
+    }
 
     /// Open the searchable repository picker from the keyboard.
     func requestRepoPicker() { repoPickerRequestID &+= 1 }
