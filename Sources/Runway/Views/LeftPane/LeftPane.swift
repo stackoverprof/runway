@@ -158,6 +158,9 @@ struct LeftPane: View {
         .onChange(of: ws.tabResetRequestID) { _, _ in
             resetActiveTab()
         }
+        .onChange(of: ws.sourceRefreshRequestID) { _, _ in
+            refreshSource(for: ws.sourceRefreshTab, minimumAge: 0)
+        }
         // The Focus board owns the right pane whatever the left pane is showing,
         // so its repository reconciliation lives here rather than inside the
         // Runway tab. Only the selected tab stays mounted, and hanging this off
