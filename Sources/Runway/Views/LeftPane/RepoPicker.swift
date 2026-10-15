@@ -1,15 +1,26 @@
 import SwiftUI
 
 struct RepoPicker: View {
-    let repos: [String]
-    let current: String
-    let onPick: (String) -> Void
+    /// One row per clone. A repository cloned twice gets two rows, the
+    /// second one titled with its folder name.
+    struct Choice: Hashable {
+        let repository: String
+        let path: String
+        let label: String?
+
+        var title: String { label.map { "\(repository) (\($0))" } ?? repository }
+    }
+
+    let repos: [Choice]
+    /// The path of the clone on screen.
+    let current: String?
+    let onPick: (Choice) -> Void
     @State private var query = ""
     @State private var highlighted = 0
     @FocusState private var searchFocused: Bool
 
-    private var filtered: [String] {
-        query.isEmpty ? repos : repos.filter { SearchText.contains($0, query) }
+    private var filtered: [Choice] {
+        query.isEmpty ? repos : repos.filter { SearchText.contains($0.title, query) }
     }
 
     var body: some View {
@@ -32,12 +43,12 @@ struct RepoPicker: View {
                         ForEach(Array(filtered.enumerated()), id: \.element) { index, r in
                             Button { onPick(r) } label: {
                                 HStack(spacing: 8) {
-                                    Text(r)
+                                    Text(r.title)
                                         .font(.system(size: 12.5, design: .monospaced))
                                         .foregroundStyle(.primary)
                                         .lineLimit(1).truncationMode(.middle)
                                     Spacer(minLength: 8)
-                                    if r == current {
+                                    if r.path == current {
                                         Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
                                             .foregroundStyle(.secondary)
                                     }
@@ -49,7 +60,7 @@ struct RepoPicker: View {
                             }
                             .buttonStyle(.plain)
                             .pointerCursor()
-                            .id(r)
+                            .id(r.path)
                         }
                         if filtered.isEmpty {
                             Text(repos.isEmpty ? "No cloned repositories found." : "No matches.")
@@ -61,14 +72,14 @@ struct RepoPicker: View {
                 .frame(maxHeight: 320)
                 .onChange(of: highlighted) { _, index in
                     guard filtered.indices.contains(index) else { return }
-                    proxy.scrollTo(filtered[index])
+                    proxy.scrollTo(filtered[index].path)
                 }
             }
         }
         .frame(width: 270)
         .onAppear {
             searchFocused = true
-            highlighted = filtered.firstIndex(of: current) ?? 0
+            highlighted = filtered.firstIndex { $0.path == current } ?? 0
         }
         .onChange(of: query) { _, _ in highlighted = 0 }
         .onChange(of: repos) { _, _ in

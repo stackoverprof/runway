@@ -24,20 +24,26 @@ enum LocalRepositoryDirectory {
             maximumDepth: maximumDepth
         )
 
-        var byRepository: [String: LocalRepository] = [:]
+        // Every full clone gets its own row, so a second copy of a repository
+        // (~/Developer/monosentry next to ~/Developer/monorepo/main) can be
+        // picked on its own. Linked worktrees still collapse into their
+        // repository: they only stand in when no full clone exists.
+        var byRepository: [String: [LocalRepository]] = [:]
         for checkout in checkouts {
             guard let remote = originURL(in: checkout),
                   let repository = parseGitHubRepository(from: remote) else { continue }
-            let candidate = LocalRepository(nameWithOwner: repository, path: checkout)
-            let key = repository.lowercased()
-            if let existing = byRepository[key], !isPreferred(candidate.path, over: existing.path) {
-                continue
-            }
-            byRepository[key] = candidate
+            byRepository[repository.lowercased(), default: []]
+                .append(LocalRepository(nameWithOwner: repository, path: checkout))
         }
 
-        return byRepository.values.sorted {
-            $0.nameWithOwner.localizedCaseInsensitiveCompare($1.nameWithOwner) == .orderedAscending
+        return byRepository.values.flatMap { group -> [LocalRepository] in
+            let ordered = group.sorted { isPreferred($0, over: $1) }
+            let clones = ordered.filter { isFullClone($0.path) }
+            return clones.isEmpty ? Array(ordered.prefix(1)) : clones
+        }.sorted {
+            let order = $0.nameWithOwner.localizedCaseInsensitiveCompare($1.nameWithOwner)
+            if order != .orderedSame { return order == .orderedAscending }
+            return isPreferred($0, over: $1)
         }
     }
 
@@ -143,10 +149,34 @@ enum LocalRepositoryDirectory {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func isPreferred(_ candidate: String, over existing: String) -> Bool {
-        let candidateDepth = URL(fileURLWithPath: candidate).pathComponents.count
-        let existingDepth = URL(fileURLWithPath: existing).pathComponents.count
+    /// A full clone has a `.git` directory; a linked worktree has a `.git` file.
+    private static func isFullClone(_ checkout: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let marker = URL(fileURLWithPath: checkout).appendingPathComponent(".git").path
+        return FileManager.default.fileExists(atPath: marker, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    /// The checkout named after its repository wins (`monorepo`, or the
+    /// `monorepo/main` of a worktree container), then the shallowest path.
+    /// Depth alone let a sibling copy like `~/Developer/monosentry` outrank
+    /// `~/Developer/monorepo/main`.
+    private static func isPreferred(_ candidate: LocalRepository, over existing: LocalRepository) -> Bool {
+        let candidateNamed = isNamedAfterRepository(candidate)
+        if candidateNamed != isNamedAfterRepository(existing) { return candidateNamed }
+        let candidateDepth = URL(fileURLWithPath: candidate.path).pathComponents.count
+        let existingDepth = URL(fileURLWithPath: existing.path).pathComponents.count
         if candidateDepth != existingDepth { return candidateDepth < existingDepth }
-        return candidate.localizedCaseInsensitiveCompare(existing) == .orderedAscending
+        return candidate.path.localizedCaseInsensitiveCompare(existing.path) == .orderedAscending
+    }
+
+    private static func isNamedAfterRepository(_ checkout: LocalRepository) -> Bool {
+        guard let name = checkout.nameWithOwner.split(separator: "/").last?.lowercased() else {
+            return false
+        }
+        let url = URL(fileURLWithPath: checkout.path)
+        let folder = url.lastPathComponent.lowercased()
+        let parent = url.deletingLastPathComponent().lastPathComponent.lowercased()
+        return folder == name || (folder == "main" && parent == name)
     }
 }
