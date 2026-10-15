@@ -312,6 +312,27 @@ struct LeftPane: View {
         return title.isEmpty ? "Activity" : title
     }
 
+    /// The repository name, or the folder name when a second clone is picked.
+    private var repoButtonTitle: String {
+        if let path = feed.localPath(for: feed.repo),
+           let label = feed.checkoutLabel(path, of: feed.repo) {
+            return label
+        }
+        return feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo
+    }
+
+    private var repoChoices: [RepoPicker.Choice] {
+        feed.availableRepos.flatMap { repository in
+            feed.checkouts(for: repository).map { path in
+                RepoPicker.Choice(
+                    repository: repository,
+                    path: path,
+                    label: feed.checkoutLabel(path, of: repository)
+                )
+            }
+        }
+    }
+
     /// Rounded-rectangle repo selector with a repo glyph; opens a searchable picker.
     private var repoButton: some View {
         Button {
@@ -322,7 +343,7 @@ struct LeftPane: View {
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.5))
-                Text(feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo)
+                Text(repoButtonTitle)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
@@ -339,8 +360,8 @@ struct LeftPane: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .popover(isPresented: $showRepoPicker, arrowEdge: .bottom) {
-            RepoPicker(repos: feed.availableRepos, current: feed.repo) { picked in
-                feed.setRepo(picked)
+            RepoPicker(repos: repoChoices, current: feed.localPath(for: feed.repo)) { picked in
+                feed.selectCheckout(picked.path, of: picked.repository)
                 showRepoPicker = false
             }
         }

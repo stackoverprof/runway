@@ -63,6 +63,13 @@ enum FeedRevealPolicy {
     var repo: String = UserDefaults.standard.string(forKey: "runway.repo") ?? ""
     var availableRepos: [String] = []
     private(set) var repositoryPaths: [String: String] = [:]
+    /// Every full clone of each repository, the preferred one first. A second
+    /// copy (a clone with the same origin in another folder) shows up here.
+    private(set) var repositoryCheckouts: [String: [String]] = [:]
+    /// The clone picked for each repository, keyed by lowercased repository.
+    /// Missing means the preferred one.
+    private(set) var selectedCheckouts: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "runway.selectedCheckouts.v1") as? [String: String] ?? [:]
     var events: [FeedEvent] = []
     var presence: [Presence] = []
     var lastError: String?
@@ -93,7 +100,7 @@ enum FeedRevealPolicy {
     @ObservationIgnored private var lastRepositoryScanAt: Date?
     @ObservationIgnored private var repositoryListHeld = false
     @ObservationIgnored private var pendingRepositoryDirectory:
-        (repositories: [String], paths: [String: String])?
+        (repositories: [String], paths: [String: String], checkouts: [String: [String]])?
 
     /// User-facing hint shown when `gh` can't be reached (missing or not signed in).
     static let ghHint = "Can't reach GitHub. Make sure the GitHub CLI is installed and you're signed in: run `gh auth login` in a terminal."
@@ -125,6 +132,8 @@ enum FeedRevealPolicy {
     private static let recentRepositoriesKey = "runway.recentRepositories.v1"
     private static let repositoryDirectoryKey = "runway.repositoryDirectory.v1"
     private static let repositoryPathsKey = "runway.repositoryPaths.v1"
+    private static let repositoryCheckoutsKey = "runway.repositoryCheckouts.v1"
+    private static let selectedCheckoutsKey = "runway.selectedCheckouts.v1"
     private static let feedValidatedAtKey = "runway.feedValidatedAt.v1"
     private static let coderDate: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
     private static let decoderDate: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
@@ -134,6 +143,9 @@ enum FeedRevealPolicy {
         repositoryPaths = Self.cachedRepositoryPaths.filter {
             FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0.value)
                 .appendingPathComponent(".git").path)
+        }
+        repositoryCheckouts = Self.cachedRepositoryCheckouts.mapValues {
+            $0.filter { FileManager.default.fileExists(atPath: $0) }
         }
         availableRepos = Self.cachedRepositoryDirectory.filter {
             Self.path(for: $0, in: repositoryPaths) != nil
@@ -242,8 +254,39 @@ enum FeedRevealPolicy {
     }
 
     func localPath(for repository: String) -> String? {
-        Self.path(for: repository, in: repositoryPaths)
+        if let selected = selectedCheckouts[repository.lowercased()],
+           checkouts(for: repository).contains(selected) {
+            return selected
+        }
+        return Self.path(for: repository, in: repositoryPaths)
             ?? LocalRepositoryDirectory.directCheckoutPath(for: repository)
+    }
+
+    /// Every clone of `repository`, the preferred one first.
+    func checkouts(for repository: String) -> [String] {
+        let key = repository.lowercased()
+        return repositoryCheckouts.first { $0.key.lowercased() == key }?.value
+            ?? Self.path(for: repository, in: repositoryPaths).map { [$0] } ?? []
+    }
+
+    /// The folder name of a clone that is not the preferred one, so two
+    /// copies of one repository can be told apart. Nil for the preferred one.
+    func checkoutLabel(_ path: String, of repository: String) -> String? {
+        let paths = checkouts(for: repository)
+        guard paths.count > 1, paths.first != path else { return nil }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    /// Pick one clone of a repository. Switches to the repository too.
+    func selectCheckout(_ path: String, of repository: String) {
+        let key = repository.lowercased()
+        if checkouts(for: repository).first == path {
+            selectedCheckouts.removeValue(forKey: key)
+        } else {
+            selectedCheckouts[key] = path
+        }
+        UserDefaults.standard.set(selectedCheckouts, forKey: Self.selectedCheckoutsKey)
+        setRepo(repository)
     }
 
     /// Find cloned GitHub repositories under the configured local repository root.
@@ -261,10 +304,13 @@ enum FeedRevealPolicy {
                 )
             }.value
             let localRepositories = scan.repositories
-            let paths = Dictionary(uniqueKeysWithValues: localRepositories.map {
-                ($0.nameWithOwner, $0.path)
-            })
-            let repos = localRepositories.map(\.nameWithOwner)
+            // Discovery lists the preferred clone of each repository first.
+            var checkouts: [String: [String]] = [:]
+            for local in localRepositories {
+                checkouts[local.nameWithOwner, default: []].append(local.path)
+            }
+            let paths = checkouts.compactMapValues(\.first)
+            let repos = Self.uniqueRepositories(localRepositories.map(\.nameWithOwner))
             // Ranked by Focus board movement, then by last selected. A rescan
             // may re-rank because the picker freezes its list while it is open
             // (holdRepositoryList), so rows can only move while nobody is
@@ -276,7 +322,7 @@ enum FeedRevealPolicy {
             ).filter {
                 Self.path(for: $0, in: paths) != nil
             }
-            self.applyRepositoryDirectory(ordered, paths: paths)
+            self.applyRepositoryDirectory(ordered, paths: paths, checkouts: checkouts)
         }
     }
 
@@ -298,20 +344,24 @@ enum FeedRevealPolicy {
         repositoryListHeld = held
         guard !held, let pending = pendingRepositoryDirectory else { return }
         pendingRepositoryDirectory = nil
-        applyRepositoryDirectory(pending.repositories, paths: pending.paths)
+        applyRepositoryDirectory(
+            pending.repositories, paths: pending.paths, checkouts: pending.checkouts
+        )
     }
 
     private func applyRepositoryDirectory(
         _ ordered: [String],
-        paths: [String: String]
+        paths: [String: String],
+        checkouts: [String: [String]]
     ) {
         if repositoryListHeld {
-            pendingRepositoryDirectory = (repositories: ordered, paths: paths)
+            pendingRepositoryDirectory = (repositories: ordered, paths: paths, checkouts: checkouts)
             return
         }
         repositoryPaths = paths
+        repositoryCheckouts = checkouts
         availableRepos = ordered
-        Self.saveRepositoryDirectory(ordered, paths: paths)
+        Self.saveRepositoryDirectory(ordered, paths: paths, checkouts: checkouts)
         if !ordered.isEmpty {
             if Self.path(for: repo, in: paths) == nil, let first = ordered.first {
                 setRepo(first)
@@ -334,12 +384,18 @@ enum FeedRevealPolicy {
         UserDefaults.standard.dictionary(forKey: repositoryPathsKey) as? [String: String] ?? [:]
     }
 
+    private static var cachedRepositoryCheckouts: [String: [String]] {
+        UserDefaults.standard.dictionary(forKey: repositoryCheckoutsKey) as? [String: [String]] ?? [:]
+    }
+
     private static func saveRepositoryDirectory(
         _ repositories: [String],
-        paths: [String: String]
+        paths: [String: String],
+        checkouts: [String: [String]]
     ) {
         UserDefaults.standard.set(repositories, forKey: repositoryDirectoryKey)
         UserDefaults.standard.set(paths, forKey: repositoryPathsKey)
+        UserDefaults.standard.set(checkouts, forKey: repositoryCheckoutsKey)
     }
 
     private static var recentRepositories: [String] {
