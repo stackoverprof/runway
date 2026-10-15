@@ -62,6 +62,8 @@ extension Notification.Name {
     private(set) var closedIssueNumbers: [Int] = []
 
     private var loadedRepository: String?
+    /// The Focus board on screen: the repository, or one clone of it.
+    private var loadedBoard: String?
     private var loadTask: Task<Void, Never>?
     private var loadTaskRepository: String?
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
@@ -139,7 +141,9 @@ extension Notification.Name {
         saveFocus(for: repository)
     }
 
-    func restore(repository: String) {
+    /// `board` picks which clone's Focus board to show. Nil keeps the board
+    /// already loaded for this repository, so a revalidation never swaps it.
+    func restore(repository: String, board: String? = nil) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
             issues = []
@@ -147,18 +151,28 @@ extension Notification.Name {
             openIssueNumbers = []
             closedIssueNumbers = []
             loadedRepository = nil
+            loadedBoard = nil
             hasSnapshot = false
             return
         }
-        guard loadedRepository != repository else { return }
+        let board = board ?? (loadedRepository == repository ? loadedBoard : nil) ?? repository
+        if loadedRepository == repository {
+            guard loadedBoard != board else { return }
+            // Same issues, another clone: only the Focus board changes.
+            loadedBoard = board
+            focusReel = Self.savedFocusReel(for: board)
+            reconcileOrders(with: issues)
+            return
+        }
         loadTask?.cancel()
         loadTask = nil
         loadTaskRepository = nil
         loadedRepository = repository
+        loadedBoard = board
         let snapshot = snapshots[repository]
         issues = snapshot?.issues ?? []
         hasSnapshot = snapshot != nil
-        focusReel = Self.savedFocusReel(for: repository)
+        focusReel = Self.savedFocusReel(for: board)
         let savedOrder = Self.savedBacklogOrder[repository]
         openIssueNumbers = savedOrder?.open ?? []
         closedIssueNumbers = savedOrder?.closed ?? []
@@ -825,8 +839,9 @@ extension Notification.Name {
     }
 
     private func saveFocus(for repository: String) {
+        guard repository == loadedRepository else { return }
         var saved = Self.savedFocusReels
-        saved[repository] = focusReel
+        saved[loadedBoard ?? repository] = focusReel
         guard let data = try? JSONEncoder().encode(saved) else { return }
         UserDefaults.standard.set(data, forKey: Self.focusReelKey)
     }

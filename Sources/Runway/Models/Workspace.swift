@@ -130,6 +130,12 @@ struct QuickTerminalTabRequest: Equatable {
     /// Repository currently projected into the right pane. Boxes belonging to
     /// other repositories remain mounted so their terminal sessions keep running.
     var activeFocusRepository: String?
+    /// The clone of `activeFocusRepository` whose board is on screen, when it
+    /// is not the preferred one. Each clone keeps its own Focus board.
+    var activeFocusCheckout: String?
+    var activeFocusBoard: String? {
+        activeFocusRepository.map { FocusBoard.key($0, checkout: activeFocusCheckout) }
+    }
     /// The active repository's whole Focus list, in order, and the part of it
     /// inside the window. Only the window's terminals are on screen.
     var activeFocusOrder: [Int] = []
@@ -226,13 +232,18 @@ struct QuickTerminalTabRequest: Equatable {
         load()
         for index in boxes.indices {
             guard let repository = boxes[index].focusRepository else { continue }
-            boxes[index].cwd = GitHubFeed.shared.localPath(for: repository)
+            boxes[index].cwd = boxes[index].focusCheckout
+                ?? GitHubFeed.shared.localPath(for: repository)
         }
-        activeFocusRepository = GitHubFeed.shared.repo.isEmpty
-            ? boxes.first?.focusRepository
-            : GitHubFeed.shared.repo
-        if let activeFocusRepository {
-            let reel = AssignedIssues.savedFocusReel(for: activeFocusRepository)
+        if GitHubFeed.shared.repo.isEmpty {
+            activeFocusRepository = boxes.first?.focusRepository
+            activeFocusCheckout = boxes.first?.focusCheckout
+        } else {
+            activeFocusRepository = GitHubFeed.shared.repo
+            activeFocusCheckout = GitHubFeed.shared.focusCheckout(for: GitHubFeed.shared.repo)
+        }
+        if let activeFocusBoard {
+            let reel = AssignedIssues.savedFocusReel(for: activeFocusBoard)
             activeFocusOrder = reel.issues
             activeFocusIssueNumbers = Set(reel.visible)
         }
@@ -242,8 +253,8 @@ struct QuickTerminalTabRequest: Equatable {
         // Focus the first box on launch so the glow + accordion expansion match
         // where the keyboard actually lands (the terminal that auto-focuses).
         focusedID = activeBoxes.first?.id
-        if let activeFocusRepository, let focusedID {
-            focusedBoxByRepository[activeFocusRepository] = focusedID
+        if let activeFocusBoard, let focusedID {
+            focusedBoxByRepository[activeFocusBoard] = focusedID
         }
         // Quitting kills the processes, so reopen each restored card into the
         // provider that most recently owned its issue conversation.
@@ -387,9 +398,9 @@ struct QuickTerminalTabRequest: Equatable {
     var focusedIndex: Int? { boxes.firstIndex { $0.id == focusedID } }
 
     var activeBoxes: [AgentBox] {
-        guard focusBoardControlsBoxes, let activeFocusRepository else { return boxes }
+        guard focusBoardControlsBoxes, let activeFocusBoard else { return boxes }
         return boxes.filter {
-            $0.focusRepository == activeFocusRepository &&
+            $0.focusBoard == activeFocusBoard &&
                 $0.focusIssueNumber.map(activeFocusIssueNumbers.contains) == true
         }
     }
@@ -562,14 +573,25 @@ struct QuickTerminalTabRequest: Equatable {
                 id: UUID(), repository: issueRepository, issueNumber: issueNumber
             )
         }
+        let feed = repositoryFeed ?? GitHubFeed.shared
         let switchingRepo = repository.map {
             !$0.isEmpty && $0.caseInsensitiveCompare(visibleRepository) != .orderedSame
         } ?? false
-        if switchingRepo, let repository {
-            (repositoryFeed ?? GitHubFeed.shared).setRepo(repository)
+        // The same repository on another clone's board is a switch too.
+        let target = boxes.first { $0.id == box }
+        let switchingCheckout = !switchingRepo && target?.focusRepository != nil
+            && activeFocusRepository != nil && target?.focusBoard != activeFocusBoard
+        if switchingRepo || switchingCheckout, let repository,
+           let checkout = target?.focusCheckout
+               ?? (target?.focusRepository).flatMap({ feed.checkouts(for: $0).first }) {
+            feed.selectCheckout(checkout, of: repository)
+            selectedTab = .runway
+        } else if switchingRepo, let repository {
+            feed.setRepo(repository)
             selectedTab = .runway
         }
-        if !switchingRepo, activeBoxes.contains(where: { $0.id == box }) {
+        let switching = switchingRepo || switchingCheckout
+        if !switching, activeBoxes.contains(where: { $0.id == box }) {
             pendingAttention = nil
             setFocus(box)
             retryAttentionFocus(box)
@@ -705,14 +727,14 @@ struct QuickTerminalTabRequest: Equatable {
     /// With Focus in charge, walks the whole Focus list (wrapping), sliding the
     /// window when the next card is hidden.
     func focus(offset: Int) {
-        if focusBoardControlsBoxes, let repository = activeFocusRepository,
+        if focusBoardControlsBoxes, let board = activeFocusBoard,
            !activeFocusOrder.isEmpty {
             let currentIssue = boxes.first { $0.id == focusedID }?.focusIssueNumber
             let current = currentIssue.flatMap(activeFocusOrder.firstIndex(of:))
             let count = activeFocusOrder.count
             let next = current.map { (($0 + offset) % count + count) % count }
                 ?? (offset >= 0 ? 0 : count - 1)
-            focusIssue(activeFocusOrder[next], in: repository)
+            focusIssue(activeFocusOrder[next], in: board)
             return
         }
         let candidates = activeBoxes
@@ -733,9 +755,9 @@ struct QuickTerminalTabRequest: Equatable {
 
     /// ⌘1-9: the Nth card of the whole Focus list, sliding the window to it.
     func focus(index: Int) {
-        if focusBoardControlsBoxes, let repository = activeFocusRepository {
+        if focusBoardControlsBoxes, let board = activeFocusBoard {
             guard activeFocusOrder.indices.contains(index) else { return }
-            focusIssue(activeFocusOrder[index], in: repository)
+            focusIssue(activeFocusOrder[index], in: board)
             return
         }
         let candidates = activeBoxes
@@ -745,10 +767,10 @@ struct QuickTerminalTabRequest: Equatable {
 
     /// Focuses an issue's terminal. A hidden one is revealed first: the left
     /// pane slides the window, and the next reconciliation hands it the keyboard.
-    func focusIssue(_ issueNumber: Int, in repository: String) {
+    func focusIssue(_ issueNumber: Int, in board: String) {
         guard let box = boxes.first(where: {
-            $0.focusRepository == repository && $0.focusIssueNumber == issueNumber
-        }) else { return }
+            $0.focusBoard == board && $0.focusIssueNumber == issueNumber
+        }), let repository = box.focusRepository else { return }
         if activeBoxes.contains(where: { $0.id == box.id }) {
             setFocus(box.id)
             return
@@ -785,8 +807,8 @@ struct QuickTerminalTabRequest: Equatable {
     func setFocus(_ id: UUID?, moveKeyboard: Bool = true) {
         focusedID = id
         if let id,
-           let repository = boxes.first(where: { $0.id == id })?.focusRepository {
-            focusedBoxByRepository[repository] = id
+           let board = boxes.first(where: { $0.id == id })?.focusBoard {
+            focusedBoxByRepository[board] = id
         }
         guard moveKeyboard else { return }
         TerminalRegistry.shared.focusTerminal(id)
@@ -798,23 +820,25 @@ struct QuickTerminalTabRequest: Equatable {
     func syncFocusBoard(
         issues: [AssignedIssue],
         visibleIssueNumbers: [Int],
-        repository: String
+        repository: String,
+        checkout: String? = nil
     ) {
         let wasFocusControlled = focusBoardControlsBoxes
         focusBoardControlsBoxes = true
         let previousBoxes = boxes
-        if let activeFocusRepository, let focusedID,
+        if let activeFocusBoard, let focusedID,
            previousBoxes.contains(where: {
-               $0.id == focusedID && $0.focusRepository == activeFocusRepository
+               $0.id == focusedID && $0.focusBoard == activeFocusBoard
            }) {
-            focusedBoxByRepository[activeFocusRepository] = focusedID
+            focusedBoxByRepository[activeFocusBoard] = focusedID
         }
 
+        let board = FocusBoard.key(repository, checkout: checkout)
         let previousRepositoryBoxes = previousBoxes.filter {
-            $0.focusRepository == repository
+            $0.focusBoard == board
         }
         let visibleSet = Set(visibleIssueNumbers)
-        let previousRepositoryFocusID = focusedBoxByRepository[repository]
+        let previousRepositoryFocusID = focusedBoxByRepository[board]
             ?? focusedID.flatMap { id in
                 previousRepositoryBoxes.contains(where: {
                     $0.id == id && $0.focusIssueNumber.map(visibleSet.contains) == true
@@ -842,7 +866,8 @@ struct QuickTerminalTabRequest: Equatable {
             previousBoxes: previousBoxes,
             issues: issues,
             repository: repository,
-            workingDirectory: GitHubFeed.shared.localPath(for: repository),
+            checkout: checkout,
+            workingDirectory: checkout ?? GitHubFeed.shared.localPath(for: repository),
             command: SettingsKey.configuredAgentCommand,
             commandsByIssue: commandsByIssue,
             retainUnmanagedBoxes: wasFocusControlled
@@ -858,6 +883,7 @@ struct QuickTerminalTabRequest: Equatable {
         }
         boxes = reconciliation.boxes
         activeFocusRepository = repository
+        activeFocusCheckout = checkout
         activeFocusOrder = issues.map(\.number)
         activeFocusIssueNumbers = visibleSet
 
@@ -938,13 +964,15 @@ enum FocusBoxReconciler {
         previousBoxes: [AgentBox],
         issues: [AssignedIssue],
         repository: String,
+        checkout: String? = nil,
         workingDirectory: String?,
         command: String,
         commandsByIssue: [Int: String] = [:],
         retainUnmanagedBoxes: Bool
     ) -> FocusBoxReconciliation {
+        let board = FocusBoard.key(repository, checkout: checkout)
         let previousRepositoryBoxes = previousBoxes.filter {
-            $0.focusRepository == repository
+            $0.focusBoard == board
         }
         var usedIDs = Set<UUID>()
         var repositoryBoxes: [AgentBox] = []
@@ -963,7 +991,8 @@ enum FocusBoxReconciler {
                     detail: "",
                     cwd: workingDirectory,
                     focusRepository: repository,
-                    focusIssueNumber: issue.number
+                    focusIssueNumber: issue.number,
+                    focusCheckout: checkout
                 )
                 let issueCommand = commandsByIssue[issue.number] ?? command
                 if !issueCommand.isEmpty { box.autorun = issueCommand }
@@ -979,7 +1008,7 @@ enum FocusBoxReconciler {
             ? []
             : previousBoxes.filter { $0.focusRepository == nil }
         let retainedBoxes = previousBoxes.filter {
-            $0.focusRepository != repository
+            $0.focusBoard != board
                 && (retainUnmanagedBoxes || $0.focusRepository != nil)
         }
         return FocusBoxReconciliation(

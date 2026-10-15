@@ -277,6 +277,15 @@ enum FeedRevealPolicy {
         return URL(fileURLWithPath: path).lastPathComponent
     }
 
+    /// The picked clone of `repository` when it is not the preferred one.
+    /// Names that clone's own Focus board; nil means the shared default board.
+    func focusCheckout(for repository: String) -> String? {
+        guard let path = localPath(for: repository),
+              checkouts(for: repository).count > 1,
+              checkouts(for: repository).first != path else { return nil }
+        return path
+    }
+
     /// Pick one clone of a repository. Switches to the repository too.
     func selectCheckout(_ path: String, of repository: String) {
         let key = repository.lowercased()
