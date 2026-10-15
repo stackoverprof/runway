@@ -106,6 +106,34 @@ struct FocusBoxReconcilerTests {
         #expect(result.removedBoxes.map(\.id) == [repositoryBBox.id])
     }
 
+    @Test("A second clone keeps its own board of terminals")
+    func secondCloneKeepsOwnBoard() {
+        let mainBox = AgentBox(
+            name: "Main board",
+            focusRepository: "owner/repository",
+            focusIssueNumber: 101
+        )
+
+        let result = FocusBoxReconciler.reconcile(
+            previousBoxes: [mainBox],
+            issues: [issue(number: 101, title: "Same issue, other clone")],
+            repository: "owner/repository",
+            checkout: "/repos/copy",
+            workingDirectory: "/repos/copy",
+            command: "claude",
+            retainUnmanagedBoxes: true
+        )
+
+        // The main clone's box is parked, not reused: the copy gets its own.
+        #expect(result.boxes.first?.id == mainBox.id)
+        #expect(result.boxes.first?.name == "Main board")
+        #expect(result.repositoryBoxes.count == 1)
+        #expect(result.repositoryBoxes.first?.id != mainBox.id)
+        #expect(result.repositoryBoxes.first?.focusCheckout == "/repos/copy")
+        #expect(result.repositoryBoxes.first?.cwd == "/repos/copy")
+        #expect(result.removedBoxes.isEmpty)
+    }
+
     @Test("A returning issue launches its last-used provider")
     func restoresIssueProvider() {
         let result = FocusBoxReconciler.reconcile(

@@ -165,8 +165,8 @@ struct LeftPane: View {
         // so its repository reconciliation lives here rather than inside the
         // Runway tab. Only the selected tab stays mounted, and hanging this off
         // that tab left the terminals on the old repository until it reappeared.
-        .task(id: feed.repo) {
-            assignedIssues.restore(repository: feed.repo)
+        .task(id: focusBoardKey) {
+            assignedIssues.restore(repository: feed.repo, board: focusBoardKey)
             revealRequestedFocusIssue()
             syncFocusBoard()
             await assignedIssues.revalidate(repository: feed.repo)
@@ -1888,12 +1888,18 @@ struct LeftPane: View {
         feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo
     }
 
+    /// Each clone of a repository has its own Focus board.
+    private var focusBoardKey: String {
+        FocusBoard.key(feed.repo, checkout: feed.focusCheckout(for: feed.repo))
+    }
+
     private func syncFocusBoard() {
         guard assignedIssues.hasSnapshot else { return }
         ws.syncFocusBoard(
             issues: assignedIssues.allFocused,
             visibleIssueNumbers: assignedIssues.focusedIssueNumbers,
-            repository: feed.repo
+            repository: feed.repo,
+            checkout: feed.focusCheckout(for: feed.repo)
         )
     }
 
