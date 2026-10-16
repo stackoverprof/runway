@@ -154,6 +154,22 @@ enum AgentControl {
         return AgentSessionLocator.recorded(in: contents)
     }
 
+    /// The folder an issue's conversation last ran in, so a card reopened for
+    /// it starts there. `nil` when nothing was recorded or the folder is gone.
+    static func durableWorkingDirectory(
+        focusRepository: String,
+        focusIssueNumber: Int
+    ) -> String? {
+        guard let directory = durableSession(
+            focusRepository: focusRepository,
+            focusIssueNumber: focusIssueNumber
+        )?.workingDirectory else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return directory
+    }
+
     static func preferredAgentCommand(
         fallback: String,
         focusRepository: String? = nil,
@@ -577,6 +593,31 @@ enum AgentControl {
               ;;
           esac
         done
+        # A one-shot `claude -p`, or a claude an agent starts from inside its own
+        # session, is not the conversation this terminal is about. It must not
+        # resume the bound conversation, and its hooks must not rebind it.
+        nested=0
+        [ -n "${CLAUDECODE:-}" ] && nested=1
+        for arg in "$@"; do
+          case "$arg" in
+            -p|--print) nested=1; break ;;
+          esac
+        done
+        if [ "$nested" -eq 1 ]; then
+          unset RUNWAY_SESSION_FILE RUNWAY_DURABLE_SESSION_FILE RUNWAY_CLAUDE_SESSION_ID
+        fi
+        # The binding follows the user. Once they /resume, /clear or start
+        # another conversation in this terminal, Runway's hook records it, and a
+        # restart reopens that one in its own folder rather than the original id.
+        bound_cwd=""
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ -f "${RUNWAY_DURABLE_SESSION_FILE:-}" ]; then
+          bound_provider=$(/usr/bin/plutil -extract provider raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          bound_id=$(/usr/bin/plutil -extract sessionId raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          if [ "$bound_provider" = "claude" ] && [ -n "$bound_id" ]; then
+            RUNWAY_CLAUDE_SESSION_ID="$bound_id"
+            bound_cwd=$(/usr/bin/plutil -extract cwd raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          fi
+        fi
         session_args=()
         session_mode="unbound"
         if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ]; then
@@ -587,6 +628,10 @@ enum AgentControl {
           if [ -n "$transcript" ]; then
             session_args=(--resume "$RUNWAY_CLAUDE_SESSION_ID")
             session_mode="resume"
+            # Claude looks a conversation up by the folder it ran in.
+            if [ -n "$bound_cwd" ] && [ -d "$bound_cwd" ] && [ "$bound_cwd" != "$PWD" ]; then
+              cd "$bound_cwd" || true
+            fi
           else
             session_args=(--session-id "$RUNWAY_CLAUDE_SESSION_ID")
             session_mode="create"
@@ -596,8 +641,7 @@ enum AgentControl {
         fi
         export RUNWAY_CLAUDE_SESSION_MODE="$session_mode"
         if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
-          printf '{"provider":"claude","sessionId":"%s"}' "$RUNWAY_CLAUDE_SESSION_ID" > "$RUNWAY_SESSION_FILE"
-          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"claude","sessionId":"%s"}' "$RUNWAY_CLAUDE_SESSION_ID" > "$RUNWAY_DURABLE_SESSION_FILE"
+          "$wrapper_dir/runway-session-record" claude "$RUNWAY_CLAUDE_SESSION_ID" "$PWD"
         fi
         "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "$@"
         exit_code=$?
@@ -744,7 +788,55 @@ enum AgentControl {
         """
         try? geminiScript.data(using: .utf8)?.write(to: geminiPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: geminiPath.path)
+
+        for (path, script) in [
+            (sessionRecorderPath, sessionRecorderScript),
+            (claudeSessionHookPath, claudeSessionHookScript),
+        ] {
+            try? script.data(using: .utf8)?.write(to: path)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        }
     }
+
+    static var sessionRecorderPath: URL { binDir.appendingPathComponent("runway-session-record") }
+    static var claudeSessionHookPath: URL { binDir.appendingPathComponent("runway-claude-session-hook") }
+
+    /// `runway-session-record <provider> <session-id> [cwd]`: the one writer of
+    /// a terminal's conversation record, its per-card file and, for a Focus
+    /// issue or a Quick Agent tab, the durable binding that outlives the card.
+    static let sessionRecorderScript = #"""
+    #!/bin/zsh -f
+    provider="${1:-}"
+    session_id="${2:-}"
+    dir="${3:-}"
+    if [ -z "$provider" ] || [ -z "$session_id" ]; then exit 0; fi
+    json_escape() {
+      local s="$1"
+      s="${s//\\/\\\\}"
+      s="${s//\"/\\\"}"
+      printf '%s' "$s"
+    }
+    record=$(printf '{"provider":"%s","sessionId":"%s"' "$(json_escape "$provider")" "$(json_escape "$session_id")")
+    [ -n "$dir" ] && record="$record$(printf ',"cwd":"%s"' "$(json_escape "$dir")")"
+    record="$record}"
+    [ -n "${RUNWAY_SESSION_FILE:-}" ] && printf '%s' "$record" > "$RUNWAY_SESSION_FILE"
+    [ -n "${RUNWAY_DURABLE_SESSION_FILE:-}" ] && printf '%s' "$record" > "$RUNWAY_DURABLE_SESSION_FILE"
+    exit 0
+    """#
+
+    /// Claude hook that records the conversation actually on screen. A
+    /// `/resume`, `/clear`, or `claude --resume` typed by hand starts a session
+    /// the wrapper never saw; without this the card stayed bound to the id it
+    /// was launched with, and reopening the issue went back to that one.
+    static let claudeSessionHookScript = #"""
+    #!/bin/zsh -f
+    [ -n "${RUNWAY_SESSION_FILE:-}" ] || exit 0
+    input=$(/bin/cat)
+    session_id=$(printf '%s' "$input" | /usr/bin/plutil -extract session_id raw -o - -- - 2>/dev/null)
+    dir=$(printf '%s' "$input" | /usr/bin/plutil -extract cwd raw -o - -- - 2>/dev/null)
+    [ -n "$session_id" ] || exit 0
+    exec "${0:A:h}/runway-session-record" claude "$session_id" "$dir"
+    """#
 
     private static func ensureFeedInbox() {
         if !FileManager.default.fileExists(atPath: feedInbox.path) {
@@ -774,9 +866,22 @@ enum AgentControl {
         // idle. Waiting for Claude's own Notification hook is what made the
         // amber state arrive a minute late, or not at all. Idle now means the
         // session itself ended.
+        // SessionStart fires for a fresh start, --resume, /resume and /clear,
+        // each with the id now on screen. UserPromptSubmit catches up a
+        // session that started before the hook existed.
+        func recordingSession(_ matcher: [String: Any]) -> [String: Any] {
+            var matcher = matcher
+            let hooks = matcher["hooks"] as? [[String: Any]] ?? []
+            let quotedPath = "'\(claudeSessionHookPath.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+            matcher["hooks"] = hooks + [[
+                "type": "command",
+                "command": "\(quotedPath); true",
+            ]]
+            return matcher
+        }
         let settings: [String: Any] = ["hooks": [
-            "SessionStart": [reporter("running")],
-            "UserPromptSubmit": [reporter("running")],
+            "SessionStart": [recordingSession(reporter("running"))],
+            "UserPromptSubmit": [recordingSession(reporter("running"))],
             "PreToolUse": [reporter("running")],
             "PostToolUse": [reporter("running")],
             "Notification": [reporter("needs-action")],

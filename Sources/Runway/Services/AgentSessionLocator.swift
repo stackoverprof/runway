@@ -11,15 +11,23 @@ enum AgentSessionLocator {
     struct Resolved: Equatable {
         let provider: IssueAgentProvider
         let sessionID: String
+        /// The folder the conversation runs in. Claude finds a conversation by
+        /// that folder, so a resume pasted anywhere else has to go there first.
+        var workingDirectory: String? = nil
 
         /// The whole command, which is what gets pasted into another terminal.
-        var resumeCommand: String { provider.resumeCommand(sessionID: sessionID) }
+        var resumeCommand: String {
+            let resume = provider.resumeCommand(sessionID: sessionID)
+            guard let workingDirectory, !workingDirectory.isEmpty else { return resume }
+            let quoted = "'" + workingDirectory.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            return "cd \(quoted) && \(resume)"
+        }
     }
 
     // MARK: Recorded by the wrapper
 
-    /// Parse `{"provider":"claude","sessionId":"…"}` as written by the scoped
-    /// wrapper scripts.
+    /// Parse `{"provider":"claude","sessionId":"…","cwd":"…"}` as written by
+    /// the scoped wrapper scripts and Runway's Claude hook. `cwd` is optional.
     static func recorded(in contents: String) -> Resolved? {
         guard let data = contents.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -28,7 +36,13 @@ enum AgentSessionLocator {
               !sessionID.isEmpty else { return nil }
         let provider = (json["provider"] as? String)
             .flatMap(IssueAgentProvider.init(rawValue:)) ?? .claude
-        return Resolved(provider: provider, sessionID: sessionID)
+        let directory = (json["cwd"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Resolved(
+            provider: provider,
+            sessionID: sessionID,
+            workingDirectory: directory?.isEmpty == false ? directory : nil
+        )
     }
 
     static func recorded(for boxID: UUID) -> Resolved? {

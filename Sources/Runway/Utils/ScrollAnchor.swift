@@ -45,10 +45,61 @@ enum EdgeAutoScrollPolicy {
     private weak var scrollView: NSScrollView?
     private var tickTask: Task<Void, Never>?
     private var step: CGFloat = 0
+    private var boundsObserver: NSObjectProtocol?
+    /// The last offset the attached scroll view reported, and the list it
+    /// belonged to. A list rebuilt for the same `restoreKey` (a card left or
+    /// joined it) picks the offset back up; any other key starts at the top.
+    private var savedOffsetY: CGFloat?
+    private var restoreKey: AnyHashable?
 
-    func attach(_ scrollView: NSScrollView?) {
-        guard scrollView !== self.scrollView else { return }
+    func attach(_ scrollView: NSScrollView?, restoreKey: AnyHashable? = nil) {
+        guard scrollView !== self.scrollView else {
+            self.restoreKey = restoreKey
+            return
+        }
+        if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+        boundsObserver = nil
+        let restoredOffset = restoreKey != nil && restoreKey == self.restoreKey
+            ? savedOffsetY
+            : nil
         self.scrollView = scrollView
+        self.restoreKey = restoreKey
+        savedOffsetY = nil
+        guard let scrollView else { return }
+
+        let clip = scrollView.contentView
+        clip.postsBoundsChangedNotifications = true
+        boundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clip,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let scrollView = self.scrollView else { return }
+                self.savedOffsetY = scrollView.contentView.bounds.origin.y
+            }
+        }
+        if let restoredOffset {
+            // The new list lays its cards out on the next pass; restore after it.
+            let restoring = ObjectIdentifier(scrollView)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let scrollView = self.scrollView,
+                      ObjectIdentifier(scrollView) == restoring else { return }
+                self.restore(offsetY: restoredOffset, in: scrollView)
+            }
+        }
+    }
+
+    private func restore(offsetY: CGFloat, in scrollView: NSScrollView) {
+        guard let documentView = scrollView.documentView else { return }
+        scrollView.layoutSubtreeIfNeeded()
+        let clip = scrollView.contentView
+        let minY = startY(scrollView, documentView)
+        let maxY = max(minY, documentView.frame.height - clip.bounds.height)
+        let target = min(max(minY, offsetY), maxY)
+        guard abs(clip.bounds.origin.y - target) > 0.5 else { return }
+        clip.setBoundsOrigin(CGPoint(x: clip.bounds.origin.x, y: target))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     // MARK: Scroll to top
@@ -123,20 +174,24 @@ enum EdgeAutoScrollPolicy {
 /// `NSScrollView` to an anchor. Zero-sized, so it never affects layout.
 struct ScrollAnchorProbe: NSViewRepresentable {
     let anchor: RunwayScrollAnchor
+    var restoreKey: AnyHashable?
 
     func makeNSView(context: Context) -> ProbeView {
         let view = ProbeView()
         view.anchor = anchor
+        view.restoreKey = restoreKey
         return view
     }
 
     func updateNSView(_ nsView: ProbeView, context: Context) {
         nsView.anchor = anchor
+        nsView.restoreKey = restoreKey
         nsView.locate()
     }
 
     final class ProbeView: NSView {
         weak var anchor: RunwayScrollAnchor?
+        var restoreKey: AnyHashable?
 
         override var intrinsicContentSize: NSSize { .zero }
 
@@ -147,16 +202,17 @@ struct ScrollAnchorProbe: NSViewRepresentable {
 
         func locate() {
             guard let anchor, let scrollView = enclosingScrollView else { return }
-            anchor.attach(scrollView)
+            anchor.attach(scrollView, restoreKey: restoreKey)
         }
     }
 }
 
 extension View {
-    /// Register this scroll view's content with `anchor`.
-    func scrollAnchor(_ anchor: RunwayScrollAnchor) -> some View {
+    /// Register this scroll view's content with `anchor`. A scroll view that
+    /// replaces one with the same `restoreKey` keeps its scroll position.
+    func scrollAnchor(_ anchor: RunwayScrollAnchor, restoreKey: AnyHashable? = nil) -> some View {
         background {
-            ScrollAnchorProbe(anchor: anchor)
+            ScrollAnchorProbe(anchor: anchor, restoreKey: restoreKey)
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
         }
