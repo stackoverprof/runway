@@ -44,6 +44,15 @@ struct AgentSessionLocatorTests {
         )
     }
 
+    @Test("A session recorded with its folder resumes from that folder")
+    func recordedSessionWithFolder() {
+        let resolved = AgentSessionLocator.recorded(
+            in: #"{"provider":"claude","sessionId":"abc","cwd":"/Users/erbin/it's here"}"#
+        )
+        #expect(resolved?.workingDirectory == "/Users/erbin/it's here")
+        #expect(resolved?.resumeCommand == #"cd '/Users/erbin/it'\''s here' && claude --resume abc"#)
+    }
+
     @Test("Codex uses its resume subcommand")
     func codexResumeCommand() {
         let resolved = AgentSessionLocator.recorded(

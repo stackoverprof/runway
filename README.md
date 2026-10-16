@@ -130,14 +130,20 @@ repository's local clone as its starting directory. For example,
   shell was.
 - Right-click any terminal header to copy its agent resume command
   (`claude --resume <id>` or `codex resume <id>`) or the bare session id, so the same conversation can
-  be reopened in any other terminal.
+  be reopened in any other terminal. When the conversation lives in another
+  folder, the command starts with a `cd` there, so pasting it into a Focus
+  terminal moves that conversation onto the issue.
 - Switching repositories keeps each repository's Focus terminals and running
   agent sessions alive, then restores them when that repository is selected again.
 - **Conversation binding** gives each Focus issue a stable agent conversation, so
   a terminal resumes after a Runway relaunch or after the issue leaves and returns
   to Focus. If you stop Claude and run Codex in the same terminal, Runway captures
   Codex's exact session and makes Codex that issue's preferred provider until you
-  switch again. On by default, and switchable in Settings → Agents. Removing an
+  switch again. The binding follows you: `/resume`, `/clear`, or a
+  `claude --resume` typed in that terminal rebinds the issue to the conversation
+  now on screen, and the issue reopens it in its own folder next time. A one-shot
+  `claude -p`, or a claude an agent starts from inside its own session, never
+  rebinds it. On by default, and switchable in Settings → Agents. Removing an
   issue or quitting Runway still stops its process.
 - **Terminal font** is set in Settings → Terminal: pick a family from
   the coding faces installed on this Mac, type any other family by hand, and set

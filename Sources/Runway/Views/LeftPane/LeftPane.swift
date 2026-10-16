@@ -19,6 +19,16 @@ struct RunwayIssueListIdentity: Hashable {
     }
 }
 
+/// What a rebuilt issue list keeps its scroll position across. A card dropped
+/// into Focus, or closed, rebuilds the list but leaves the reader where they
+/// were. A new repository, a new search, or re-tapping the tab starts at the top.
+struct RunwayIssueListScrollKey: Hashable {
+    let repository: String
+    let lane: AssignedIssueLane
+    let query: String
+    let resetGeneration: Int
+}
+
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
     @Bindable var ws: Workspace
@@ -1555,40 +1565,11 @@ struct LeftPane: View {
         text: Binding<String>,
         tab: FeedTab
     ) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.30))
-
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.82))
-                .focused($focusedSearchTab, equals: tab)
-
-            if !text.wrappedValue.isEmpty {
-                Button {
-                    text.wrappedValue = ""
-                    focusedSearchTab = tab
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Color.white.opacity(0.28))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("Clear search")
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.035)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(
-                    Color.white.opacity(focusedSearchTab == tab ? 0.15 : 0.07),
-                    lineWidth: 1
-                )
+        RunwaySearchField(
+            placeholder: placeholder,
+            query: text,
+            tab: tab,
+            focus: $focusedSearchTab
         )
     }
 
@@ -1790,7 +1771,15 @@ struct LeftPane: View {
                 .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
-                .scrollAnchor(issueScrollAnchor(for: lane))
+                .scrollAnchor(
+                    issueScrollAnchor(for: lane),
+                    restoreKey: RunwayIssueListScrollKey(
+                        repository: feed.repo,
+                        lane: lane,
+                        query: issueSearchVisible ? issueSearchQuery : "",
+                        resetGeneration: issueListResetGeneration
+                    )
+                )
             }
             .contentMargins(.top, 0, for: .scrollContent)
             .scrollIndicators(.hidden)

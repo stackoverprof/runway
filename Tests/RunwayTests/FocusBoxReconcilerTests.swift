@@ -26,6 +26,21 @@ struct FocusBoxReconcilerTests {
         #expect(result.removedBoxes.isEmpty)
     }
 
+    @Test("An issue whose conversation moved folders reopens in that folder")
+    func reopensInRecordedFolder() {
+        let result = FocusBoxReconciler.reconcile(
+            previousBoxes: [],
+            issues: [issue(number: 7, title: "Moved"), issue(number: 8, title: "Stayed")],
+            repository: "owner/repository",
+            workingDirectory: "/repos/repository",
+            workingDirectoriesByIssue: [7: "/repos"],
+            command: "claude",
+            retainUnmanagedBoxes: true
+        )
+
+        #expect(result.repositoryBoxes.map(\.cwd) == ["/repos", "/repos/repository"])
+    }
+
     @Test("Switching repositories retains other repository terminals")
     func retainsOtherRepositoryBoxes() {
         let repositoryABox = AgentBox(

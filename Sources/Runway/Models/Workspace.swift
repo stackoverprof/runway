@@ -232,7 +232,16 @@ struct QuickTerminalTabRequest: Equatable {
         load()
         for index in boxes.indices {
             guard let repository = boxes[index].focusRepository else { continue }
-            boxes[index].cwd = boxes[index].focusCheckout
+            let followed = UserDefaults.standard.bool(forKey: SettingsKey.issueAgentSessionsEnabled)
+                ? boxes[index].focusIssueNumber.flatMap {
+                    AgentControl.durableWorkingDirectory(
+                        focusRepository: repository,
+                        focusIssueNumber: $0
+                    )
+                }
+                : nil
+            boxes[index].cwd = followed
+                ?? boxes[index].focusCheckout
                 ?? GitHubFeed.shared.localPath(for: repository)
         }
         if GitHubFeed.shared.repo.isEmpty {
@@ -862,12 +871,21 @@ struct QuickTerminalTabRequest: Equatable {
                 )
             })
             : [:]
+        let directoriesByIssue: [Int: String] = bindingEnabled
+            ? issues.reduce(into: [:]) { result, issue in
+                result[issue.number] = AgentControl.durableWorkingDirectory(
+                    focusRepository: repository,
+                    focusIssueNumber: issue.number
+                )
+            }
+            : [:]
         let reconciliation = FocusBoxReconciler.reconcile(
             previousBoxes: previousBoxes,
             issues: issues,
             repository: repository,
             checkout: checkout,
             workingDirectory: checkout ?? GitHubFeed.shared.localPath(for: repository),
+            workingDirectoriesByIssue: directoriesByIssue,
             command: SettingsKey.configuredAgentCommand,
             commandsByIssue: commandsByIssue,
             retainUnmanagedBoxes: wasFocusControlled
@@ -966,6 +984,7 @@ enum FocusBoxReconciler {
         repository: String,
         checkout: String? = nil,
         workingDirectory: String?,
+        workingDirectoriesByIssue: [Int: String] = [:],
         command: String,
         commandsByIssue: [Int: String] = [:],
         retainUnmanagedBoxes: Bool
@@ -982,14 +1001,16 @@ enum FocusBoxReconciler {
                 $0.focusIssueNumber == issue.number
             }) {
                 existing.name = issue.title
-                existing.cwd = workingDirectory
+                existing.cwd = workingDirectoriesByIssue[issue.number] ?? workingDirectory
                 repositoryBoxes.append(existing)
                 usedIDs.insert(existing.id)
             } else {
                 var box = AgentBox(
                     name: issue.title,
                     detail: "",
-                    cwd: workingDirectory,
+                    // An issue whose conversation moved to another folder
+                    // reopens there, not in the repository's clone.
+                    cwd: workingDirectoriesByIssue[issue.number] ?? workingDirectory,
                     focusRepository: repository,
                     focusIssueNumber: issue.number,
                     focusCheckout: checkout

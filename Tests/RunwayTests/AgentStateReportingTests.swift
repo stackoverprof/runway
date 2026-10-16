@@ -33,6 +33,18 @@ struct AgentStateReportingTests {
         }
     }
 
+    @Test("Starting, resuming or clearing a conversation records which one is on screen")
+    func sessionChangesAreRecorded() throws {
+        let hooks = try #require(AgentControl.hookSettings["hooks"] as? [String: Any])
+        for event in ["SessionStart", "UserPromptSubmit"] {
+            let matchers = try #require(hooks[event] as? [[String: Any]])
+            let commands = try #require(matchers.first?["hooks"] as? [[String: Any]])
+            #expect(commands.contains {
+                ($0["command"] as? String)?.contains("runway-claude-session-hook") == true
+            })
+        }
+    }
+
     @Test("Idle now means the session itself ended")
     func sessionEndMeansIdle() throws {
         #expect(try #require(command(for: "SessionEnd")).contains("idle"))
