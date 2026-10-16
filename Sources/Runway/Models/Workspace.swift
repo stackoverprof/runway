@@ -884,7 +884,8 @@ struct QuickTerminalTabRequest: Equatable {
             issues: issues,
             repository: repository,
             checkout: checkout,
-            workingDirectory: checkout ?? GitHubFeed.shared.localPath(for: repository),
+            workingDirectory: (checkout ?? GitHubFeed.shared.localPath(for: repository))
+                .map(CloneName.root(ofCheckout:)),
             workingDirectoriesByIssue: directoriesByIssue,
             command: SettingsKey.configuredAgentCommand,
             commandsByIssue: commandsByIssue,

@@ -319,11 +319,10 @@ struct LeftPane: View {
         return title.isEmpty ? "Activity" : title
     }
 
-    /// The repository name, or the folder name when a second clone is picked.
+    /// The clone's folder name, which is also its Focus agents' name prefix.
     private var repoButtonTitle: String {
-        if let path = feed.localPath(for: feed.repo),
-           let label = feed.checkoutLabel(path, of: feed.repo) {
-            return label
+        if let path = feed.localPath(for: feed.repo) {
+            return CloneName.name(ofCheckout: path)
         }
         return feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo
     }
@@ -331,11 +330,7 @@ struct LeftPane: View {
     private var repoChoices: [RepoPicker.Choice] {
         feed.availableRepos.flatMap { repository in
             feed.checkouts(for: repository).map { path in
-                RepoPicker.Choice(
-                    repository: repository,
-                    path: path,
-                    label: feed.checkoutLabel(path, of: repository)
-                )
+                RepoPicker.Choice(repository: repository, path: path)
             }
         }
     }

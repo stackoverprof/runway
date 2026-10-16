@@ -17,6 +17,9 @@ Each Runway terminal box exposes the following environment variables to its shel
 - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
 - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
 - `RUNWAY_DURABLE_SESSION_FILE`: The issue-owned provider binding that survives terminal-card removal and app relaunches.
+- `RUNWAY_ISSUE`, `RUNWAY_ISSUE_NUMBER`, `RUNWAY_ISSUE_TITLE`, `RUNWAY_ISSUE_URL`: The issue a Focus terminal works on (`owner/repo#123`). Claude reads it at session start, so "work on your issue" needs no pasted title.
+- `RUNWAY_CLONE`: The clone whose Focus board owns the terminal, by folder name (`monorepo`, `monosentry`). A worktree container (`monorepo/main`) is named by its container.
+- `RUNWAY_AGENT_NAME`: `<clone>-<issue>`, e.g. `monorepo-14202`. Runway's Claude wrapper starts the session under this name, so other sessions can address it.
 - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_CODEX_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal carries its own kept conversation, rotated only by the `+` button in its header. Runway's wrappers create or resume Claude and Gemini IDs, capture Codex's generated UUID, and remember the last provider used.
 
 ---
@@ -85,6 +88,12 @@ runway-issue open 123
 runway-issue closed 123
 runway-issue move 123 --to focus --before 456
 ```
+
+Pass `--clone <name>` to act on a specific clone's board; inside a Focus terminal it
+defaults to `RUNWAY_CLONE`. Runway acts on the board on screen and rejects a command for
+another clone. Each Focus issue in the JSON carries `agent`, the session name of its
+Claude agent (`<clone>-<issue>`). Moving an issue out of Focus closes its terminal and
+ends that agent. Move issues between lanes only when the user asks.
 
 Moving between Open and Closed also updates GitHub. Moving into or out of Focus
 updates Runway immediately and persists the order. The command waits for Runway
