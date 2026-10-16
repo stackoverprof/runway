@@ -196,6 +196,8 @@ enum AgentControl {
         autorun: String? = nil,
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
+        focusIssueTitle: String? = nil,
+        focusCheckoutPath: String? = nil,
         issueAgentSessionsEnabled: Bool = false,
         quickTerminalSession: Bool = false,
         quickTerminalRoot: String? = nil
@@ -238,6 +240,14 @@ enum AgentControl {
         if let focusRepository, !focusRepository.isEmpty {
             env["RUNWAY_REPOSITORY"] = focusRepository
         }
+        env.merge(
+            issueIdentity(
+                repository: quickTerminalSession ? nil : focusRepository,
+                issueNumber: focusIssueNumber,
+                title: focusIssueTitle,
+                checkoutPath: focusCheckoutPath
+            )
+        ) { _, identity in identity }
         let recorded = durableFile.flatMap { file -> AgentSessionLocator.Resolved? in
             guard let contents = try? String(contentsOf: file, encoding: .utf8) else {
                 return nil
@@ -274,6 +284,33 @@ enum AgentControl {
             env["\(prefix)_ID"] = sessionID
         }
         return env
+    }
+
+    /// Who a Focus terminal works for. The Claude wrapper names the session
+    /// after `RUNWAY_AGENT_NAME`, and a SessionStart hook tells the agent its
+    /// issue, so "work on your issue" needs no pasted title. Empty for the
+    /// quick terminal and for boxes no issue owns.
+    static func issueIdentity(
+        repository: String?,
+        issueNumber: Int?,
+        title: String?,
+        checkoutPath: String?
+    ) -> [String: String] {
+        guard let repository, !repository.isEmpty, let issueNumber else { return [:] }
+        var identity = [
+            "RUNWAY_ISSUE": "\(repository)#\(issueNumber)",
+            "RUNWAY_ISSUE_NUMBER": String(issueNumber),
+            "RUNWAY_ISSUE_URL": "https://github.com/\(repository)/issues/\(issueNumber)",
+        ]
+        if let title, !title.isEmpty {
+            identity["RUNWAY_ISSUE_TITLE"] = title
+        }
+        if let checkoutPath, !checkoutPath.isEmpty {
+            let clone = CloneName.name(ofCheckout: checkoutPath)
+            identity["RUNWAY_CLONE"] = clone
+            identity["RUNWAY_AGENT_NAME"] = CloneName.agentName(clone: clone, issueNumber: issueNumber)
+        }
+        return identity
     }
 
     /// Resolve supported configured agents directly through Runway's adapter.
@@ -486,23 +523,28 @@ enum AgentControl {
         def main():
             parser = argparse.ArgumentParser(prog='runway-issue')
             parser.add_argument('--repo', default=os.environ.get('RUNWAY_REPOSITORY', ''))
+            parser.add_argument('--clone', default=os.environ.get('RUNWAY_CLONE', ''),
+                                help='the clone whose board to use, by folder name (monorepo, monosentry)')
             sub = parser.add_subparsers(dest='action', required=True)
 
             listing = sub.add_parser('list', help='list issues by board lane')
             listing.add_argument('--lane', choices=['open', 'focus', 'closed'])
             listing.add_argument('--repo', default=argparse.SUPPRESS)
+            listing.add_argument('--clone', default=argparse.SUPPRESS)
 
             for lane in ('open', 'focus', 'closed'):
                 move = sub.add_parser(lane, help=f'move an issue to {lane}')
                 move.add_argument('issue', type=int)
                 move.add_argument('--before', type=int)
                 move.add_argument('--repo', default=argparse.SUPPRESS)
+                move.add_argument('--clone', default=argparse.SUPPRESS)
 
             move = sub.add_parser('move', help='move an issue to a board lane')
             move.add_argument('issue', type=int)
             move.add_argument('--to', choices=['open', 'focus', 'closed'], required=True)
             move.add_argument('--before', type=int)
             move.add_argument('--repo', default=argparse.SUPPRESS)
+            move.add_argument('--clone', default=argparse.SUPPRESS)
 
             args = parser.parse_args()
             command_id = str(uuid.uuid4())
@@ -512,6 +554,7 @@ enum AgentControl {
                 'id': command_id,
                 'action': 'list' if action == 'list' else 'move',
                 'repository': args.repo,
+                'clone': args.clone,
                 'issueNumber': getattr(args, 'issue', None),
                 'destination': destination,
                 'beforeNumber': getattr(args, 'before', None),
@@ -533,6 +576,10 @@ enum AgentControl {
                     if not result.get('success'):
                         print(result.get('error', 'Runway rejected the issue command.'), file=sys.stderr)
                         return 1
+                    clone = result.get('clone') or ''
+                    if clone:
+                        for issue in result.get('focus', []):
+                            issue['agent'] = f"{clone}-{issue.get('number')}"
                     if action == 'list':
                         lane = args.lane
                         if lane:
@@ -605,6 +652,18 @@ enum AgentControl {
         done
         if [ "$nested" -eq 1 ]; then
           unset RUNWAY_SESSION_FILE RUNWAY_DURABLE_SESSION_FILE RUNWAY_CLAUDE_SESSION_ID
+          unset RUNWAY_AGENT_NAME RUNWAY_ISSUE
+        fi
+        # A Focus terminal's agent is named after its clone and issue
+        # (monorepo-14202), so another session can find it by that name.
+        name_args=()
+        if [ -n "${RUNWAY_AGENT_NAME:-}" ]; then
+          name_args=(--name "$RUNWAY_AGENT_NAME")
+          for arg in "$@"; do
+            case "$arg" in
+              -n|--name|--name=*) name_args=(); break ;;
+            esac
+          done
         fi
         # The binding follows the user. Once they /resume, /clear or start
         # another conversation in this terminal, Runway's hook records it, and a
@@ -643,7 +702,7 @@ enum AgentControl {
         if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
           "$wrapper_dir/runway-session-record" claude "$RUNWAY_CLAUDE_SESSION_ID" "$PWD"
         fi
-        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "$@"
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
         \(pulseCommand)
@@ -792,6 +851,7 @@ enum AgentControl {
         for (path, script) in [
             (sessionRecorderPath, sessionRecorderScript),
             (claudeSessionHookPath, claudeSessionHookScript),
+            (issueContextHookPath, issueContextHookScript),
         ] {
             try? script.data(using: .utf8)?.write(to: path)
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
@@ -800,6 +860,26 @@ enum AgentControl {
 
     static var sessionRecorderPath: URL { binDir.appendingPathComponent("runway-session-record") }
     static var claudeSessionHookPath: URL { binDir.appendingPathComponent("runway-claude-session-hook") }
+    static var issueContextHookPath: URL { binDir.appendingPathComponent("runway-issue-context") }
+
+    /// SessionStart hook: what Claude prints here it reads before the first
+    /// prompt, and SessionStart fires again on resume and /clear, so a Focus
+    /// agent always knows which issue "your issue" is. It only informs; work
+    /// starts when the user asks.
+    static let issueContextHookScript = #"""
+    #!/bin/zsh -f
+    [ -t 0 ] || /bin/cat > /dev/null
+    [ -n "${RUNWAY_ISSUE:-}" ] || exit 0
+    repository="${RUNWAY_ISSUE%#*}"
+    number="${RUNWAY_ISSUE##*#}"
+    title="${RUNWAY_ISSUE_TITLE:-}"
+    agent="${RUNWAY_AGENT_NAME:-this session}"
+    printf 'You are %s, the agent Runway opened for one GitHub issue: %s#%s' "$agent" "$repository" "$number"
+    [ -n "$title" ] && printf ' "%s"' "$title"
+    printf ' (%s).\n' "${RUNWAY_ISSUE_URL:-https://github.com/$repository/issues/$number}"
+    printf 'When the user says "your issue", they mean this one. Read it with `gh issue view %s --repo %s` before working on it. Do not start work until the user asks.\n' "$number" "$repository"
+    exit 0
+    """#
 
     /// `runway-session-record <provider> <session-id> [cwd]`: the one writer of
     /// a terminal's conversation record, its per-card file and, for a Focus
@@ -869,18 +949,21 @@ enum AgentControl {
         // SessionStart fires for a fresh start, --resume, /resume and /clear,
         // each with the id now on screen. UserPromptSubmit catches up a
         // session that started before the hook existed.
-        func recordingSession(_ matcher: [String: Any]) -> [String: Any] {
+        func running(_ script: URL, after matcher: [String: Any]) -> [String: Any] {
             var matcher = matcher
             let hooks = matcher["hooks"] as? [[String: Any]] ?? []
-            let quotedPath = "'\(claudeSessionHookPath.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+            let quotedPath = "'\(script.path.replacingOccurrences(of: "'", with: "'\\''"))'"
             matcher["hooks"] = hooks + [[
                 "type": "command",
                 "command": "\(quotedPath); true",
             ]]
             return matcher
         }
+        func recordingSession(_ matcher: [String: Any]) -> [String: Any] {
+            running(claudeSessionHookPath, after: matcher)
+        }
         let settings: [String: Any] = ["hooks": [
-            "SessionStart": [recordingSession(reporter("running"))],
+            "SessionStart": [running(issueContextHookPath, after: recordingSession(reporter("running")))],
             "UserPromptSubmit": [recordingSession(reporter("running"))],
             "PreToolUse": [reporter("running")],
             "PostToolUse": [reporter("running")],
@@ -914,6 +997,9 @@ enum AgentControl {
         - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
         - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
         - `RUNWAY_DURABLE_SESSION_FILE`: The issue-owned provider binding that survives terminal-card removal and app relaunches.
+        - `RUNWAY_ISSUE`, `RUNWAY_ISSUE_NUMBER`, `RUNWAY_ISSUE_TITLE`, `RUNWAY_ISSUE_URL`: The issue a Focus terminal works on (`owner/repo#123`). Claude reads it at session start, so "work on your issue" needs no pasted title.
+        - `RUNWAY_CLONE`: The clone whose Focus board owns the terminal, by folder name (`monorepo`, `monosentry`). A worktree container (`monorepo/main`) is named by its container.
+        - `RUNWAY_AGENT_NAME`: `<clone>-<issue>`, e.g. `monorepo-14202`. Runway's Claude wrapper starts the session under this name, so other sessions can address it.
         - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
         - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
         - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_CODEX_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal carries its own kept conversation, rotated only by the `+` button in its header. Runway's wrappers create or resume Claude and Gemini IDs, capture Codex's generated UUID, and remember the last provider used.
@@ -998,6 +1084,12 @@ enum AgentControl {
         runway-issue closed 123
         runway-issue move 123 --to focus --before 456
         ```
+
+        Pass `--clone <name>` to act on a specific clone's board; inside a Focus terminal it
+        defaults to `RUNWAY_CLONE`. Runway acts on the board on screen and rejects a command for
+        another clone. Each Focus issue in the JSON carries `agent`, the session name of its
+        Claude agent (`<clone>-<issue>`). Moving an issue out of Focus closes its terminal and
+        ends that agent. Move issues between lanes only when the user asks.
 
         Moving between Open and Closed also updates GitHub. Moving into or out of Focus
         updates Runway immediately and persists the order. The command waits for Runway

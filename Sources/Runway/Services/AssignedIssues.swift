@@ -32,6 +32,9 @@ private struct IssueBoardCommand: Codable {
     let id: String
     let action: String
     let repository: String
+    /// The clone whose board the command is for, by folder name. Empty or
+    /// absent means whichever clone of the repository is on screen.
+    let clone: String?
     let issueNumber: Int?
     let destination: AssignedIssueLane?
     let beforeNumber: Int?
@@ -41,6 +44,8 @@ private struct IssueBoardCommand: Codable {
 private struct IssueBoardResponse: Codable {
     let success: Bool
     let error: String?
+    /// The clone on screen; each Focus card's agent is `<clone>-<number>`.
+    let clone: String?
     let open: [AssignedIssue]
     let focus: [AssignedIssue]
     let closed: [AssignedIssue]
@@ -220,10 +225,17 @@ extension Notification.Name {
             }
 
             let response: IssueBoardResponse
+            let clone = currentClone(of: repository)
             if !command.repository.isEmpty, command.repository != repository {
                 response = issueBoardResponse(
                     success: false,
                     error: "Runway is currently showing \(repository), not \(command.repository)."
+                )
+            } else if let requested = command.clone, !requested.isEmpty,
+                      let clone, requested.caseInsensitiveCompare(clone) != .orderedSame {
+                response = issueBoardResponse(
+                    success: false,
+                    error: "Runway is currently showing the \(clone) board, not \(requested)."
                 )
             } else if command.action == "list" {
                 response = issueBoardResponse(success: true, error: nil)
@@ -259,10 +271,20 @@ extension Notification.Name {
         return nil
     }
 
+    /// The folder name of the clone whose Focus board is loaded.
+    private func currentClone(of repository: String) -> String? {
+        let board = loadedBoard ?? repository
+        let path = board.split(separator: "@", maxSplits: 1).dropFirst().first.map(String.init)
+            ?? GitHubFeed.shared.checkouts(for: repository).first
+            ?? GitHubFeed.shared.localPath(for: repository)
+        return path.map(CloneName.name(ofCheckout:))
+    }
+
     private func issueBoardResponse(success: Bool, error: String?) -> IssueBoardResponse {
         IssueBoardResponse(
             success: success,
             error: error,
+            clone: loadedRepository.flatMap(currentClone(of:)),
             open: open,
             focus: allFocused,
             closed: closed

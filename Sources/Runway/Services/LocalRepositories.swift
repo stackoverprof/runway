@@ -5,6 +5,32 @@ struct LocalRepository: Equatable, Sendable {
     let path: String
 }
 
+/// A clone is known by its folder, the way the user named it on disk
+/// (`monorepo`, `monosentry`), not by its GitHub owner. A worktree container
+/// keeps its main checkout in `<clone>/main`; the clone is the container.
+enum CloneName {
+    static func root(ofCheckout path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        guard url.lastPathComponent.lowercased() == "main" else { return url.path }
+        let container = url.deletingLastPathComponent()
+        // A container is not itself a checkout; a repository with a real
+        // `main` folder inside it is.
+        let containerIsCheckout = FileManager.default.fileExists(
+            atPath: container.appendingPathComponent(".git").path
+        )
+        return containerIsCheckout ? url.path : container.path
+    }
+
+    static func name(ofCheckout path: String) -> String {
+        URL(fileURLWithPath: root(ofCheckout: path)).lastPathComponent
+    }
+
+    /// The session name of the agent a Focus terminal starts for an issue.
+    static func agentName(clone: String, issueNumber: Int) -> String {
+        "\(clone)-\(issueNumber)"
+    }
+}
+
 enum LocalRepositoryDirectory {
     /// Scan where the user pointed Runway, as deep as they allowed. Defaults to
     /// the home directory at depth 6, which is what it always did.

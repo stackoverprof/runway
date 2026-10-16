@@ -269,14 +269,6 @@ enum FeedRevealPolicy {
             ?? Self.path(for: repository, in: repositoryPaths).map { [$0] } ?? []
     }
 
-    /// The folder name of a clone that is not the preferred one, so two
-    /// copies of one repository can be told apart. Nil for the preferred one.
-    func checkoutLabel(_ path: String, of repository: String) -> String? {
-        let paths = checkouts(for: repository)
-        guard paths.count > 1, paths.first != path else { return nil }
-        return URL(fileURLWithPath: path).lastPathComponent
-    }
-
     /// The picked clone of `repository` when it is not the preferred one.
     /// Names that clone's own Focus board; nil means the shared default board.
     func focusCheckout(for repository: String) -> String? {

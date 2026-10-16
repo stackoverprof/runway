@@ -44,6 +44,12 @@ struct RightPane: View {
                                     autorun: box.autorun,
                                     focusRepository: box.focusRepository,
                                     focusIssueNumber: box.focusIssueNumber,
+                                    focusIssueTitle: box.focusIssueNumber == nil ? nil : box.name,
+                                    focusCheckoutPath: box.focusRepository.flatMap { repository in
+                                        box.focusCheckout
+                                            ?? GitHubFeed.shared.checkouts(for: repository).first
+                                            ?? GitHubFeed.shared.localPath(for: repository)
+                                    },
                                     issueAgentSessionsEnabled: UserDefaults.standard.bool(
                                         forKey: SettingsKey.issueAgentSessionsEnabled
                                     )

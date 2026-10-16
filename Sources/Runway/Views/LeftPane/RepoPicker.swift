@@ -1,14 +1,13 @@
 import SwiftUI
 
 struct RepoPicker: View {
-    /// One row per clone. A repository cloned twice gets two rows, the
-    /// second one titled with its folder name.
+    /// One row per clone, titled with the clone's folder name (`monorepo`,
+    /// `monosentry`): the same name its Focus agents carry.
     struct Choice: Hashable {
         let repository: String
         let path: String
-        let label: String?
 
-        var title: String { label.map { "\(repository) (\($0))" } ?? repository }
+        var title: String { CloneName.name(ofCheckout: path) }
     }
 
     let repos: [Choice]
@@ -20,7 +19,9 @@ struct RepoPicker: View {
     @FocusState private var searchFocused: Bool
 
     private var filtered: [Choice] {
-        query.isEmpty ? repos : repos.filter { SearchText.contains($0.title, query) }
+        query.isEmpty ? repos : repos.filter {
+            SearchText.contains($0.title, query) || SearchText.contains($0.repository, query)
+        }
     }
 
     var body: some View {
