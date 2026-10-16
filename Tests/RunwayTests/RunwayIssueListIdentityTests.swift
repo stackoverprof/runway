@@ -4,57 +4,35 @@ import Testing
 
 @Suite("Issue list scroll identity")
 struct RunwayIssueListIdentityTests {
-    private func issue(_ number: Int) -> AssignedIssue {
-        AssignedIssue(
-            number: number,
-            title: "Issue \(number)",
-            state: "OPEN",
-            closedAt: nil,
-            createdAt: nil,
-            updatedAt: nil,
-            url: URL(string: "https://github.com/owner/repo/issues/\(number)")!
-        )
+    @Test("An issue arriving on its own rebuilds the scroll view so a stale offset cannot hide it")
+    func arrivalRebuilds() {
+        #expect(RunwayIssueListIdentity.hasArrivals(from: [57], to: [72, 57], movedByUser: nil))
     }
 
-    @Test("A new issue rebuilds the scroll view so a stale offset cannot hide it")
-    func membershipChange() {
-        let before = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(57)], resetGeneration: 0
-        )
-        let after = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(72), issue(57)], resetGeneration: 0
-        )
+    @Test("A card dragged into Focus keeps the lane's scroll view, and its place")
+    func departureKeepsScroll() {
+        #expect(!RunwayIssueListIdentity.hasArrivals(from: [72, 57, 40], to: [72, 40], movedByUser: 57))
+    }
 
-        #expect(before != after)
+    @Test("The card the user dropped in does not count as an arrival")
+    func userDropKeepsScroll() {
+        #expect(!RunwayIssueListIdentity.hasArrivals(from: [72, 40], to: [72, 57, 40], movedByUser: 57))
+        #expect(RunwayIssueListIdentity.hasArrivals(from: [72, 40], to: [72, 57, 40, 9], movedByUser: 57))
     }
 
     @Test("Reordering the same issues preserves the scroll view during drag")
     func reorderKeepsScroll() {
-        let before = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(72), issue(57)], resetGeneration: 0
-        )
-        let after = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(57), issue(72)], resetGeneration: 0
-        )
-
-        #expect(before == after)
+        #expect(!RunwayIssueListIdentity.hasArrivals(from: [72, 57], to: [57, 72], movedByUser: nil))
     }
 
-    @Test("Reset recreates the scroll view even when issue order was already default")
+    @Test("Reset recreates the scroll view")
     func resetRebuildsScroll() {
         let before = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(72), issue(57)], resetGeneration: 0
+            repository: "owner/repo", lane: .open, query: "", arrivals: 0, resetGeneration: 0
         )
         let after = RunwayIssueListIdentity(
-            repository: "owner/repo", lane: .open,
-            issues: [issue(72), issue(57)], resetGeneration: 1
+            repository: "owner/repo", lane: .open, query: "", arrivals: 0, resetGeneration: 1
         )
-
         #expect(before != after)
     }
 }

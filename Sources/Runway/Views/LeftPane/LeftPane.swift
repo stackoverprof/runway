@@ -1,32 +1,25 @@
 import SwiftUI
 import AppKit
 
-/// A changed set of cards needs a fresh scroll container. AppKit can retain an
-/// old clip origin after the lazy stack gets shorter, hiding its first card
-/// even though the board model and count still include it. Reordering within
-/// the same lane keeps the container so a drag does not jump the scroll.
+/// When an issue list needs a fresh scroll container. AppKit can keep a stale
+/// clip origin when the set of cards changes, hiding the first card even though
+/// the board model and count include it. An issue that arrives on its own (a
+/// refresh, another agent) still rebuilds the container. A card leaving, a
+/// reorder, or a card the user dropped in keeps it, with the offset pulled
+/// back inside the content, so the list stays where the user was reading.
 struct RunwayIssueListIdentity: Hashable {
     let repository: String
     let lane: AssignedIssueLane
-    let members: [Int]
-    let resetGeneration: Int
-
-    init(repository: String, lane: AssignedIssueLane, issues: [AssignedIssue], resetGeneration: Int) {
-        self.repository = repository
-        self.lane = lane
-        self.members = issues.map(\.number).sorted()
-        self.resetGeneration = resetGeneration
-    }
-}
-
-/// What a rebuilt issue list keeps its scroll position across. A card dropped
-/// into Focus, or closed, rebuilds the list but leaves the reader where they
-/// were. A new repository, a new search, or re-tapping the tab starts at the top.
-struct RunwayIssueListScrollKey: Hashable {
-    let repository: String
-    let lane: AssignedIssueLane
     let query: String
+    let arrivals: Int
     let resetGeneration: Int
+
+    /// True when `new` holds an issue `old` did not, other than the one the
+    /// user just moved there.
+    static func hasArrivals(from old: [Int], to new: [Int], movedByUser: Int?) -> Bool {
+        let previous = Set(old)
+        return new.contains { !previous.contains($0) && $0 != movedByUser }
+    }
 }
 
 /// Left pane: a "working now" presence strip on top, then the activity stream.
@@ -44,6 +37,10 @@ struct LeftPane: View {
     @State private var openIssueScrollAnchor = RunwayScrollAnchor()
     @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
     @State private var issueListResetGeneration = 0
+    @State private var issueListArrivals: [AssignedIssueLane: Int] = [:]
+    /// The card the user last dragged or ticked into another lane. Its arrival
+    /// there is expected, so it does not rebuild that lane's scroll view.
+    @State private var userMovedIssue: Int?
     @State private var issueSearchVisible = false
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
@@ -1249,6 +1246,7 @@ struct LeftPane: View {
             issue: issue,
             repository: issueRepositoryName,
             onClosedChange: { closed in
+                userMovedIssue = issue.number
                 withAnimation(.easeOut(duration: 0.18)) {
                     _ = assignedIssues.setClosed(
                         issueNumber: issue.number,
@@ -1482,6 +1480,7 @@ struct LeftPane: View {
                     in: proposedLane,
                     excluding: issue.number
                 ) ?? focusAppendTarget(for: proposedLane)
+            if sourceLane != proposedLane { userMovedIssue = issue.number }
             let accepted = sourceLane == proposedLane || assignedIssues.move(
                 issueNumber: issue.number,
                 from: sourceLane,
@@ -1716,6 +1715,7 @@ struct LeftPane: View {
                         issue: issue,
                         repository: issueRepositoryName,
                         onClosedChange: { closed in
+                            userMovedIssue = issue.number
                             withAnimation(.easeOut(duration: 0.18)) {
                                 _ = assignedIssues.setClosed(
                                     issueNumber: issue.number,
@@ -1771,24 +1771,24 @@ struct LeftPane: View {
                 .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
-                .scrollAnchor(
-                    issueScrollAnchor(for: lane),
-                    restoreKey: RunwayIssueListScrollKey(
-                        repository: feed.repo,
-                        lane: lane,
-                        query: issueSearchVisible ? issueSearchQuery : "",
-                        resetGeneration: issueListResetGeneration
-                    )
-                )
+                .scrollAnchor(issueScrollAnchor(for: lane))
             }
             .contentMargins(.top, 0, for: .scrollContent)
             .scrollIndicators(.hidden)
             .id(RunwayIssueListIdentity(
                 repository: feed.repo,
                 lane: lane,
-                issues: issues,
+                query: issueSearchVisible ? issueSearchQuery : "",
+                arrivals: issueListArrivals[lane, default: 0],
                 resetGeneration: issueListResetGeneration
             ))
+        }
+        .onChange(of: issues.map(\.number)) { old, new in
+            if RunwayIssueListIdentity.hasArrivals(from: old, to: new, movedByUser: userMovedIssue) {
+                issueListArrivals[lane, default: 0] &+= 1
+            } else if new.count < old.count {
+                issueScrollAnchor(for: lane).settleIntoContent()
+            }
         }
         .background {
             GeometryReader { proxy in
