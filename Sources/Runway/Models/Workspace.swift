@@ -826,6 +826,69 @@ struct QuickTerminalTabRequest: Equatable {
     /// Reconcile one repository's Focus list without disturbing terminal
     /// sessions owned by other repositories. Every Focus issue keeps a box;
     /// only those in `visibleIssueNumbers` (the window) are on screen.
+    /// Per issue, the agent command and folder a Focus terminal reopens with,
+    /// when Focus conversation binding is on.
+    private static func issueAgentLaunch(
+        issues: [AssignedIssue],
+        repository: String
+    ) -> (commands: [Int: String], directories: [Int: String]) {
+        let bindingEnabled = UserDefaults.standard.bool(
+            forKey: SettingsKey.issueAgentSessionsEnabled
+        )
+        let commandsByIssue = bindingEnabled
+            ? Dictionary(uniqueKeysWithValues: issues.map { issue in
+                (
+                    issue.number,
+                    AgentControl.preferredAgentCommand(
+                        fallback: SettingsKey.configuredAgentCommand,
+                        focusRepository: repository,
+                        focusIssueNumber: issue.number
+                    )
+                )
+            })
+            : [:]
+        let directoriesByIssue: [Int: String] = bindingEnabled
+            ? issues.reduce(into: [:]) { result, issue in
+                result[issue.number] = AgentControl.durableWorkingDirectory(
+                    focusRepository: repository,
+                    focusIssueNumber: issue.number
+                )
+            }
+            : [:]
+        return (commandsByIssue, directoriesByIssue)
+    }
+
+    /// Opens or closes the terminals of a board that is not on screen, after a
+    /// `runway-issue` command changed its Focus reel. The view, the focused box
+    /// and the board on screen stay as they are.
+    func reconcileOffScreenBoard(issues: [AssignedIssue], repository: String, checkout: String?) {
+        let board = FocusBoard.key(repository, checkout: checkout)
+        guard board != activeFocusBoard else { return }
+        let (commandsByIssue, directoriesByIssue) = Self.issueAgentLaunch(
+            issues: issues,
+            repository: repository
+        )
+        let reconciliation = FocusBoxReconciler.reconcile(
+            previousBoxes: boxes,
+            issues: issues,
+            repository: repository,
+            checkout: checkout,
+            workingDirectory: (checkout ?? GitHubFeed.shared.checkouts(for: repository).first
+                ?? GitHubFeed.shared.localPath(for: repository))
+                .map(CloneName.root(ofCheckout:)),
+            workingDirectoriesByIssue: directoriesByIssue,
+            command: SettingsKey.configuredAgentCommand,
+            commandsByIssue: commandsByIssue,
+            retainUnmanagedBoxes: true
+        )
+        for removed in reconciliation.removedBoxes {
+            TerminalRegistry.shared.unregister(id: removed.id)
+            AgentControl.cleanup(removed.id)
+            lastControl[removed.id] = nil
+        }
+        boxes = reconciliation.boxes
+    }
+
     func syncFocusBoard(
         issues: [AssignedIssue],
         visibleIssueNumbers: [Int],
@@ -856,29 +919,10 @@ struct QuickTerminalTabRequest: Equatable {
         let previousFocusedIndex = previousRepositoryFocusID.flatMap { id in
             previousRepositoryBoxes.firstIndex { $0.id == id }
         } ?? 0
-        let bindingEnabled = UserDefaults.standard.bool(
-            forKey: SettingsKey.issueAgentSessionsEnabled
+        let (commandsByIssue, directoriesByIssue) = Self.issueAgentLaunch(
+            issues: issues,
+            repository: repository
         )
-        let commandsByIssue = bindingEnabled
-            ? Dictionary(uniqueKeysWithValues: issues.map { issue in
-                (
-                    issue.number,
-                    AgentControl.preferredAgentCommand(
-                        fallback: SettingsKey.configuredAgentCommand,
-                        focusRepository: repository,
-                        focusIssueNumber: issue.number
-                    )
-                )
-            })
-            : [:]
-        let directoriesByIssue: [Int: String] = bindingEnabled
-            ? issues.reduce(into: [:]) { result, issue in
-                result[issue.number] = AgentControl.durableWorkingDirectory(
-                    focusRepository: repository,
-                    focusIssueNumber: issue.number
-                )
-            }
-            : [:]
         let reconciliation = FocusBoxReconciler.reconcile(
             previousBoxes: previousBoxes,
             issues: issues,
