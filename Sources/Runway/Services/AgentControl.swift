@@ -1086,8 +1086,8 @@ enum AgentControl {
         ```
 
         Pass `--clone <name>` to act on a specific clone's board; inside a Focus terminal it
-        defaults to `RUNWAY_CLONE`. Runway acts on the board on screen and rejects a command for
-        another clone. Each Focus issue in the JSON carries `agent`, the session name of its
+        defaults to `RUNWAY_CLONE`. A board that is not on screen works too: Runway applies the
+        move to that board's saved Focus and opens or closes its terminals without switching the view. Each Focus issue in the JSON carries `agent`, the session name of its
         Claude agent (`<clone>-<issue>`). Moving an issue out of Focus closes its terminal and
         ends that agent. Move issues between lanes only when the user asks.
 

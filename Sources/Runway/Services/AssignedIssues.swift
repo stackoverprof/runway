@@ -51,6 +51,14 @@ private struct IssueBoardResponse: Codable {
     let closed: [AssignedIssue]
 }
 
+/// A Focus reel changed on a board that is not on screen, so Workspace can
+/// open or close that board's terminals without switching the view.
+struct OffScreenFocusChange {
+    let repository: String
+    let checkout: String?
+    let issues: [AssignedIssue]
+}
+
 extension Notification.Name {
     static let assignedIssueBacklogOrderReset = Notification.Name(
         "runway.assignedIssueBacklogOrderReset"
@@ -73,6 +81,9 @@ extension Notification.Name {
     private var loadTaskRepository: String?
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
     @ObservationIgnored private var pendingRenameTitles: [String: [Int: String]] = [:]
+    /// Set by the left pane: applies an off-screen board's new Focus reel to
+    /// its terminals.
+    @ObservationIgnored var onOffScreenFocusChange: ((OffScreenFocusChange) -> Void)?
     private static let focusedIssuesKey = "runway.focusedAssignedIssueNumbers.v2"
     /// Paginated boards, read once per repository to migrate into the reel.
     private static let legacyFocusBoardsKey = "runway.focusBoards.v1"
@@ -225,17 +236,17 @@ extension Notification.Name {
             }
 
             let response: IssueBoardResponse
-            let clone = currentClone(of: repository)
-            if !command.repository.isEmpty, command.repository != repository {
-                response = issueBoardResponse(
-                    success: false,
-                    error: "Runway is currently showing \(repository), not \(command.repository)."
-                )
-            } else if let requested = command.clone, !requested.isEmpty,
-                      let clone, requested.caseInsensitiveCompare(clone) != .orderedSame {
-                response = issueBoardResponse(
-                    success: false,
-                    error: "Runway is currently showing the \(clone) board, not \(requested)."
+            let targetRepository = command.repository.isEmpty ? repository : command.repository
+            let requestedClone = command.clone.flatMap { $0.isEmpty ? nil : $0 }
+            let onScreenClone = currentClone(of: repository)
+            let isOnScreen = targetRepository == repository
+                && (requestedClone == nil || onScreenClone == nil
+                    || requestedClone?.caseInsensitiveCompare(onScreenClone ?? "") == .orderedSame)
+            if !isOnScreen {
+                response = offScreenResponse(
+                    to: command,
+                    repository: targetRepository,
+                    clone: requestedClone
                 )
             } else if command.action == "list" {
                 response = issueBoardResponse(success: true, error: nil)
@@ -262,6 +273,148 @@ extension Notification.Name {
             }
             writeIssueBoardResponse(response, id: command.id)
         }
+    }
+
+    /// A command for a board that is not on screen: another repository, or
+    /// another clone of this one. It works on that board's saved Focus reel
+    /// and the repository's cached issues, leaving the screen as it is.
+    private func offScreenResponse(
+        to command: IssueBoardCommand,
+        repository: String,
+        clone: String?
+    ) -> IssueBoardResponse {
+        let checkouts = GitHubFeed.shared.checkouts(for: repository)
+        let checkoutPath: String?
+        if let clone {
+            guard let match = checkouts.first(where: {
+                CloneName.name(ofCheckout: $0).caseInsensitiveCompare(clone) == .orderedSame
+            }) else {
+                return boardResponse(
+                    success: false,
+                    error: "Runway knows no clone named \(clone) of \(repository).",
+                    issues: [],
+                    reel: FocusReel(issues: []),
+                    clone: clone
+                )
+            }
+            checkoutPath = match
+        } else {
+            checkoutPath = checkouts.first
+        }
+        // The preferred clone's board is keyed by the bare repository.
+        let checkout = checkoutPath == checkouts.first ? nil : checkoutPath
+        let board = FocusBoard.key(repository, checkout: checkout)
+        let cloneName = checkoutPath.map(CloneName.name(ofCheckout:)) ?? clone
+        let boardIssues = repository == loadedRepository
+            ? issues
+            : snapshots[repository]?.issues ?? []
+        guard !boardIssues.isEmpty else {
+            return boardResponse(
+                success: false,
+                error: "Runway has no issues cached for \(repository) yet. Open it in Runway once.",
+                issues: [],
+                reel: FocusReel(issues: []),
+                clone: cloneName
+            )
+        }
+        var reel = Self.savedFocusReel(for: board)
+
+        if command.action == "list" {
+            return boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName)
+        }
+        guard command.action == "move",
+              let issueNumber = command.issueNumber,
+              let destination = command.destination,
+              let issue = boardIssues.first(where: { $0.number == issueNumber }) else {
+            return boardResponse(
+                success: false,
+                error: "Invalid issue board command.",
+                issues: boardIssues,
+                reel: reel,
+                clone: cloneName
+            )
+        }
+
+        let wasFocused = reel.contains(issueNumber)
+        let backlog: AssignedIssueLane = issue.isClosed ? .closed : .open
+        var order = reel.issues
+        switch (wasFocused, destination) {
+        case (false, .focus):
+            guard FocusReel.canAdd(count: reel.count, limit: SettingsKey.configuredFocusLimit()) else {
+                return boardResponse(
+                    success: false,
+                    error: "Runway could not move issue \(GitHubNumber.reference(issueNumber)). \(Self.focusFullHint)",
+                    issues: boardIssues,
+                    reel: reel,
+                    clone: cloneName
+                )
+            }
+            insert(issueNumber, before: command.beforeNumber, in: &order)
+            FocusActivityLog.record(action: .enteredFocus, repository: repository, issue: issue, from: backlog, to: .focus)
+        case (true, .focus):
+            if let target = command.beforeNumber { move(issueNumber, before: target, in: &order) }
+        case (true, .open), (true, .closed):
+            order.removeAll { $0 == issueNumber }
+            FocusActivityLog.record(action: .exitedFocus, repository: repository, issue: issue, from: .focus, to: destination)
+        case (false, .open), (false, .closed):
+            break
+        }
+        if order != reel.issues {
+            reel.replace(with: order)
+            var saved = Self.savedFocusReels
+            saved[board] = reel
+            if let data = try? JSONEncoder().encode(saved) {
+                UserDefaults.standard.set(data, forKey: Self.focusReelKey)
+            }
+            onOffScreenFocusChange?(OffScreenFocusChange(
+                repository: repository,
+                checkout: checkout,
+                issues: reel.issues.compactMap { number in boardIssues.first { $0.number == number } }
+            ))
+        }
+        if destination != .focus, (destination == .closed) != issue.isClosed {
+            setStateOffScreen(issueNumber: issueNumber, close: destination == .closed, repository: repository)
+        }
+        return boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName)
+    }
+
+    /// Close or reopen on GitHub for an off-screen move. The issue lists catch
+    /// up on their next refresh; only this repository's own list, when it is
+    /// the one loaded, is updated right away.
+    private func setStateOffScreen(issueNumber: Int, close: Bool, repository: String) {
+        if repository == loadedRepository,
+           let index = issues.firstIndex(where: { $0.number == issueNumber }) {
+            issues[index].state = close ? "CLOSED" : "OPEN"
+            issues[index].closedAt = close ? Date() : nil
+            reconcileOrders(with: issues)
+            saveSnapshot(for: repository)
+        }
+        Task { @MainActor [weak self] in
+            let result = await GH.run([
+                "issue", close ? "close" : "reopen", String(issueNumber), "--repo", repository,
+            ])
+            guard result == nil else { return }
+            self?.error = "GitHub could not \(close ? "close" : "reopen") issue \(GitHubNumber.reference(issueNumber))."
+        }
+    }
+
+    private func boardResponse(
+        success: Bool,
+        error: String?,
+        issues boardIssues: [AssignedIssue],
+        reel: FocusReel,
+        clone: String?
+    ) -> IssueBoardResponse {
+        let focused = reel.allSet
+        let byNumber = Dictionary(boardIssues.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        return IssueBoardResponse(
+            success: success,
+            error: error,
+            clone: clone,
+            open: boardIssues.filter { !$0.isClosed && !focused.contains($0.number) },
+            focus: reel.issues.compactMap { byNumber[$0] },
+            closed: boardIssues.filter { $0.isClosed && !focused.contains($0.number) }
+        )
     }
 
     private func lane(of issueNumber: Int) -> AssignedIssueLane? {

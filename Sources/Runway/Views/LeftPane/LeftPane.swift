@@ -181,6 +181,13 @@ struct LeftPane: View {
             syncFocusBoard()
         }
         .task(id: feed.repo) {
+            assignedIssues.onOffScreenFocusChange = { [ws] change in
+                ws.reconcileOffScreenBoard(
+                    issues: change.issues,
+                    repository: change.repository,
+                    checkout: change.checkout
+                )
+            }
             await assignedIssues.processIssueCommands(repository: feed.repo)
         }
         // Observe the complete Focus records, not only membership. GitHub title
