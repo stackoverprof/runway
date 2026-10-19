@@ -232,24 +232,18 @@ struct LeftPane: View {
         .background(Color(white: 0.035))
     }
 
+    /// Only the floating card reads the pointer position. Reading it here
+    /// would re-run this whole body, every lane and all its cards, on each
+    /// mouse move, which made dragging crawl on boards with hundreds of issues.
     @ViewBuilder
     private var focusDragOverlay: some View {
         if let issueNumber = focusIssueDrag.issueNumber,
            let issue = assignedIssues.issues.first(where: { $0.number == issueNumber }) {
-            AssignedIssueCard(
+            FocusDragCard(
+                drag: focusIssueDrag,
                 issue: issue,
                 repository: issueRepositoryName
             )
-            .frame(
-                width: focusIssueDrag.visualSize.width,
-                height: focusIssueDrag.visualSize.height
-            )
-            .offset(
-                x: focusIssueDrag.visualOrigin.x,
-                y: focusIssueDrag.visualOrigin.y
-            )
-            .shadow(color: .black.opacity(0.38), radius: 12, y: 5)
-            .allowsHitTesting(false)
             .zIndex(Double.greatestFiniteMagnitude)
         }
     }
@@ -1457,7 +1451,8 @@ struct LeftPane: View {
                     issueNumber: issue.number,
                     from: lane,
                     to: lane,
-                    before: targetIssueNumber
+                    before: targetIssueNumber,
+                    savesOrder: false
                 )
             }
         }
@@ -1489,6 +1484,7 @@ struct LeftPane: View {
                 to: proposedLane,
                 before: targetIssueNumber
             )
+            assignedIssues.saveOrder()
             let landingLane = accepted ? proposedLane : sourceLane
             focusIssueDrag.prepareLanding()
             DispatchQueue.main.async {
@@ -2343,6 +2339,21 @@ private struct RunwayIssueTabsFramePreferenceKey: PreferenceKey {
     }
 }
 
+/// The card under the pointer while an issue is dragged.
+private struct FocusDragCard: View {
+    let drag: FocusIssueDrag
+    let issue: AssignedIssue
+    let repository: String
+
+    var body: some View {
+        AssignedIssueCard(issue: issue, repository: repository)
+            .frame(width: drag.visualSize.width, height: drag.visualSize.height)
+            .offset(x: drag.visualOrigin.x, y: drag.visualOrigin.y)
+            .shadow(color: .black.opacity(0.38), radius: 12, y: 5)
+            .allowsHitTesting(false)
+    }
+}
+
 @MainActor @Observable private final class FocusIssueDrag {
     static let coordinateSpaceName = "RunwayFocusReorder"
 
@@ -2479,11 +2490,16 @@ private struct RunwayIssueTabsFramePreferenceKey: PreferenceKey {
         lane: AssignedIssueLane?,
         before targetIssueNumber: Int?
     ) {
+        // Called on every pointer move. An observed write re-renders the
+        // lanes even when the value is unchanged, so only write on change.
+        guard backlogPreviewLane != lane
+                || backlogPreviewTargetIssueNumber != targetIssueNumber else { return }
         backlogPreviewLane = lane
         backlogPreviewTargetIssueNumber = targetIssueNumber
     }
 
     func clearBacklogPreview() {
+        guard backlogPreviewLane != nil || backlogPreviewTargetIssueNumber != nil else { return }
         backlogPreviewLane = nil
         backlogPreviewTargetIssueNumber = nil
     }
@@ -2544,6 +2560,7 @@ private struct RunwayIssueTabsFramePreferenceKey: PreferenceKey {
     }
 
     func clearTarget() {
+        guard lastTargetIssueNumber != nil else { return }
         lastTargetIssueNumber = nil
     }
 

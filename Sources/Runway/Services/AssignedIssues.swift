@@ -766,7 +766,8 @@ extension Notification.Name {
         issueNumber: Int,
         from source: AssignedIssueLane,
         to destination: AssignedIssueLane,
-        before targetNumber: Int?
+        before targetNumber: Int?,
+        savesOrder: Bool = true
     ) -> Bool {
         guard let repository = loadedRepository,
               let issue = issues.first(where: { $0.number == issueNumber }) else { return false }
@@ -779,14 +780,12 @@ extension Notification.Name {
                 var order = focusReel.issues
                 move(issueNumber, before: targetNumber, in: &order)
                 focusReel.replace(with: order)
-                saveFocus(for: repository)
             case .open:
                 move(issueNumber, before: targetNumber, in: &openIssueNumbers)
-                saveBacklogOrder(for: repository)
             case .closed:
                 move(issueNumber, before: targetNumber, in: &closedIssueNumbers)
-                saveBacklogOrder(for: repository)
             }
+            if savesOrder { saveOrder() }
             return true
         }
 
@@ -867,8 +866,11 @@ extension Notification.Name {
         }
     }
 
+    /// One lookup table per call: the lanes rebuild on every render, and a
+    /// linear search per number made that quadratic on a board of 500 issues.
     private func orderedIssues(_ order: [Int]) -> [AssignedIssue] {
-        order.compactMap { number in issues.first { $0.number == number } }
+        let byNumber = Dictionary(issues.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        return order.compactMap { byNumber[$0] }
     }
 
     private func move(_ issueNumber: Int, before targetNumber: Int, in order: inout [Int]) {
@@ -1011,6 +1013,15 @@ extension Notification.Name {
     private func restore(_ issueNumber: Int, at index: Int?, in order: inout [Int]) {
         guard let index else { return }
         order.insert(issueNumber, at: min(index, order.endIndex))
+    }
+
+    /// Writes the lane orders a drag changed in memory. Saving on every step
+    /// of a drag rewrote the stored orders of every repository each time a
+    /// card passed another, and every settings-backed view re-rendered with it.
+    func saveOrder() {
+        guard let repository = loadedRepository else { return }
+        saveFocus(for: repository)
+        saveBacklogOrder(for: repository)
     }
 
     private func saveFocus(for repository: String) {
