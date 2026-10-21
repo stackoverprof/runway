@@ -51,6 +51,12 @@ enum EdgeAutoScrollPolicy {
         self.scrollView = scrollView
     }
 
+    /// Whether the list shows its first card at the top.
+    var isAtTop: Bool {
+        guard let scrollView, let documentView = scrollView.documentView else { return true }
+        return abs(scrollView.contentView.bounds.origin.y - startY(scrollView, documentView)) < 1
+    }
+
     // MARK: Scroll to top
 
     func scrollToTop(animated: Bool = true) {
@@ -73,20 +79,26 @@ enum EdgeAutoScrollPolicy {
 
     /// Pull a stale offset back inside the content once the list has laid out
     /// again. A list that lost cards keeps its scroll view, and so its place,
-    /// but AppKit can leave the clip origin past the new end.
+    /// but AppKit can leave the clip origin past the new end. It settles again
+    /// once the removal animation ends: measured mid-animation, a top card
+    /// leaving left its gap above the list.
     func settleIntoContent() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let scrollView = self.scrollView,
-                  let documentView = scrollView.documentView else { return }
-            scrollView.layoutSubtreeIfNeeded()
-            let clip = scrollView.contentView
-            let minY = self.startY(scrollView, documentView)
-            let maxY = max(minY, documentView.frame.height - clip.bounds.height)
-            let y = min(max(minY, clip.bounds.origin.y), maxY)
-            guard abs(y - clip.bounds.origin.y) > 0.5 else { return }
-            clip.setBoundsOrigin(CGPoint(x: clip.bounds.origin.x, y: y))
-            scrollView.reflectScrolledClipView(clip)
+        DispatchQueue.main.async { [weak self] in self?.clampIntoContent() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.clampIntoContent()
         }
+    }
+
+    private func clampIntoContent() {
+        guard let scrollView, let documentView = scrollView.documentView else { return }
+        scrollView.layoutSubtreeIfNeeded()
+        let clip = scrollView.contentView
+        let minY = startY(scrollView, documentView)
+        let maxY = max(minY, documentView.frame.height - clip.bounds.height)
+        let y = min(max(minY, clip.bounds.origin.y), maxY)
+        guard abs(y - clip.bounds.origin.y) > 0.5 else { return }
+        clip.setBoundsOrigin(CGPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     // MARK: Edge auto-scroll during a drag

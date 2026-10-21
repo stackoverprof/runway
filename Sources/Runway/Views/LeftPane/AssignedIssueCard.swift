@@ -7,6 +7,8 @@ struct AssignedIssueCard: View {
     var onClosedChange: ((Bool) -> Void)? = nil
     var onRename: ((String) -> Void)? = nil
     var onRemoveFromFocus: (() -> Void)? = nil
+    /// Focus cards leave the closed date out; the lane already says what matters.
+    var showsClosedDate = true
     @State private var hovering = false
     @State private var isRenaming = false
     @State private var titleDraft = ""
@@ -57,6 +59,15 @@ struct AssignedIssueCard: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Color.white.opacity(0.52))
                     .lineLimit(1)
+
+                if showsClosedDate, let closedAt = issue.closedAt {
+                    Spacer(minLength: 6)
+                    Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.white.opacity(0.24))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
 
             if isRenaming {
@@ -85,15 +96,6 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Color.white.opacity(0.94))
                     .multilineTextAlignment(.leading)
                     .lineLimit(3)
-            }
-
-            if let closedAt = issue.closedAt {
-                Text("Closed: \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.52))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.white.opacity(0.09)))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

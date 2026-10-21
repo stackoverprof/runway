@@ -55,6 +55,13 @@ struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // An agent that relaunches Runway passes its own Claude session
+        // variables down, and every terminal's claude then starts as that
+        // agent's child, with transcript saving off. Start clean, as a launch
+        // from Finder would.
+        for name in ProcessInfo.processInfo.environment.keys where name.hasPrefix("CLAUDE") {
+            unsetenv(name)
+        }
         SettingsKey.registerDefaults()
         // Must run before any terminal (GhosttyKit) loads its config.
         RunwayTerminal.installTheme()

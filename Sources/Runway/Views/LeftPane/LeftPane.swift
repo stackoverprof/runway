@@ -41,6 +41,8 @@ struct LeftPane: View {
     /// The card the user last dragged or ticked into another lane. Its arrival
     /// there is expected, so it does not rebuild that lane's scroll view.
     @State private var userMovedIssue: Int?
+    /// Lanes scrolled to their top when the user dragged a card out of them.
+    @State private var lanesAtTopBeforeMove: Set<AssignedIssueLane> = []
     @State private var issueSearchVisible = false
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
@@ -124,6 +126,9 @@ struct LeftPane: View {
             focusDragOverlay
         }
         .coordinateSpace(name: FocusIssueDrag.coordinateSpaceName)
+        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: {
+            focusIssueDrag.spaceOriginInWindow = $0
+        }
         .onPreferenceChange(RunwayIssueCardFramePreferenceKey.self) {
             focusIssueDrag.updateCardFrames($0)
         }
@@ -953,10 +958,10 @@ struct LeftPane: View {
                     }
                 }
                 HStack(spacing: 5) {
-                    Text(pullRequest.headRefName)
+                    BranchNameText(name: pullRequest.headRefName)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 7, weight: .semibold))
-                    Text(pullRequest.baseRefName)
+                    BranchNameText(name: pullRequest.baseRefName)
                 }
                 .font(.system(size: 8.5, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.27))
@@ -1260,7 +1265,8 @@ struct LeftPane: View {
             },
             onRemoveFromFocus: {
                 assignedIssues.removeFromFocus(issueNumber: issue.number)
-            }
+            },
+            showsClosedDate: false
         )
         .background {
             GeometryReader { proxy in
@@ -1274,6 +1280,11 @@ struct LeftPane: View {
                     ]
                 )
             }
+        }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
+        } action: {
+            focusIssueDrag.updateLiveFrame($0, for: RunwayIssueCardKey(lane: .focus, issueNumber: issue.number))
         }
         .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
         .animation(nil, value: focusIssueDrag.issueNumber)
@@ -1383,23 +1394,30 @@ struct LeftPane: View {
             coordinateSpace: .named(FocusIssueDrag.coordinateSpaceName)
         )
         .onChanged { value in
+            if focusIssueDrag.isStuckLanding {
+                focusIssueDrag.reset()
+                ws.isFocusCardDragging = false
+                syncFocusBoard()
+            }
             guard !focusIssueDrag.isLanding else { return }
             if focusIssueDrag.issueNumber == nil {
-                guard let frame = focusIssueDrag.frame(for: issue.number, in: lane) else { return }
+                let now = focusIssueDrag.pointer(for: value.location, window: windowPointer())
+                let start = CGPoint(x: now.x - value.translation.width, y: now.y - value.translation.height)
                 focusIssueDrag.begin(
                     issueNumber: issue.number,
                     lane: lane,
-                    frame: frame,
-                    pointer: value.startLocation
+                    frame: focusIssueDrag.grabFrame(for: issue.number, in: lane, at: start),
+                    pointer: start
                 )
                 ws.isFocusCardDragging = true
             }
             guard focusIssueDrag.issueNumber == issue.number else { return }
-            focusIssueDrag.move(pointer: value.location)
-            autoScrollBacklog(pointer: value.location)
-            updateFocusReelHover(pointer: value.location, issueNumber: issue.number, lane: lane)
+            let pointer = focusIssueDrag.pointer(for: value.location, window: windowPointer())
+            focusIssueDrag.move(pointer: pointer)
+            autoScrollBacklog(pointer: pointer)
+            updateFocusReelHover(pointer: pointer, issueNumber: issue.number, lane: lane)
 
-            let hoveredLane = focusIssueDrag.lane(at: value.location)
+            let hoveredLane = focusIssueDrag.lane(at: pointer)
             if lane == .focus, focusIssueDrag.isCrossingIssueTabs {
                 let displayedLane: AssignedIssueLane = ws.runwayIssueTab == .open ? .open : .closed
                 let previewLane: AssignedIssueLane? = switch hoveredLane {
@@ -1411,7 +1429,7 @@ struct LeftPane: View {
                     lane: previewLane,
                     before: previewLane.map {
                         focusIssueDrag.insertionTarget(
-                            at: value.location,
+                            at: pointer,
                             in: $0,
                             excluding: issue.number
                         )
@@ -1424,7 +1442,7 @@ struct LeftPane: View {
             if lane != .focus, focusIssueDrag.isCrossingIssueTabs {
                 focusIssueDrag.updateFocusPreview(
                     before: focusIssueDrag.insertionTarget(
-                        at: value.location,
+                        at: pointer,
                         in: .focus,
                         excluding: issue.number
                     )
@@ -1438,7 +1456,7 @@ struct LeftPane: View {
                 return
             }
             guard let targetIssueNumber = focusIssueDrag.targetIssue(
-                at: value.location,
+                at: pointer,
                 in: lane,
                 excluding: issue.number
             ) else {
@@ -1461,23 +1479,29 @@ struct LeftPane: View {
             stopFocusReelHover()
             guard focusIssueDrag.issueNumber == issue.number,
                   let sourceLane = focusIssueDrag.sourceLane else { return }
+            let pointer = focusIssueDrag.pointer(for: value.location, window: windowPointer())
             let proposedLane = focusIssueDrag.proposedLane(
-                at: value.location,
+                at: pointer,
                 fallback: sourceLane,
                 displayedBacklogLane: ws.runwayIssueTab == .open ? .open : .closed
             )
             let targetIssueNumber = sourceLane == proposedLane
                 ? focusIssueDrag.targetIssue(
-                    at: value.location,
+                    at: pointer,
                     in: proposedLane,
                     excluding: issue.number
                 )
                 : focusIssueDrag.insertionTarget(
-                    at: value.location,
+                    at: pointer,
                     in: proposedLane,
                     excluding: issue.number
                 ) ?? focusAppendTarget(for: proposedLane)
-            if sourceLane != proposedLane { userMovedIssue = issue.number }
+            if sourceLane != proposedLane {
+                userMovedIssue = issue.number
+                if sourceLane != .focus, issueScrollAnchor(for: sourceLane).isAtTop {
+                    lanesAtTopBeforeMove.insert(sourceLane)
+                }
+            }
             let accepted = sourceLane == proposedLane || assignedIssues.move(
                 issueNumber: issue.number,
                 from: sourceLane,
@@ -1501,6 +1525,14 @@ struct LeftPane: View {
                 }
             }
         }
+    }
+
+    /// The mouse in window coordinates, top-left origin like SwiftUI.
+    private func windowPointer() -> CGPoint? {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let content = window.contentView else { return nil }
+        let local = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return content.isFlipped ? local : CGPoint(x: local.x, y: content.bounds.height - local.y)
     }
 
     /// Dropping below the last card in the window lands just after it, not
@@ -1699,7 +1731,9 @@ struct LeftPane: View {
             }
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                // Cards carry their own gap rather than the stack's spacing, so a card
+                // dragged out collapses fully instead of leaving one gap behind.
+                LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(issues) { issue in
                     if focusIssueDrag.shouldInsertBacklogPlaceholder(
                         before: issue.number,
@@ -1707,6 +1741,7 @@ struct LeftPane: View {
                     ) {
                         Color.clear
                             .frame(height: focusIssueDrag.visualSize.height)
+                            .padding(.bottom, 8)
                     }
 
                     AssignedIssueCard(
@@ -1744,6 +1779,11 @@ struct LeftPane: View {
                             )
                         }
                     }
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
+                    } action: {
+                        focusIssueDrag.updateLiveFrame($0, for: RunwayIssueCardKey(lane: lane, issueNumber: issue.number))
+                    }
                     .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
                     .animation(nil, value: focusIssueDrag.issueNumber)
                     .simultaneousGesture(issueDragGesture(for: issue, lane: lane))
@@ -1754,6 +1794,10 @@ struct LeftPane: View {
                         ) ? 0 : nil
                     )
                     .clipped()
+                    .padding(
+                        .bottom,
+                        focusIssueDrag.shouldReleaseBacklogSlot(for: issue.number, in: lane) ? 0 : 8
+                    )
                 }
 
                 if focusIssueDrag.shouldAppendBacklogPlaceholder(in: lane) {
@@ -1768,7 +1812,7 @@ struct LeftPane: View {
                 )
                 .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
                 .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .padding(.bottom, 8)
                 .scrollAnchor(issueScrollAnchor(for: lane))
             }
             .contentMargins(.top, 0, for: .scrollContent)
@@ -1785,8 +1829,16 @@ struct LeftPane: View {
             if RunwayIssueListIdentity.hasArrivals(from: old, to: new, movedByUser: userMovedIssue) {
                 issueListArrivals[lane, default: 0] &+= 1
             } else if new.count < old.count {
-                issueScrollAnchor(for: lane).settleIntoContent()
+                // A lane read from its top has no place to keep, and keeping
+                // its scroll view there let the next card slide up under the
+                // tabs when the first one left, leaving a gap. Rebuild it.
+                if lanesAtTopBeforeMove.contains(lane) || issueScrollAnchor(for: lane).isAtTop {
+                    issueListArrivals[lane, default: 0] &+= 1
+                } else {
+                    issueScrollAnchor(for: lane).settleIntoContent()
+                }
             }
+            lanesAtTopBeforeMove.remove(lane)
         }
         .background {
             GeometryReader { proxy in
@@ -2298,6 +2350,34 @@ struct LeftPane: View {
     }
 }
 
+/// A branch name that keeps its trailing issue number when it is too long:
+/// `feat/designer-image-only-saves-16283` shows as `feat/designer-ima…-16283`.
+private struct BranchNameText: View {
+    let name: String
+
+    var body: some View {
+        let parts = Self.split(name)
+        HStack(spacing: 0) {
+            Text(parts.stem)
+                .truncationMode(.tail)
+            if let number = parts.number {
+                Text(number)
+                    .fixedSize()
+            }
+        }
+        .lineLimit(1)
+    }
+
+    static func split(_ name: String) -> (stem: String, number: String?) {
+        guard let dash = name.lastIndex(of: "-") else { return (name, nil) }
+        let suffix = name[name.index(after: dash)...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber), dash != name.startIndex else {
+            return (name, nil)
+        }
+        return (String(name[..<dash]), String(name[dash...]))
+    }
+}
+
 private struct PRPageKey: Hashable {
     let login: String
     let section: String
@@ -2346,7 +2426,11 @@ private struct FocusDragCard: View {
     let repository: String
 
     var body: some View {
-        AssignedIssueCard(issue: issue, repository: repository)
+        AssignedIssueCard(
+            issue: issue,
+            repository: repository,
+            showsClosedDate: drag.sourceLane != .focus
+        )
             .frame(width: drag.visualSize.width, height: drag.visualSize.height)
             .offset(x: drag.visualOrigin.x, y: drag.visualOrigin.y)
             .shadow(color: .black.opacity(0.38), radius: 12, y: 5)
@@ -2374,6 +2458,49 @@ private struct FocusDragCard: View {
     private var isFocusPreviewActive = false
     private var grabOffset: CGPoint = .zero
     private var lastTargetIssueNumber: Int?
+    /// Where this coordinate space sits in the window.
+    @ObservationIgnored var spaceOriginInWindow: CGPoint?
+    /// Each card's frame straight from its own geometry. The preference copy
+    /// can lag a list that was just rebuilt or reordered, and starting a drag
+    /// from it put the floating card a few cards away from the one grabbed,
+    /// or refused the drag when the card had no entry yet.
+    @ObservationIgnored private var liveFrames: [RunwayIssueCardKey: CGRect] = [:]
+    @ObservationIgnored private var landingStartedAt: Date?
+
+    func updateLiveFrame(_ frame: CGRect, for key: RunwayIssueCardKey) {
+        liveFrames[key] = frame
+    }
+
+    /// The grabbed card's frame, checked against the pointer that grabbed it.
+    func grabFrame(for issueNumber: Int, in lane: AssignedIssueLane, at pointer: CGPoint) -> CGRect {
+        let key = RunwayIssueCardKey(lane: lane, issueNumber: issueNumber)
+        for candidate in [liveFrames[key], cardFrames[key]] {
+            if let candidate, candidate.contains(pointer) { return candidate }
+        }
+        let size = liveFrames[key]?.size ?? cardFrames[key]?.size ?? CGSize(width: 300, height: 80)
+        return CGRect(
+            x: (laneFrames[lane]?.minX).map { $0 + 16 } ?? pointer.x - size.width / 2,
+            y: pointer.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    /// A landing whose completion never arrived would block every later drag.
+    var isStuckLanding: Bool {
+        guard isLanding, let landingStartedAt else { return false }
+        return Date().timeIntervalSince(landingStartedAt) > 1
+    }
+
+    /// The pointer in this coordinate space, read from the window's mouse.
+    /// A drag gesture reports its location through the dragged card's own
+    /// geometry, which goes stale when the card collapses, scrolls, or its
+    /// list was just rebuilt, and that threw the floating card a couple of
+    /// card heights off the pointer.
+    func pointer(for location: CGPoint, window: CGPoint?) -> CGPoint {
+        guard let window, let origin = spaceOriginInWindow else { return location }
+        return CGPoint(x: window.x - origin.x, y: window.y - origin.y)
+    }
 
     func updateCardFrames(_ frames: [RunwayIssueCardKey: CGRect]) {
         guard cardFrames != frames else { return }
@@ -2566,6 +2693,7 @@ private struct FocusDragCard: View {
 
     func prepareLanding() {
         isLanding = true
+        landingStartedAt = Date()
         clearBacklogPreview()
         clearFocusPreview()
     }
@@ -2594,6 +2722,7 @@ private struct FocusDragCard: View {
         isFocusPreviewActive = false
         grabOffset = .zero
         lastTargetIssueNumber = nil
+        landingStartedAt = nil
         isLanding = false
     }
 }
