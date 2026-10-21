@@ -116,7 +116,8 @@ struct FocusReelScrollCatcher: NSViewRepresentable {
         private func handle(_ event: NSEvent) -> Bool {
             guard isEnabled, let window, event.window === window,
                   !isHiddenOrHasHiddenAncestor,
-                  bounds.contains(convert(event.locationInWindow, from: nil)) else { return false }
+                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  isFrontmost(at: event.locationInWindow, in: window) else { return false }
             let step = stepper.step(
                 deltaY: Double(event.scrollingDeltaY),
                 precise: event.hasPreciseScrollingDeltas,
@@ -126,6 +127,16 @@ struct FocusReelScrollCatcher: NSViewRepresentable {
             )
             if step != 0 { onStep?(step) }
             return true
+        }
+
+        /// False when another view floats over the reel at this point, such as
+        /// the quick terminal. The monitor sees every scroll in the window, so
+        /// without this the reel took the terminal's scrolling where they overlap.
+        private func isFrontmost(at locationInWindow: NSPoint, in window: NSWindow) -> Bool {
+            guard let contentView = window.contentView else { return true }
+            let point = contentView.superview?.convert(locationInWindow, from: nil) ?? locationInWindow
+            guard let hit = contentView.hitTest(point) else { return true }
+            return isDescendant(of: hit)
         }
     }
 }
