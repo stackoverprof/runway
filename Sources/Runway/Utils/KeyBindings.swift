@@ -200,55 +200,66 @@ enum AppAction: String, CaseIterable {
 struct KeyRecorderRow: View {
     let action: AppAction
     @Bindable private var bindings = KeyBindings.shared
-    @State private var recording = false
-    @State private var monitor: Any?
 
     var body: some View {
         HStack {
             Text(action.label)
             Spacer()
-            Button(recording ? "Press keys…" : bindings.chord(for: action).display) { toggle() }
-                .buttonStyle(.bordered)
-                .frame(minWidth: 96)
-                .monospacedDigit()
-                .pointerCursor()
+            ChordRecorderButton(display: bindings.chord(for: action).display) {
+                bindings.set($0, for: action)
+            }
             Button { bindings.reset(action) } label: { Image(systemName: "arrow.uturn.backward") }
                 .buttonStyle(.borderless)
                 .help("Reset to default")
                 .disabled(!bindings.isCustom(action))
                 .pointerCursor()
         }
-        .onDisappear(perform: stop)
+    }
+}
+
+/// Click, then press a chord. Esc cancels. Shared by the built-in actions and
+/// custom commands.
+struct ChordRecorderButton: View {
+    let display: String
+    let onRecord: (KeyChord) -> Void
+    @State private var recording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        Button(recording ? "Press keys…" : display) { toggle() }
+            .buttonStyle(.bordered)
+            .frame(minWidth: 96)
+            .monospacedDigit()
+            .pointerCursor()
+            .onDisappear(perform: stop)
     }
 
     private func toggle() {
         if recording { stop(); return }
         recording = true
-        bindings.recording = true
+        KeyBindings.shared.recording = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { ev in
             if ev.keyCode == 53 { stop(); return nil }   // esc cancels
             if ev.type == .flagsChanged,
                ev.modifierFlags.contains(.function),
                ev.modifierFlags.intersection(KeyChord.relevant) == .shift,
                KeyChord(keyCode: KeyChord.functionKeyCode, modifiers: [.shift]).matches(ev) {
-                bindings.set(
-                    KeyChord(keyCode: KeyChord.functionKeyCode, modifiers: [.shift]),
-                    for: action
-                )
+                onRecord(KeyChord(keyCode: KeyChord.functionKeyCode, modifiers: [.shift]))
                 stop()
                 return nil
             }
             guard ev.type == .keyDown else { return ev }
             // Require at least one of ⌘/⌥/⌃ so a bare key can't hijack typing.
             guard !ev.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
-            bindings.set(KeyChord(keyCode: ev.keyCode, modifiers: ev.modifierFlags), for: action)
+            onRecord(KeyChord(keyCode: ev.keyCode, modifiers: ev.modifierFlags))
             stop()
             return nil
         }
     }
+
     private func stop() {
         recording = false
-        bindings.recording = false
+        KeyBindings.shared.recording = false
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
     }
 }

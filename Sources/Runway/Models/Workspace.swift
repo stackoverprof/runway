@@ -36,6 +36,20 @@ struct AttentionAlert: Identifiable, Equatable {
     let title: String
 }
 
+/// A custom command run from its shortcut, from start to finish.
+struct CommandBanner: Identifiable, Equatable {
+    enum Phase: Equatable {
+        case running
+        case done
+        case failed(Int32)
+    }
+
+    let id: UUID            // the command, so a rerun replaces its banner
+    let title: String
+    var phase: Phase = .running
+    var log: URL?
+}
+
 struct FocusIssueRevealRequest: Equatable {
     let id: UUID
     let repository: String
@@ -227,6 +241,7 @@ struct QuickTerminalTabRequest: Equatable {
     /// Agents needing attention in a repository that is not on screen. The
     /// card itself is parked, so the only way to know is to be told.
     var attentionAlerts: [AttentionAlert] = []
+    var commandBanners: [CommandBanner] = []
 
     init() {
         load()
@@ -543,6 +558,28 @@ struct QuickTerminalTabRequest: Equatable {
                 title: title
             )
         )
+    }
+
+    func showCommandBanner(id: UUID, title: String) {
+        commandBanners.removeAll { $0.id == id }
+        commandBanners.append(CommandBanner(id: id, title: title))
+    }
+
+    /// A finished command stays a moment, longer when it failed so its log
+    /// can be opened from the banner.
+    func finishCommandBanner(_ id: UUID, exitCode: Int32, log: URL) {
+        guard let index = commandBanners.firstIndex(where: { $0.id == id }) else { return }
+        commandBanners[index].phase = exitCode == 0 ? .done : .failed(exitCode)
+        commandBanners[index].log = log
+        let finished = commandBanners[index]
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: exitCode == 0 ? 4_000_000_000 : 15_000_000_000)
+            self.commandBanners.removeAll { $0 == finished }
+        }
+    }
+
+    func dismissCommandBanner(_ id: UUID) {
+        commandBanners.removeAll { $0.id == id }
     }
 
     func dismissAttention(_ alert: AttentionAlert) {
