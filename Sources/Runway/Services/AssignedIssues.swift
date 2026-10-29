@@ -235,44 +235,101 @@ extension Notification.Name {
                 continue
             }
 
-            let response: IssueBoardResponse
-            let targetRepository = command.repository.isEmpty ? repository : command.repository
-            let requestedClone = command.clone.flatMap { $0.isEmpty ? nil : $0 }
-            let onScreenClone = currentClone(of: repository)
-            let isOnScreen = targetRepository == repository
-                && (requestedClone == nil || onScreenClone == nil
-                    || requestedClone?.caseInsensitiveCompare(onScreenClone ?? "") == .orderedSame)
-            if !isOnScreen {
-                response = offScreenResponse(
-                    to: command,
-                    repository: targetRepository,
-                    clone: requestedClone
-                )
-            } else if command.action == "list" {
-                response = issueBoardResponse(success: true, error: nil)
-            } else if command.action == "move",
-                      let issueNumber = command.issueNumber,
-                      let destination = command.destination,
-                      issues.contains(where: { $0.number == issueNumber }),
-                      let source = lane(of: issueNumber) {
-                let accepted = move(
-                    issueNumber: issueNumber,
-                    from: source,
-                    to: destination,
-                    before: command.beforeNumber
-                )
-                response = issueBoardResponse(
-                    success: accepted,
-                    error: accepted ? nil : "Runway could not move issue \(GitHubNumber.reference(issueNumber)). \(Self.focusFullHint) Or the issue may not be in the requested lane."
-                )
-            } else {
-                response = issueBoardResponse(
-                    success: false,
-                    error: "Invalid issue board command."
-                )
+            let first = respond(to: command, repository: repository)
+            guard first.retryAfterRefresh else {
+                writeIssueBoardResponse(first.response, id: command.id)
+                continue
             }
-            writeIssueBoardResponse(response, id: command.id)
+            // A clone or an issue Runway has not seen yet, usually one made
+            // seconds ago. Look again on disk and on GitHub before refusing.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await refreshBeforeRetry(command, repository: repository)
+                writeIssueBoardResponse(respond(to: command, repository: repository).response, id: command.id)
+            }
         }
+    }
+
+    private func respond(
+        to command: IssueBoardCommand,
+        repository: String
+    ) -> (response: IssueBoardResponse, retryAfterRefresh: Bool) {
+        let targetRepository = command.repository.isEmpty ? repository : command.repository
+        let requestedClone = command.clone.flatMap { $0.isEmpty ? nil : $0 }
+        let onScreenClone = currentClone(of: repository)
+        let isOnScreen = targetRepository == repository
+            && (requestedClone == nil || onScreenClone == nil
+                || requestedClone?.caseInsensitiveCompare(onScreenClone ?? "") == .orderedSame)
+        if !isOnScreen {
+            return offScreenResponse(
+                to: command,
+                repository: targetRepository,
+                clone: requestedClone
+            )
+        }
+        if command.action == "list" {
+            return (issueBoardResponse(success: true, error: nil), false)
+        }
+        guard command.action == "move",
+              let issueNumber = command.issueNumber,
+              let destination = command.destination else {
+            return (issueBoardResponse(success: false, error: "Invalid issue board command."), false)
+        }
+        guard issues.contains(where: { $0.number == issueNumber }),
+              let source = lane(of: issueNumber) else {
+            return (issueBoardResponse(
+                success: false,
+                error: "Runway has no issue \(GitHubNumber.reference(issueNumber)) assigned to you in \(targetRepository). Is it assigned to you?"
+            ), true)
+        }
+        let accepted = move(
+            issueNumber: issueNumber,
+            from: source,
+            to: destination,
+            before: command.beforeNumber
+        )
+        return (issueBoardResponse(
+            success: accepted,
+            error: accepted ? nil : "Runway could not move issue \(GitHubNumber.reference(issueNumber)). \(Self.focusFullHint) Or the issue may not be in the requested lane."
+        ), false)
+    }
+
+    /// Rescans the clones on disk and refetches the target repository's
+    /// issues, so a command for something new gets one more try.
+    private func refreshBeforeRetry(_ command: IssueBoardCommand, repository: String) async {
+        let target = command.repository.isEmpty ? repository : command.repository
+        await GitHubFeed.shared.rescanRepositories()
+        if target == loadedRepository {
+            await revalidate(repository: target)
+        } else {
+            await fetchOffScreenIssues(for: target)
+        }
+    }
+
+    /// Fills the cache for a repository whose board is not on screen, so its
+    /// issues are known without opening it first.
+    private func fetchOffScreenIssues(for repository: String) async {
+        let data = await GH.query([
+            "issue", "list",
+            "--repo", repository,
+            "--assignee", "@me",
+            "--state", "all",
+            "--limit", "1000",
+            "--json", "number,title,state,closedAt,createdAt,updatedAt,url",
+        ], cacheFor: 0)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data,
+              let fetched = try? decoder.decode([AssignedIssue].self, from: data),
+              repository != loadedRepository else { return }
+        let now = Date()
+        snapshots[repository] = CachedRepository(
+            issues: fetched,
+            fetchedAt: now,
+            lastFullFetchedAt: now,
+            orderedThrough: snapshots[repository]?.orderedThrough
+        )
+        writeSnapshots()
     }
 
     /// A command for a board that is not on screen: another repository, or
@@ -282,20 +339,20 @@ extension Notification.Name {
         to command: IssueBoardCommand,
         repository: String,
         clone: String?
-    ) -> IssueBoardResponse {
+    ) -> (response: IssueBoardResponse, retryAfterRefresh: Bool) {
         let checkouts = GitHubFeed.shared.checkouts(for: repository)
         let checkoutPath: String?
         if let clone {
             guard let match = checkouts.first(where: {
                 CloneName.name(ofCheckout: $0).caseInsensitiveCompare(clone) == .orderedSame
             }) else {
-                return boardResponse(
+                return (boardResponse(
                     success: false,
-                    error: "Runway knows no clone named \(clone) of \(repository).",
+                    error: "Runway found no clone named \(clone) of \(repository) on this Mac. Pass --clone with the clone's folder name, or check Settings → Clone search covers it.",
                     issues: [],
                     reel: FocusReel(issues: []),
                     clone: clone
-                )
+                ), true)
             }
             checkoutPath = match
         } else {
@@ -309,30 +366,45 @@ extension Notification.Name {
             ? issues
             : snapshots[repository]?.issues ?? []
         guard !boardIssues.isEmpty else {
-            return boardResponse(
+            return (boardResponse(
                 success: false,
-                error: "Runway has no issues cached for \(repository) yet. Open it in Runway once.",
+                error: "Runway found no issues assigned to you in \(repository).",
                 issues: [],
                 reel: FocusReel(issues: []),
                 clone: cloneName
-            )
+            ), true)
         }
         var reel = Self.savedFocusReel(for: board)
 
         if command.action == "list" {
-            return boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName)
+            // A board never opened keeps whatever it cached last; refetch a
+            // stale one so an issue filed a minute ago is listed.
+            let isStale = repository != loadedRepository
+                && Date().timeIntervalSince(snapshots[repository]?.fetchedAt ?? .distantPast) > 60
+            return (
+                boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName),
+                isStale
+            )
         }
         guard command.action == "move",
               let issueNumber = command.issueNumber,
-              let destination = command.destination,
-              let issue = boardIssues.first(where: { $0.number == issueNumber }) else {
-            return boardResponse(
+              let destination = command.destination else {
+            return (boardResponse(
                 success: false,
                 error: "Invalid issue board command.",
                 issues: boardIssues,
                 reel: reel,
                 clone: cloneName
-            )
+            ), false)
+        }
+        guard let issue = boardIssues.first(where: { $0.number == issueNumber }) else {
+            return (boardResponse(
+                success: false,
+                error: "Runway has no issue \(GitHubNumber.reference(issueNumber)) assigned to you in \(repository). Is it assigned to you?",
+                issues: boardIssues,
+                reel: reel,
+                clone: cloneName
+            ), true)
         }
 
         let wasFocused = reel.contains(issueNumber)
@@ -341,13 +413,13 @@ extension Notification.Name {
         switch (wasFocused, destination) {
         case (false, .focus):
             guard FocusReel.canAdd(count: reel.count, limit: SettingsKey.configuredFocusLimit()) else {
-                return boardResponse(
+                return (boardResponse(
                     success: false,
                     error: "Runway could not move issue \(GitHubNumber.reference(issueNumber)). \(Self.focusFullHint)",
                     issues: boardIssues,
                     reel: reel,
                     clone: cloneName
-                )
+                ), false)
             }
             insert(issueNumber, before: command.beforeNumber, in: &order)
             FocusActivityLog.record(action: .enteredFocus, repository: repository, issue: issue, from: backlog, to: .focus)
@@ -375,7 +447,7 @@ extension Notification.Name {
         if destination != .focus, (destination == .closed) != issue.isClosed {
             setStateOffScreen(issueNumber: issueNumber, close: destination == .closed, repository: repository)
         }
-        return boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName)
+        return (boardResponse(success: true, error: nil, issues: boardIssues, reel: reel, clone: cloneName), false)
     }
 
     /// Close or reopen on GitHub for an off-screen move. The issue lists catch
@@ -1059,6 +1131,10 @@ extension Notification.Name {
             orderedThrough: orderedThrough
                 ?? snapshots[repository]?.orderedThrough
         )
+        writeSnapshots()
+    }
+
+    private func writeSnapshots() {
         guard let data = try? JSONEncoder().encode(snapshots) else { return }
         try? FileManager.default.createDirectory(
             at: AgentControl.supportDir,

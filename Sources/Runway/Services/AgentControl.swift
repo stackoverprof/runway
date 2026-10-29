@@ -565,7 +565,9 @@ enum AgentControl {
             request = command_dir / f'{command_id}.json'
             response = response_dir / f'{command_id}.json'
             request.write_text(json.dumps(payload), encoding='utf-8')
-            deadline = time.time() + 15
+            # A clone or issue Runway has not seen yet costs a disk scan and a
+            # GitHub fetch before the reply.
+            deadline = time.time() + 45
             while time.time() < deadline:
                 if response.exists():
                     result = json.loads(response.read_text(encoding='utf-8'))
