@@ -23,6 +23,8 @@ struct QuickTerminal: View {
 
     @State private var tabs = Self.makeInitialTabs()
     @State private var selectedRoot = QuickTerminalSession.selectedRoot()
+    /// The selected tab's conversation name from /rename, shown in the header.
+    @State private var sessionTitle: String?
     @State private var dragStartHeight: CGFloat?
     @State private var dragStartPaneWidth: CGFloat?
     @State private var isHovered = false
@@ -284,6 +286,17 @@ struct QuickTerminal: View {
             // This prevents the Metal GPU renderer from locking up due to nil window context.
             VStack(spacing: 0) {
                 header
+                    // A /rename lands in the transcript whenever the user runs
+                    // it, so look again every couple of seconds while shown.
+                    .task(id: TitleWatch(root: selectedRoot, visible: ws.quickVisible)) {
+                        sessionTitle = await SessionTitle.shared.title(forQuickRoot: selectedRoot)
+                        guard ws.quickVisible else { return }
+                        while !Task.isCancelled {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            let title = await SessionTitle.shared.title(forQuickRoot: selectedRoot)
+                            if title != sessionTitle { sessionTitle = title }
+                        }
+                    }
                 ZStack(alignment: .topLeading) {
                     ForEach(tabs) { tab in
                         terminalSurface(for: tab)
@@ -429,9 +442,11 @@ struct QuickTerminal: View {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 9))
                 .foregroundStyle(Color.white.opacity(0.5))
-            Text("quick")
+            Text(sessionTitle ?? "quick")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer(minLength: 8)
 
             if tabs.count > 1 && headerControlsVisible {
@@ -630,4 +645,9 @@ struct QuickTerminal: View {
             ws.quickVisible = false
         }
     }
+}
+
+private struct TitleWatch: Hashable {
+    let root: String
+    let visible: Bool
 }

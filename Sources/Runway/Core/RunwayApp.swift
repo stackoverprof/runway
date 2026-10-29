@@ -200,6 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
         let ws = context.workspace
+
+        // A custom command wins over the built-in chords: the user picked it.
+        if ev.type == .keyDown, let command = CustomCommands.shared.command(for: ev) {
+            CustomCommands.shared.run(command, in: ws)
+            return true
+        }
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
         let quickTerminalFocused = ws.quickVisible && ws.quickHasKeyboard?() == true
 

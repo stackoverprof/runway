@@ -3,8 +3,20 @@ import SwiftUI
 /// The "Shortcuts" Settings tab.
 struct ShortcutSettings: View {
     @Bindable private var bindings = KeyBindings.shared
+    @Bindable private var commands = CustomCommands.shared
     var body: some View {
         Form {
+            Section {
+                ForEach(commands.commands) { CustomCommandRow(command: $0) }
+                Button("Add command") { commands.add() }
+                    .pointerCursor()
+            } header: {
+                Text("Commands")
+            } footer: {
+                Text("The shortcut runs the command in the background, in the repository on screen, and a banner shows when it starts and ends. Runway's lanes refresh when it finishes. For a Claude task, use claude -p \"your prompt\".")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Section {
                 ForEach(AppAction.allCases, id: \.self) { KeyRecorderRow(action: $0) }
             } header: {

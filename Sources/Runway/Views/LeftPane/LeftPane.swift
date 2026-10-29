@@ -51,6 +51,8 @@ struct LeftPane: View {
     @State private var prSearchQuery = ""
     @State private var expandedPRAuthor: String?
     @State private var prVisibleCounts: [PRPageKey: Int] = [:]
+    /// Stacks fanned out, by their bottom PR.
+    @State private var expandedPRStacks: Set<Int> = []
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
@@ -811,33 +813,34 @@ struct LeftPane: View {
                 Rectangle()
                     .fill(Color.white.opacity(0.06))
                     .frame(height: 1)
+                // A stack sits in the section of its bottom PR, the one next
+                // to merge, even when the PRs above it are drafts.
+                let open = PRStackItem.items(developer.pullRequests.filter(\.isOpen))
                 VStack(alignment: .leading, spacing: 10) {
                     pullRequestSection(
                         "DRAFT",
                         developerLogin: developer.login,
-                        pullRequests: developer.pullRequests.filter {
-                            $0.isOpen && $0.isDraft
-                        },
+                        items: open.filter { $0.bottom.isDraft },
                         color: Self.prOrange
                     )
                     pullRequestSection(
                         "OPEN",
                         developerLogin: developer.login,
-                        pullRequests: developer.pullRequests.filter {
-                            $0.isOpen && !$0.isDraft
-                        },
+                        items: open.filter { !$0.bottom.isDraft },
                         color: Self.prGreen
                     )
                     pullRequestSection(
                         "MERGED",
                         developerLogin: developer.login,
-                        pullRequests: developer.pullRequests.filter(\.isMerged),
+                        items: developer.pullRequests.filter(\.isMerged).map(PRStackItem.single),
                         color: Self.prPurple
                     )
                     pullRequestSection(
                         "CLOSED",
                         developerLogin: developer.login,
-                        pullRequests: developer.pullRequests.filter { !$0.isOpen && !$0.isMerged },
+                        items: developer.pullRequests
+                            .filter { !$0.isOpen && !$0.isMerged }
+                            .map(PRStackItem.single),
                         color: Color.white.opacity(0.38)
                     )
                 }
@@ -874,7 +877,7 @@ struct LeftPane: View {
     private func pullRequestSection(
         _ title: String,
         developerLogin: String,
-        pullRequests: [RepositoryPullRequest],
+        items pullRequests: [PRStackItem],
         color: Color
     ) -> some View {
         if !pullRequests.isEmpty {
@@ -887,7 +890,7 @@ struct LeftPane: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     Circle().fill(color).frame(width: 5, height: 5)
-                    Text("\(title)  \(pullRequests.count)")
+                    Text("\(title)  \(pullRequests.reduce(0) { $0 + $1.pullRequests.count })")
                         .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.32))
                     Spacer()
@@ -897,8 +900,13 @@ struct LeftPane: View {
                             .foregroundStyle(Color.white.opacity(0.20))
                     }
                 }
-                ForEach(Array(pullRequests.prefix(visibleCount))) { pullRequest in
-                    pullRequestRow(pullRequest, color: color)
+                ForEach(Array(pullRequests.prefix(visibleCount))) { item in
+                    switch item {
+                    case .single(let pullRequest):
+                        pullRequestRow(pullRequest, color: color)
+                    case .stack(let stack):
+                        pullRequestStack(stack, color: color)
+                    }
                 }
                 if remainingCount > 0 {
                     Button {
@@ -930,6 +938,131 @@ struct LeftPane: View {
                 }
             }
         }
+    }
+
+    /// A stack as a deck: collapsed, the top PR with the others peeking out
+    /// beneath it; tapped, it fans out top to bottom with a line down the side.
+    @ViewBuilder
+    private func pullRequestStack(_ stack: [RepositoryPullRequest], color: Color) -> some View {
+        let bottom = stack[stack.count - 1]
+        let expanded = expandedPRStacks.contains(bottom.number)
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                    if expanded {
+                        expandedPRStacks.remove(bottom.number)
+                    } else {
+                        expandedPRStacks.insert(bottom.number)
+                    }
+                }
+            } label: {
+                if expanded {
+                    stackHeader(stack, color: color, expanded: true)
+                } else {
+                    stackDeck(stack, color: color)
+                }
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help(expanded ? "Collapse the stack" : "Show all \(stack.count) PRs in the stack")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(stack) { pullRequest in
+                        pullRequestRow(pullRequest, color: pullRequest.isDraft ? Self.prOrange : Self.prGreen)
+                    }
+                }
+                .padding(.leading, 9)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(color.opacity(0.35))
+                        .frame(width: 1.5)
+                        .padding(.vertical, 6)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func stackHeader(_ stack: [RepositoryPullRequest], color: Color, expanded: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(color.opacity(0.82))
+            Text("STACK OF \(stack.count)")
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.55))
+            Text("on \(stack[stack.count - 1].baseRefName)")
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.27))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7.5, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.30))
+                .rotationEffect(.degrees(expanded ? 180 : 0))
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .contentShape(Rectangle())
+    }
+
+    /// The top PR's card, with one edge per hidden PR (two at most) under it.
+    private func stackDeck(_ stack: [RepositoryPullRequest], color: Color) -> some View {
+        let top = stack[0]
+        let edges = min(stack.count - 1, 2)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                Text(verbatim: GitHubNumber.reference(top.number))
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(color.opacity(0.82))
+                Text(top.title)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.70))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let timeframe = pullRequestTimeframeText(top) {
+                    Text(timeframe)
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.24))
+                }
+            }
+            HStack(spacing: 5) {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 7.5, weight: .semibold))
+                    .foregroundStyle(color.opacity(0.7))
+                Text("STACK OF \(stack.count)")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.45))
+                Text("· on \(stack[stack.count - 1].baseRefName)")
+                    .lineLimit(1)
+            }
+            .font(.system(size: 8.5, design: .monospaced))
+            .foregroundStyle(Color.white.opacity(0.27))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.105)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .background(alignment: .bottom) {
+            ZStack(alignment: .bottom) {
+                ForEach((1...max(edges, 1)).reversed(), id: \.self) { depth in
+                    if depth <= edges {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(white: 0.105 - 0.018 * Double(depth)))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                            )
+                            .padding(.horizontal, 6 * CGFloat(depth))
+                            .offset(y: 4 * CGFloat(depth))
+                    }
+                }
+            }
+        }
+        .padding(.bottom, 4 * CGFloat(edges))
+        .contentShape(Rectangle())
     }
 
     private func pullRequestRow(_ pullRequest: RepositoryPullRequest, color: Color) -> some View {
@@ -2375,6 +2508,59 @@ private struct BranchNameText: View {
             return (name, nil)
         }
         return (String(name[..<dash]), String(name[dash...]))
+    }
+}
+
+/// One entry in a Pulls section: a lone PR, or a stack of PRs each based on
+/// the branch of the one below, listed top first.
+enum PRStackItem: Identifiable {
+    case single(RepositoryPullRequest)
+    case stack([RepositoryPullRequest])
+
+    var id: Int { bottom.number }
+
+    var pullRequests: [RepositoryPullRequest] {
+        switch self {
+        case .single(let pullRequest): [pullRequest]
+        case .stack(let stack): stack
+        }
+    }
+
+    /// The PR nearest the target branch, next to merge.
+    var bottom: RepositoryPullRequest {
+        switch self {
+        case .single(let pullRequest): pullRequest
+        case .stack(let stack): stack[stack.count - 1]
+        }
+    }
+
+    /// Groups PRs whose base is another of these PRs' head. Each stack takes
+    /// the place of its first PR in the list.
+    static func items(_ pullRequests: [RepositoryPullRequest]) -> [PRStackItem] {
+        let byHead = Dictionary(pullRequests.map { ($0.headRefName, $0) }, uniquingKeysWith: { first, _ in first })
+        var children: [String: [RepositoryPullRequest]] = [:]
+        for pullRequest in pullRequests where byHead[pullRequest.baseRefName] != nil {
+            children[pullRequest.baseRefName, default: []].append(pullRequest)
+        }
+        var items: [PRStackItem] = []
+        var placed: Set<Int> = []
+        for pullRequest in pullRequests where !placed.contains(pullRequest.number) {
+            var root = pullRequest
+            var seen: Set<Int> = [root.number]
+            while let parent = byHead[root.baseRefName], seen.insert(parent.number).inserted {
+                root = parent
+            }
+            var chain: [RepositoryPullRequest] = []
+            var queue = [root]
+            while !queue.isEmpty {
+                let next = queue.removeFirst()
+                guard placed.insert(next.number).inserted else { continue }
+                chain.append(next)
+                queue += children[next.headRefName] ?? []
+            }
+            items.append(chain.count > 1 ? .stack(chain.reversed()) : .single(root))
+        }
+        return items
     }
 }
 

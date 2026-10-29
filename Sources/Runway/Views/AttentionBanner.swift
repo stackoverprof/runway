@@ -9,6 +9,10 @@ struct AttentionBanners: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
+            ForEach(ws.commandBanners) { banner in
+                commandBanner(banner)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
             ForEach(ws.attentionAlerts) { alert in
                 banner(alert)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -17,6 +21,71 @@ struct AttentionBanners: View {
         .padding(.top, 12)
         .padding(.trailing, 12)
         .animation(.spring(response: 0.34, dampingFraction: 0.85), value: ws.attentionAlerts)
+        .animation(.spring(response: 0.34, dampingFraction: 0.85), value: ws.commandBanners)
+    }
+
+    /// Same card as an agent alert: blue while the command runs, green when it
+    /// succeeds, red when it fails. A failed one opens its output.
+    private func commandBanner(_ banner: CommandBanner) -> some View {
+        let color: Color
+        let status: String
+        switch banner.phase {
+        case .running:
+            color = Color(red: 0.36, green: 0.62, blue: 0.98)
+            status = "RUNNING"
+        case .done:
+            color = Color(red: 0.18, green: 0.78, blue: 0.38)
+            status = "DONE"
+        case .failed(let code):
+            color = Color(red: 0.94, green: 0.36, blue: 0.36)
+            status = "FAILED · EXIT \(code)"
+        }
+        return HStack(spacing: 9) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .shadow(color: color.opacity(0.7), radius: 4)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.45))
+                Text(banner.title)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Button {
+                ws.dismissCommandBanner(banner.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 280, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.black.opacity(0.62))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(color.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture {
+            if case .failed = banner.phase, let log = banner.log { NSWorkspace.shared.open(log) }
+        }
+        .help(banner.phase == .running ? "Running in the background" : "Click a failed command to see its output")
     }
 
     private func banner(_ alert: AttentionAlert) -> some View {
