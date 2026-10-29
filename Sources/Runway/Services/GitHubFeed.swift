@@ -339,6 +339,13 @@ enum FeedRevealPolicy {
         fetchRepoList(force: true)
     }
 
+    /// Rescan now and wait for it, for a command that names a clone the last
+    /// scan missed (one cloned since). Joins a scan already running.
+    func rescanRepositories() async {
+        fetchRepoList(force: true)
+        await repoListTask?.value
+    }
+
     /// Freeze the repository list while the picker is on screen. A scan that
     /// finishes meanwhile parks its result and lands once the list closes.
     func holdRepositoryList(_ held: Bool) {
@@ -357,6 +364,10 @@ enum FeedRevealPolicy {
     ) {
         if repositoryListHeld {
             pendingRepositoryDirectory = (repositories: ordered, paths: paths, checkouts: checkouts)
+            // Only the rows are frozen. Paths are not on screen, and agents
+            // need a fresh clone's path while the picker is open.
+            repositoryPaths = paths
+            repositoryCheckouts = checkouts
             return
         }
         repositoryPaths = paths
