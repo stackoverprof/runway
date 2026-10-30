@@ -265,25 +265,6 @@ struct MiddlePane: View {
             .scrollIndicators(.hidden)
             .contentMargins(.horizontal, 0, for: .scrollContent)
 
-            sectionLabel("NEEDS YOU")
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(flight.asks, id: \.self) { ask in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Circle()
-                            .fill(Runway.amber)
-                            .frame(width: 5, height: 5)
-                            .padding(.top, 4)
-                        Text(ask)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.white.opacity(0.82))
-                        Spacer(minLength: 0)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-                }
-            }
-
             sectionLabel("ACCEPTANCE")
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(flight.acceptance, id: \.self) { line in
@@ -323,11 +304,21 @@ struct MiddlePane: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let waiting = leg.waitingOn {
-                Text("waits on \(waiting)")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Runway.amber.opacity(0.8))
-                    .lineLimit(1)
+            if let blocker = leg.blocker {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    if leg.needsYou {
+                        Circle()
+                            .fill(Runway.amber)
+                            .frame(width: 4, height: 4)
+                    }
+                    Text(blocker)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(
+                            leg.needsYou ? Runway.amber : Color.white.opacity(0.38)
+                        )
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
             }
         }
         .padding(9)
@@ -646,7 +637,10 @@ struct FlightPreview {
         let number: Int
         let title: String
         let done: Bool
-        var waitingOn: String?
+        /// What this leg is held up by, if anything.
+        var blocker: String?
+        /// True when the one holding it up is you.
+        var needsYou = false
         var id: Int { number }
     }
 
@@ -669,7 +663,6 @@ struct FlightPreview {
     let title: String
     let status: String
     let legs: [Leg]
-    let asks: [String]
     let acceptance: [String]
     let pulls: [Pull]
     let slides: [String]
@@ -685,15 +678,13 @@ struct FlightPreview {
         title: "Bookings: take a booking on the POS",
         status: "holding",
         legs: [
-            Leg(number: 16257, title: "Booking form on the POS", done: true),
-            Leg(number: 16261, title: "Hold a slot while paying", done: true),
+            Leg(number: 16257, title: "Booking form on the POS", done: true,
+                blocker: "close it? acceptance met", needsYou: true),
+            Leg(number: 16261, title: "Hold a slot while paying", done: true,
+                blocker: "merge #16290? lunch lock on", needsYou: true),
             Leg(number: 16264, title: "Refund a cancelled booking", done: false,
-                waitingOn: "a reply from Arnar"),
+                blocker: "waits on a reply from Arnar"),
             Leg(number: 16270, title: "Receipt shows the slot", done: false),
-        ],
-        asks: [
-            "Close #16257? Every acceptance item is met.",
-            "Merge #16290 while the lunch lock is on?",
         ],
         acceptance: [
             "A booking taken on the POS appears in the dashboard within a minute.",
