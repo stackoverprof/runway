@@ -59,7 +59,9 @@ struct QuickTerminal: View {
         )
         let env = AgentControl.environment(
             for: boxID,
+            rank: .atc,
             autorun: command,
+            focusRepository: GitHubFeed.shared.repo,
             quickTerminalSession: true,
             quickTerminalRoot: root
         )

@@ -10,14 +10,10 @@ import Foundation
 /// - Claude receives richer automatic hooks from a Runway-scoped PATH wrapper.
 ///   No agent-specific configuration or user shell files are modified.
 enum AgentControl {
-    static let supportDir: URL = {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let dir = base.appendingPathComponent("Runway", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
+    /// This build's own folder, so a Runway installed beside another never
+    /// writes into its neighbour's helpers.
+    static var supportDir: URL { RunwayStorage.supportDir }
+
 
     static var feedDir: URL {
         let dir = supportDir.appendingPathComponent("feed", isDirectory: true)
@@ -193,6 +189,7 @@ enum AgentControl {
     /// Runway-scoped command helpers.
     static func environment(
         for id: UUID,
+        rank: AgentRank = .crew,
         autorun: String? = nil,
         focusRepository: String? = nil,
         focusIssueNumber: Int? = nil,
@@ -215,6 +212,8 @@ enum AgentControl {
             "RUNWAY_STATE_PULSE": statePulse.path,
             "ZDOTDIR": zdotdir.path,
             "RUNWAY_SKILL_PATH": integrationGuide.path,
+            "RUNWAY_RANK": rank.rawValue,
+            "RUNWAY_URL_SCHEME": RunwayURLCommand.scheme,
             "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
             "PATH": "\(binPath):\(systemPath)",
         ]
@@ -361,137 +360,15 @@ enum AgentControl {
     }
 
     private static func writeBinScripts() {
-        let postPath = binDir.appendingPathComponent("runway-post")
-        let delPath = binDir.appendingPathComponent("runway-delete")
-        let pinPath = binDir.appendingPathComponent("runway-pin")
-        let unpinPath = binDir.appendingPathComponent("runway-unpin")
         let helpPath = binDir.appendingPathComponent("runway-help")
-        let focusLogPath = binDir.appendingPathComponent("runway-focus-log")
-        let issuePath = binDir.appendingPathComponent("runway-issue")
+        let runwayPath = binDir.appendingPathComponent("runway")
         let agentPath = binDir.appendingPathComponent("runway-agent")
         let claudePath = binDir.appendingPathComponent("claude")
-        let codexPath = binDir.appendingPathComponent("codex")
-        let geminiPath = binDir.appendingPathComponent("gemini")
 
-        // 1. runway-post
-        let postScript = """
-        #!/usr/bin/env python3
-        import sys, os, json, datetime
-        
-        def main():
-            args = sys.argv[1:]
-            if "-h" in args or "--help" in args:
-                print("Runway API: Post a note or post to the activity feed.", file=sys.stderr)
-                print("Usage:", file=sys.stderr)
-                print("  runway-post \\"body text\\"                       (author: agent)", file=sys.stderr)
-                print("  runway-post \\"author_name\\" \\"body text\\"         (custom author)", file=sys.stderr)
-                print("  runway-post \\"author_name\\" \\"body text\\" \\"title\\" (custom title)", file=sys.stderr)
-                print("  runway-post \\"author_name\\" \\"title\\" - <<EOF     (multiline stdin)", file=sys.stderr)
-                sys.exit(0)
-            
-            feed = os.environ.get("RUNWAY_FEED")
-            if not feed:
-                print("runway-post: not in a Runway terminal (RUNWAY_FEED unset)", file=sys.stderr)
-                sys.exit(1)
-
-            def unesc(s):
-                return s.replace('\\\\n', '\\n').replace('\\\\t', '\\t')
-
-            stdin_body = ""
-            if args and args[-1] == "-":
-                stdin_body = sys.stdin.read()
-                args = args[:-1]
-
-            if stdin_body:
-                if len(args) == 0:
-                    author, title = "agent", ""
-                elif len(args) == 1:
-                    author, title = args[0], ""
-                else:
-                    author, title = args[0], args[1]
-                body = stdin_body
-            elif len(args) == 0:
-                return
-            elif len(args) == 1:
-                author, title, body = "agent", "", args[0]
-            elif len(args) == 2:
-                author, title, body = args[0], "", args[1]
-            else:
-                author, body, title = args[0], args[1], args[2]
-
-            title = unesc(title)
-            body = unesc(body)
-            if not body.strip():
-                return
-            
-            payload = {
-                "author": author,
-                "title": title,
-                "body": body,
-                "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-            with open(feed, "a") as f:
-                f.write(json.dumps(payload) + "\\n")
-
-        if __name__ == "__main__":
-            main()
-        """
-        try? postScript.data(using: .utf8)?.write(to: postPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: postPath.path)
-
-        // 2. runway-delete
-        let delScript = """
-        #!/bin/zsh
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
-          echo 'Runway API: Delete a feed post or user note by ID.' >&2
-          echo 'Usage:' >&2
-          echo '  runway-delete <post_id_or_note_id>   (e.g., note-1234 or agent-abcd)' >&2
-          exit 0
-        fi
-        if [ -z "$RUNWAY_FEED" ]; then
-          echo 'runway-delete: not in a Runway terminal (RUNWAY_FEED unset)' >&2
-          exit 1
-        fi
-        echo "{\\"action\\":\\"delete\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
-        """
-        try? delScript.data(using: .utf8)?.write(to: delPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: delPath.path)
-
-        // 3. runway-pin
-        let pinScript = """
-        #!/bin/zsh
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
-          echo 'Runway API: Pin a feed post or user note to the top of the Notes tab.' >&2
-          echo 'Usage:' >&2
-          echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
-          exit 0
-        fi
-        if [ -z "$RUNWAY_FEED" ]; then
-          echo 'runway-pin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
-          exit 1
-        fi
-        echo "{\\"action\\":\\"pin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
-        """
-        try? pinScript.data(using: .utf8)?.write(to: pinPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pinPath.path)
-
-        // 4. runway-unpin
-        let unpinScript = """
-        #!/bin/zsh
-        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
-          echo 'Runway API: Unpin a feed post or user note from the top of the Notes tab.' >&2
-          echo 'Usage:' >&2
-          echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
-          exit 0
-        fi
-        if [ -z "$RUNWAY_FEED" ]; then
-          echo 'runway-unpin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
-          exit 1
-        fi
-        echo "{\\"action\\":\\"unpin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
-        """
-        try? unpinScript.data(using: .utf8)?.write(to: unpinPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unpinPath.path)
+        // 1. runway: what an agent of any rank acts through.
+        let runwayScript = Self.runwayCLI
+        try? runwayScript.data(using: .utf8)?.write(to: runwayPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runwayPath.path)
 
         // 5. runway-help: one discovery point that works for every coding agent.
         let helpScript = """
@@ -500,97 +377,6 @@ enum AgentControl {
         """
         try? helpScript.data(using: .utf8)?.write(to: helpPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helpPath.path)
-
-        // 5. runway-issue: an agent-facing command channel for the Open, Focus,
-        // and Closed boards. The app consumes the request and writes a response
-        // file, so this works without accessibility automation or UI focus.
-        let issueScript = """
-        #!/usr/bin/env python3
-        import argparse, json, os, pathlib, sys, time, uuid
-
-        command_dir = pathlib.Path('\(issueCommandDir.path)')
-        response_dir = pathlib.Path('\(issueResponseDir.path)')
-
-        def main():
-            parser = argparse.ArgumentParser(prog='runway-issue')
-            parser.add_argument('--repo', default=os.environ.get('RUNWAY_REPOSITORY', ''))
-            parser.add_argument('--clone', default=os.environ.get('RUNWAY_CLONE', ''),
-                                help='the clone whose board to use, by folder name (monorepo, monosentry)')
-            sub = parser.add_subparsers(dest='action', required=True)
-
-            listing = sub.add_parser('list', help='list issues by board lane')
-            listing.add_argument('--lane', choices=['open', 'focus', 'closed'])
-            listing.add_argument('--repo', default=argparse.SUPPRESS)
-            listing.add_argument('--clone', default=argparse.SUPPRESS)
-
-            for lane in ('open', 'focus', 'closed'):
-                move = sub.add_parser(lane, help=f'move an issue to {lane}')
-                move.add_argument('issue', type=int)
-                move.add_argument('--before', type=int)
-                move.add_argument('--repo', default=argparse.SUPPRESS)
-                move.add_argument('--clone', default=argparse.SUPPRESS)
-
-            move = sub.add_parser('move', help='move an issue to a board lane')
-            move.add_argument('issue', type=int)
-            move.add_argument('--to', choices=['open', 'focus', 'closed'], required=True)
-            move.add_argument('--before', type=int)
-            move.add_argument('--repo', default=argparse.SUPPRESS)
-            move.add_argument('--clone', default=argparse.SUPPRESS)
-
-            args = parser.parse_args()
-            command_id = str(uuid.uuid4())
-            action = args.action
-            destination = action if action in ('open', 'focus', 'closed') else getattr(args, 'to', None)
-            payload = {
-                'id': command_id,
-                'action': 'list' if action == 'list' else 'move',
-                'repository': args.repo,
-                'clone': args.clone,
-                'issueNumber': getattr(args, 'issue', None),
-                'destination': destination,
-                'beforeNumber': getattr(args, 'before', None),
-                'lane': getattr(args, 'lane', None),
-            }
-            command_dir.mkdir(parents=True, exist_ok=True)
-            response_dir.mkdir(parents=True, exist_ok=True)
-            request = command_dir / f'{command_id}.json'
-            response = response_dir / f'{command_id}.json'
-            request.write_text(json.dumps(payload), encoding='utf-8')
-            # A clone or issue Runway has not seen yet costs a disk scan and a
-            # GitHub fetch before the reply.
-            deadline = time.time() + 45
-            while time.time() < deadline:
-                if response.exists():
-                    result = json.loads(response.read_text(encoding='utf-8'))
-                    try:
-                        response.unlink()
-                    except OSError:
-                        pass
-                    if not result.get('success'):
-                        print(result.get('error', 'Runway rejected the issue command.'), file=sys.stderr)
-                        return 1
-                    clone = result.get('clone') or ''
-                    if clone:
-                        for issue in result.get('focus', []):
-                            issue['agent'] = f"{clone}-{issue.get('number')}"
-                    if action == 'list':
-                        lane = args.lane
-                        if lane:
-                            print(json.dumps(result.get(lane, []), indent=2, ensure_ascii=False))
-                        else:
-                            print(json.dumps({key: result.get(key, []) for key in ('open', 'focus', 'closed')}, indent=2, ensure_ascii=False))
-                    else:
-                        print(json.dumps(result, indent=2, ensure_ascii=False))
-                    return 0
-                time.sleep(0.1)
-            print('Runway did not respond. Is the app running with this terminal?', file=sys.stderr)
-            return 2
-
-        if __name__ == '__main__':
-            raise SystemExit(main())
-        """
-        try? issueScript.data(using: .utf8)?.write(to: issuePath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: issuePath.path)
 
         // 6. runway-agent: opt-in coarse status reporting for any command-line agent.
         let agentScript = """
@@ -703,143 +489,6 @@ enum AgentControl {
         """
         try? claudeScript.data(using: .utf8)?.write(to: claudePath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudePath.path)
-
-        // Codex chooses its own session UUID. Capture it as soon as the TUI
-        // creates its transcript, then resume that exact UUID on future starts.
-        let codexScript = """
-        #!/bin/zsh
-        wrapper_dir="${0:A:h}"
-        real=""
-        for dir in "${(@s/:/)PATH}"; do
-          [ "$dir" = "$wrapper_dir" ] && continue
-          if [ -x "$dir/codex" ]; then real="$dir/codex"; break; fi
-        done
-        if [ -z "$real" ]; then
-          echo 'codex: command not found' >&2
-          exit 127
-        fi
-
-        write_session_record() {
-          local session_id="$1"
-          [ -z "$session_id" ] && return
-          [ -n "$RUNWAY_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_SESSION_FILE"
-          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_DURABLE_SESSION_FILE"
-        }
-
-        session_exists() {
-          [ -d "$HOME/.codex/sessions" ] || return 1
-          [ -n "$(/usr/bin/find "$HOME/.codex/sessions" -type f -name "*-$1.jsonl" -print -quit 2>/dev/null)" ]
-        }
-
-        monitor_pid=""
-        marker=""
-        capture_new_session() {
-          marker=$(/usr/bin/mktemp -t runway-codex-session)
-          (
-            local attempt candidate first_line session_id session_cwd originator
-            for attempt in {1..300}; do
-              while IFS= read -r -d '' candidate; do
-                first_line=$(/usr/bin/head -n 1 "$candidate" 2>/dev/null)
-                [ -z "$first_line" ] && continue
-                session_id=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.id raw -o - -- - 2>/dev/null)
-                session_cwd=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.cwd raw -o - -- - 2>/dev/null)
-                originator=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.originator raw -o - -- - 2>/dev/null)
-                if [ -n "$session_id" ] && [ "$session_cwd" = "$PWD" ] && [ "$originator" = "codex-tui" ]; then
-                  write_session_record "$session_id"
-                  return 0
-                fi
-              done < <(/usr/bin/find "$HOME/.codex/sessions" -type f -name '*.jsonl' -newer "$marker" -print0 2>/dev/null)
-              /bin/sleep 0.1
-            done
-          ) &
-          monitor_pid=$!
-        }
-
-        interactive=1
-        case "${1:-}" in
-          apply|app-server|cloud|completion|debug|exec|features|help|login|logout|mcp|mcp-server|review|sandbox|-h|--help|-V|--version)
-            interactive=0
-            ;;
-        esac
-
-        if [ "${1:-}" = "resume" ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
-          write_session_record "$2"
-        elif [ "$interactive" -eq 1 ] && [ "${1:-}" != "resume" ] && [ -n "$RUNWAY_CODEX_SESSION_ID" ] && session_exists "$RUNWAY_CODEX_SESSION_ID"; then
-          write_session_record "$RUNWAY_CODEX_SESSION_ID"
-          set -- resume "$RUNWAY_CODEX_SESSION_ID" "$@"
-        elif [ "$interactive" -eq 1 ]; then
-          capture_new_session
-        fi
-
-        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
-        \(pulseCommand)
-        "$real" "$@"
-        exit_code=$?
-        [ -n "$monitor_pid" ] && /bin/kill "$monitor_pid" 2>/dev/null
-        [ -n "$marker" ] && /bin/rm -f "$marker"
-        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
-        \(pulseCommand)
-        exit $exit_code
-        """
-        try? codexScript.data(using: .utf8)?.write(to: codexPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexPath.path)
-
-        // Gemini also supports caller-assigned session UUIDs. This wrapper uses
-        // the same issue-owned identity while preserving explicit user flags.
-        let geminiScript = """
-        #!/bin/zsh
-        wrapper_dir="${0:A:h}"
-        real=""
-        for dir in "${(@s/:/)PATH}"; do
-          [ "$dir" = "$wrapper_dir" ] && continue
-          if [ -x "$dir/gemini" ]; then real="$dir/gemini"; break; fi
-        done
-        if [ -z "$real" ]; then
-          echo 'gemini: command not found' >&2
-          exit 127
-        fi
-        explicit_session=0
-        for arg in "$@"; do
-          case "$arg" in
-            -r|--resume|--resume=*|--session-id|--session-id=*|--session-file|--session-file=*)
-              explicit_session=1
-              break
-              ;;
-          esac
-        done
-        session_args=()
-        session_mode="unbound"
-        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ]; then
-          short_id="${RUNWAY_GEMINI_SESSION_ID[1,8]}"
-          transcript=""
-          if [ -d "$HOME/.gemini/tmp" ]; then
-            transcript=$(/usr/bin/find "$HOME/.gemini/tmp" -type f -path '*/chats/*' \\( -name "*-$short_id.json" -o -name "*-$short_id.jsonl" \\) -print -quit 2>/dev/null)
-          fi
-          if [ -n "$transcript" ]; then
-            session_args=(--resume "$RUNWAY_GEMINI_SESSION_ID")
-            session_mode="resume"
-          else
-            session_args=(--session-id "$RUNWAY_GEMINI_SESSION_ID")
-            session_mode="create"
-          fi
-        elif [ "$explicit_session" -eq 1 ]; then
-          session_mode="explicit"
-        fi
-        export RUNWAY_GEMINI_SESSION_MODE="$session_mode"
-        if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
-          printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_SESSION_FILE"
-          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_DURABLE_SESSION_FILE"
-        fi
-        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
-        \(pulseCommand)
-        "$real" "${session_args[@]}" "$@"
-        exit_code=$?
-        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
-        \(pulseCommand)
-        exit $exit_code
-        """
-        try? geminiScript.data(using: .utf8)?.write(to: geminiPath)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: geminiPath.path)
 
         for (path, script) in [
             (sessionRecorderPath, sessionRecorderScript),
