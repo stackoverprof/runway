@@ -12,6 +12,7 @@ struct MiddlePane: View {
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
     @State private var draft = FlightPreview.sampleDraft
+    @State private var legTab: RunwayIssueTab = .open
 
     private let flight = FlightPreview.sample
 
@@ -247,12 +248,23 @@ struct MiddlePane: View {
         .scrollIndicators(.hidden)
     }
 
-    /// Progress, what each step waits on, and what only you can answer.
+    /// The legs, what each waits on, and what only you can answer. Open or
+    /// Closed, the same switch the issue list uses.
     private var issueSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionLabel("PROGRESS")
+        let legs = legTab == .open
+            ? flight.legs.filter { !$0.done }
+            : flight.legs.filter(\.done)
+        return VStack(alignment: .leading, spacing: 14) {
+            legSwitch
+
             VStack(alignment: .leading, spacing: 7) {
-                ForEach(flight.legs) { leg in
+                if legs.isEmpty {
+                    Text(legTab == .open ? "Every leg has landed." : "No leg has landed yet.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                        .padding(.vertical, 6)
+                }
+                ForEach(legs) { leg in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: leg.done ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 10))
@@ -311,6 +323,44 @@ struct MiddlePane: View {
                 }
             }
         }
+    }
+
+    /// Open legs or landed ones, counted.
+    private var legSwitch: some View {
+        HStack(spacing: 0) {
+            ForEach(RunwayIssueTab.allCases) { tab in
+                let count = tab == .open
+                    ? flight.legs.filter { !$0.done }.count
+                    : flight.legs.filter(\.done).count
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { legTab = tab }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(tab.rawValue)
+                        Text("\(count)")
+                            .foregroundStyle(Color.white.opacity(0.35))
+                    }
+                    .font(.system(size: 10.5, weight: legTab == tab ? .semibold : .medium))
+                    .foregroundStyle(
+                        legTab == tab ? Color.white.opacity(0.9) : Color.white.opacity(0.4)
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(legTab == tab ? Color.white.opacity(0.1) : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 
     /// Every PR of the flight, with what it is waiting for.
