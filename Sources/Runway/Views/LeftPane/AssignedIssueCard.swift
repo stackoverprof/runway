@@ -7,6 +7,7 @@ struct AssignedIssueCard: View {
     var onClosedChange: ((Bool) -> Void)? = nil
     var onRename: ((String) -> Void)? = nil
     var onRemoveFromFocus: (() -> Void)? = nil
+    var onAddToFocus: (() -> Void)? = nil
     /// Focus cards leave the closed date out; the lane already says what matters.
     var showsClosedDate = true
     @State private var hovering = false
@@ -121,6 +122,10 @@ struct AssignedIssueCard: View {
             }
             Button("Copy issue link") { copyIssueLink() }
             Button("Open link") { NSWorkspace.shared.open(issue.url) }
+            if let onAddToFocus {
+                Divider()
+                Button("Add to focus") { onAddToFocus() }
+            }
             if let onRemoveFromFocus {
                 Divider()
                 Button("Remove from focus") { onRemoveFromFocus() }

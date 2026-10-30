@@ -96,6 +96,11 @@ struct LeftPane: View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                    // An expanded quick panel starts here, below the brand row
+                    // and the repository picker.
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
+                        ws.leftPaneContentTop = $0
+                    }
                 if feed.events.isEmpty, let error = feed.lastError {
                     // gh missing / not signed in / bad repo: explain, don't spin.
                     feedNotice(error, systemImage: "exclamationmark.triangle")
@@ -469,24 +474,24 @@ struct LeftPane: View {
     private var subHeader: some View {
         HStack(alignment: .center, spacing: 8) {
             if ws.selectedTab == .runway {
-                HStack(spacing: 6) {
-                    Text(subHeaderText)
-                        .fixedSize()
-
-                    Button {
-                        withAnimation(focusBoardCollapseAnimation) {
-                            focusBoardCollapsed.toggle()
-                        }
-                    } label: {
+                // The whole label is the hit area, not just the chevron.
+                Button {
+                    withAnimation(focusBoardCollapseAnimation) {
+                        focusBoardCollapsed.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(subHeaderText)
+                            .fixedSize()
                         Image(systemName: "chevron.down")
                             .font(.system(size: 7.5, weight: .bold))
                             .rotationEffect(.degrees(focusBoardCollapsed ? -90 : 0))
-                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
             } else {
                 Text(subHeaderText)
                     .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
@@ -1123,6 +1128,17 @@ struct LeftPane: View {
     private func canFocusIssue(_ issueNumber: Int) -> Bool {
         guard assignedIssues.issues.contains(where: { $0.number == issueNumber }) else { return false }
         return assignedIssues.focusContains(issueNumber) || assignedIssues.canAddToFocus
+    }
+
+    /// A card in Open or Closed joins Focus from its own menu, the way one
+    /// dragged onto the board does.
+    private func addIssueToFocus(_ issueNumber: Int) {
+        userMovedIssue = issueNumber
+        focusBoardCollapsed = false
+        withAnimation(.easeInOut(duration: 0.18)) {
+            assignedIssues.promoteToFocus(issueNumber: issueNumber)
+        }
+        syncFocusBoard()
     }
 
     private func focusIssueFromPullRequest(_ issueNumber: Int) {
@@ -1815,7 +1831,10 @@ struct LeftPane: View {
                             ) {
                                 syncFocusBoard()
                             }
-                        }
+                        },
+                        onAddToFocus: assignedIssues.canAddToFocus
+                            ? { addIssueToFocus(issue.number) }
+                            : nil
                     )
                     .transition(.opacity)
                     .background {
