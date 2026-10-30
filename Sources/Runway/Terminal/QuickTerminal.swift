@@ -306,8 +306,8 @@ struct QuickTerminal: View {
             
             if !ws.quickVisible {
                 // Centered peeking bolt icon when closed
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 13, weight: .bold))
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color(red: 0.45, green: 0.82, blue: 0.78))
                     .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -437,10 +437,10 @@ struct QuickTerminal: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            Image(systemName: "bolt.fill")
+            Image(systemName: "antenna.radiowaves.left.and.right")
                 .font(.system(size: 9))
                 .foregroundStyle(Color.white.opacity(0.5))
-            Text(quickNames.name(for: selectedRoot) ?? "atc")
+            Text(quickNames.name(for: selectedRoot) ?? "Air Traffic Controller")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
                 .lineLimit(1)
