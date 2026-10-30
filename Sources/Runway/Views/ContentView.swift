@@ -26,8 +26,7 @@ struct ContentView: View {
                         context.workspace.leftWidth = start + translation
                     }
 
-                    // Open space, waiting for whatever v3 puts here.
-                    Color.black
+                    MiddlePane()
                         .frame(width: widths.middle)
 
                     divider { translation in
