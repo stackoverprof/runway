@@ -96,6 +96,11 @@ struct LeftPane: View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                    // An expanded quick panel starts here, below the brand row
+                    // and the repository picker.
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
+                        ws.leftPaneContentTop = $0
+                    }
                 if feed.events.isEmpty, let error = feed.lastError {
                     // gh missing / not signed in / bad repo: explain, don't spin.
                     feedNotice(error, systemImage: "exclamationmark.triangle")

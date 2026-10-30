@@ -168,6 +168,10 @@ struct QuickTerminalTabRequest: Equatable {
     /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
     var quickVisible = false
     var quickPinned = false
+    /// The quick panel filling the left pane, its tabs stacked as an accordion.
+    var quickExpanded = false
+    /// Where the left pane's header ends, so an expanded panel starts below it.
+    var leftPaneContentTop: CGFloat = 0
     var quickHeight: CGFloat = 0
     var quickState: AgentState = .idle
     var quickTabStates: [String: AgentState] = [:]
@@ -312,6 +316,7 @@ struct QuickTerminalTabRequest: Equatable {
         var quickHeight: CGFloat
         var accordion: Bool
         var quickPinned: Bool?
+        var quickExpanded: Bool?
         var selectedTab: FeedTab?
         var layoutAxis: TerminalLayoutAxis?
     }
@@ -325,6 +330,7 @@ struct QuickTerminalTabRequest: Equatable {
         leftWidth = s.leftWidth
         quickHeight = s.quickHeight
         quickPinned = s.quickPinned ?? false
+        quickExpanded = s.quickExpanded ?? false
         selectedTab = s.selectedTab ?? .feeds
         terminalLayoutAxis = s.layoutAxis ?? SettingsKey.configuredLayoutAxis()
         lastSaved = data
@@ -334,7 +340,8 @@ struct QuickTerminalTabRequest: Equatable {
     func saveIfNeeded() {
         let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
                                  quickHeight: quickHeight, accordion: true,
-                                 quickPinned: quickPinned, selectedTab: selectedTab,
+                                 quickPinned: quickPinned, quickExpanded: quickExpanded,
+                                 selectedTab: selectedTab,
                                  layoutAxis: terminalLayoutAxis)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data

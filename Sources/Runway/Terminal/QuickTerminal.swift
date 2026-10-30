@@ -224,9 +224,15 @@ struct QuickTerminal: View {
     }
 
     private var height: CGFloat {
+        if ws.quickExpanded { return expandedHeight }
         let fallback = availableHeight * 0.5
         let h = ws.quickHeight == 0 ? fallback : ws.quickHeight
         return min(max(h, minHeight), maxHeight)
+    }
+
+    /// Everything under the brand row and the repository picker.
+    private var expandedHeight: CGFloat {
+        max(minHeight, availableHeight - ws.leftPaneContentTop - margin * 2)
     }
 
     private var actualWidth: CGFloat {
@@ -240,15 +246,97 @@ struct QuickTerminal: View {
         return false
     }
 
+    /// One quick agent in the panel. Expanded, each box carries a header with
+    /// the agent's name so five leads are telling apart at a glance; collapsed,
+    /// the boxes sit on top of each other and only the selected one shows.
+    private func quickTabBox(_ tab: QuickTerminalTab, index: Int) -> some View {
+        let isSelected = tab.root == selectedRoot
+        return VStack(spacing: 0) {
+            if ws.quickExpanded {
+                quickTabHeader(tab, index: index, isSelected: isSelected)
+            }
+            terminalSurface(for: tab)
+        }
+        .background {
+            if ws.quickExpanded {
+                RoundedRectangle(cornerRadius: 8).fill(RunwayTerminal.body)
+            }
+        }
+        .overlay {
+            if ws.quickExpanded {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isSelected
+                            ? Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.45)
+                            : Color.white.opacity(0.08),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ws.quickExpanded ? 8 : 0))
+    }
+
+    private func quickTabHeader(
+        _ tab: QuickTerminalTab,
+        index: Int,
+        isSelected: Bool
+    ) -> some View {
+        let state = ws.quickTabStates[tab.root] ?? .idle
+        return HStack(spacing: 7) {
+            Circle()
+                .fill(Self.stateColor(state, isSelected: isSelected))
+                .frame(width: 6, height: 6)
+            Text(quickNames.name(for: tab.root) ?? "quick \(index + 1)")
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(isSelected ? 0.85 : 0.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 6)
+            if tabs.count > 1 {
+                Button {
+                    closeTab(tab.root)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.35))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Close this quick agent")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(RunwayTerminal.headerBar)
+        .contentShape(Rectangle())
+        .pointerCursor()
+        .onTapGesture {
+            selectTab(tab.root)
+            focusActiveTab()
+        }
+    }
+
+    private static func stateColor(_ state: AgentState, isSelected: Bool) -> Color {
+        switch state {
+        case .needsAction: Color(red: 0.91, green: 0.62, blue: 0.20)
+        case .running: Color(red: 0.18, green: 0.78, blue: 0.38)
+        default: isSelected
+            ? Color(red: 0.45, green: 0.82, blue: 0.78)
+            : Color.white.opacity(0.25)
+        }
+    }
+
     private func terminalSurface(for tab: QuickTerminalTab) -> some View {
         GhosttyTerminalRepresentable(session: tab.session, configuration: .default)
             .id(tab.root)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 5)
             .padding(.bottom, 5)
-            .opacity(tab.root == selectedRoot ? 1 : 0)
-            .allowsHitTesting(tab.root == selectedRoot)
-            .accessibilityHidden(tab.root != selectedRoot)
+            .opacity(ws.quickExpanded || tab.root == selectedRoot ? 1 : 0)
+            .allowsHitTesting(ws.quickExpanded || tab.root == selectedRoot)
+            .accessibilityHidden(!ws.quickExpanded && tab.root != selectedRoot)
             .onAppear {
                 applyRunwayTheme(to: tab.session)
                 if tab.root == selectedRoot { bindSession(to: tab) }
@@ -295,11 +383,18 @@ struct QuickTerminal: View {
                             _ = await quickNames.reload(root: selectedRoot)
                         }
                     }
-                ZStack(alignment: .topLeading) {
-                    ForEach(tabs) { tab in
-                        terminalSurface(for: tab)
+                QuickTabLayout(
+                    expanded: ws.quickExpanded,
+                    selectedIndex: tabs.firstIndex { $0.root == selectedRoot } ?? 0,
+                    spacing: 12
+                ) {
+                    ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                        quickTabBox(tab, index: index)
                     }
                 }
+                .padding(ws.quickExpanded ? 8 : 0)
+                .animation(.spring(response: 0.32, dampingFraction: 0.86), value: ws.quickExpanded)
+                .animation(.spring(response: 0.28, dampingFraction: 0.86), value: selectedRoot)
             }
             .opacity(ws.quickVisible ? 1 : 0)
             .allowsHitTesting(ws.quickVisible)
@@ -340,7 +435,7 @@ struct QuickTerminal: View {
         )
         // Invisible drag strip on the top edge to resize when visible.
         .overlay(alignment: .top) {
-            if ws.quickVisible { resizeHandle }
+            if ws.quickVisible, !ws.quickExpanded { resizeHandle }
         }
         // Dragging the panel's right edge also moves the main split divider,
         // keeping the Quick Terminal edge and pane edge directly connected.
@@ -350,7 +445,7 @@ struct QuickTerminal: View {
         // The corner sits in the header's existing trailing padding. Keep it
         // above the edge handles so its invisible hit area owns the diagonal drag.
         .overlay(alignment: .topTrailing) {
-            if ws.quickVisible { combinedResizeHandle }
+            if ws.quickVisible, !ws.quickExpanded { combinedResizeHandle }
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
@@ -447,7 +542,7 @@ struct QuickTerminal: View {
                 .truncationMode(.middle)
             Spacer(minLength: 8)
 
-            if tabs.count > 1 && headerControlsVisible {
+            if tabs.count > 1 && headerControlsVisible && !ws.quickExpanded {
                 ScrollView(.horizontal) {
                     HStack(spacing: 3) {
                         ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
@@ -490,6 +585,27 @@ struct QuickTerminal: View {
                 .buttonStyle(.plain)
                 .pointerCursor()
                 .help("New quick tab")
+            }
+
+            if headerControlsVisible || ws.quickExpanded {
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        ws.quickExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: ws.quickExpanded
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10))
+                        .foregroundStyle(ws.quickExpanded
+                            ? Color(red: 0.45, green: 0.82, blue: 0.78)
+                            : Color.white.opacity(0.4))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help(ws.quickExpanded ? "Back to the small panel" : "Fill the left pane")
             }
 
             // Pin button (only show on hover or when pinned)
@@ -628,7 +744,7 @@ struct QuickTerminal: View {
 
 
     private func triggerAutoHide() {
-        guard !ws.quickPinned else { return }
+        guard !ws.quickPinned, !ws.quickExpanded else { return }
         guard SettingsKey.quickAutoHideEnabled() else { return }
 
         hideTask?.cancel()
@@ -648,4 +764,60 @@ struct QuickTerminal: View {
 private struct TitleWatch: Hashable {
     let root: String
     let visible: Bool
+}
+
+/// Stacks the quick agents. Collapsed, every surface keeps the panel's full
+/// size and sits under the selected one, so switching tabs never resizes a
+/// running shell. Expanded, they share the panel as an accordion, the selected
+/// agent taking the larger share, the same weighting the right pane uses.
+private struct QuickTabLayout: Layout {
+    let expanded: Bool
+    let selectedIndex: Int
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard expanded, subviews.count > 1 else {
+            for subview in subviews {
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: bounds.minY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+                )
+            }
+            return
+        }
+
+        var y = bounds.minY
+        for (index, subview) in subviews.enumerated() {
+            let span = AccordionSpanPolicy.span(
+                isFocused: index == selectedIndex,
+                focusedIsActive: true,
+                soloed: false,
+                // The policy keeps 16pt of padding on each side; this panel
+                // has its own, so give those points back to the boxes.
+                paneSpan: bounds.height + 32,
+                count: subviews.count,
+                minimumSpan: 56
+            )
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: span)
+            )
+            y += span + spacing
+        }
+    }
 }
