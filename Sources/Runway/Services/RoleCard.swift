@@ -44,6 +44,10 @@ enum RoleCard {
         }
         lines.append("")
         lines.append("Your hands are the `runway` command. Run `runway help` for its verbs.")
+        if rank != .atc {
+            lines.append("`runway show` prints where this flight stands and what each crew is on.")
+            lines.append("`runway progress` is the flight's checklist, and `runway tick <n>` marks a step done.")
+        }
         lines.append("")
         lines.append("House rules")
         lines.append(HouseRules.current)

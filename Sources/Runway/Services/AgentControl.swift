@@ -112,12 +112,21 @@ enum AgentControl {
 
     /// A provider binding owned by the issue, not its temporary terminal card.
     /// It intentionally survives card cleanup and app restarts.
-    static func issueProviderSessionFile(repository: String, issueNumber: Int) -> URL {
-        let id = DeterministicSessionID.uuid(for: [
+    /// An issue carries more than one seat in v3: a pilot and a copilot fly the
+    /// same flight. The seat belongs in the key, or both would resume the one
+    /// conversation and two Claudes would write the same transcript.
+    static func issueProviderSessionFile(
+        repository: String,
+        issueNumber: Int,
+        rank: AgentRank? = nil
+    ) -> URL {
+        var parts = [
             "runway-issue-provider-binding-v1",
             repository.lowercased(),
             String(issueNumber),
-        ].joined(separator: ":"))
+        ]
+        if let rank, rank != .crew { parts.append(rank.rawValue) }
+        let id = DeterministicSessionID.uuid(for: parts.joined(separator: ":"))
         return providerSessionsDir.appendingPathComponent("\(id.uuidString.lowercased()).json")
     }
 
@@ -227,7 +236,8 @@ enum AgentControl {
                   let focusIssueNumber {
             durableFile = issueProviderSessionFile(
                 repository: focusRepository,
-                issueNumber: focusIssueNumber
+                issueNumber: focusIssueNumber,
+                rank: rank
             )
         } else {
             durableFile = nil
@@ -481,7 +491,14 @@ enum AgentControl {
         if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
           "$wrapper_dir/runway-session-record" claude "$RUNWAY_CLAUDE_SESSION_ID" "$PWD"
         fi
-        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "$@"
+        # A seat's role card is what makes the session a pilot or a crew rather
+        # than a plain Claude in a repository. It rides in as system prompt, so
+        # it holds for every turn of the conversation.
+        role_args=()
+        if [ -n "${RUNWAY_ROLE_CARD:-}" ] && [ -f "$RUNWAY_ROLE_CARD" ]; then
+          role_args=(--append-system-prompt "$(/bin/cat "$RUNWAY_ROLE_CARD")")
+        fi
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "${role_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
         \(pulseCommand)

@@ -150,6 +150,8 @@ extension AgentControl {
 
 
         def cmd_show(args):
+            if not args.number:
+                sys.exit("runway: which flight? Pass a number.")
             flight = fetch_one(repo_of(args), args.number)
             if args.json:
                 print(json.dumps(flight, indent=2))
@@ -160,9 +162,16 @@ extension AgentControl {
 
 
         def create_issue(repo, title, body):
-            url = gh(["issue", "create", "--repo", repo, "--title", title, "--body", body or ""]).strip()
+            url = gh(["issue", "create", "--repo", repo, "--title", title,
+                      "--body", body or "", "--assignee", "@me"]).strip()
             number = url.rstrip("/").split("/")[-1]
             return int(number), url
+
+
+        def assign_me(repo, number):
+            # Runway only lists issues assigned to you, so a flight nobody owns
+            # is invisible in the left pane.
+            gh(["issue", "edit", str(number), "--repo", repo, "--add-assignee", "@me"])
 
 
         def adopt(repo, parent_number, child_number):
@@ -197,6 +206,7 @@ extension AgentControl {
                 sys.exit("runway: which flight? Pass --flight <number>.")
             number, url = create_issue(repo, args.title, args.body)
             adopt(repo, flight, number)
+            assign_me(repo, flight)
             print("Crew #%d on flight #%s: %s" % (number, flight, url))
             nudge()
 
@@ -207,6 +217,7 @@ extension AgentControl {
             if not flight:
                 sys.exit("runway: which flight? Pass --flight <number>.")
             adopt(repo, flight, args.issue)
+            assign_me(repo, flight)
             print("Crew #%s joins flight #%s" % (args.issue, flight))
             nudge()
 
@@ -377,7 +388,8 @@ extension AgentControl {
             listing.set_defaults(run=cmd_list)
 
             show = verbs.add_parser("show", help="one flight and its crews")
-            show.add_argument("number")
+            show.add_argument("number", nargs="?", default=FLIGHT,
+                              help="defaults to the flight this seat flies")
             show.add_argument("--json", action="store_true")
             show.set_defaults(run=cmd_show)
 
