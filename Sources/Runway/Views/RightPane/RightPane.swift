@@ -11,34 +11,28 @@ import SwiftUI
 /// Placeholder content: no crew model exists yet, so this is the shape.
 struct RightPane: View {
     @State private var crews = CrewPreview.sample
-    @State private var reading: Int?
+    @State private var reading: Int? = CrewPreview.sample.first(where: \.isActive)?.issueNumber
 
     var body: some View {
-        GeometryReader { geo in
-            let active = crews.filter(\.isActive)
-            let standing = crews.filter { !$0.isActive }
-            let spans = CrewSpanPolicy.spans(
-                active: active.map(\.issueNumber),
-                reading: reading,
-                paneHeight: geo.size.height,
-                standingCount: standing.count
-            )
-
-            // An accordion, never a scroller: every crew is on screen at once,
-            // the ones that are up sharing whatever the cards leave behind.
-            VStack(spacing: CrewSpanPolicy.gap) {
-                ForEach($crews) { $crew in
-                    if crew.isActive {
-                        activeBox($crew, height: spans[crew.issueNumber] ?? CrewSpanPolicy.minimumBox)
-                    } else {
-                        standingCard($crew)
-                    }
+        // The cards take their own height, measured rather than guessed, and
+        // the crews that are up divide every point that is left.
+        CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
+            ForEach($crews) { $crew in
+                if crew.isActive {
+                    activeBox($crew)
+                        .layoutValue(
+                            key: CrewShareKey.self,
+                            value: reading == crew.issueNumber ? 2 : 1
+                        )
+                } else {
+                    standingCard($crew)
+                        .layoutValue(key: CrewShareKey.self, value: 0)
                 }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
         .background(Color.black)
     }
 
@@ -78,7 +72,7 @@ struct RightPane: View {
 
     // MARK: Flying
 
-    private func activeBox(_ crew: Binding<CrewPreview>, height: CGFloat) -> some View {
+    private func activeBox(_ crew: Binding<CrewPreview>) -> some View {
         let value = crew.wrappedValue
         let isReading = reading == value.issueNumber
         return VStack(spacing: 0) {
@@ -122,7 +116,7 @@ struct RightPane: View {
                 }
             }
         }
-        .frame(height: height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 9))
         .overlay(
             RoundedRectangle(cornerRadius: 9)
@@ -174,32 +168,66 @@ struct RightPane: View {
     }
 }
 
-/// How the active crews share the pane. Stood-down cards take their own line
-/// first; what is left goes to the crews that are up, the one being read
-/// taking two shares to everyone else's one.
-enum CrewSpanPolicy {
-    static let standingCardHeight: CGFloat = 69
+/// How the crews share the pane. A card keeps the height it asks for; every
+/// point left over goes to the crews that are up, the one being read taking
+/// two shares to the others' one. Nothing is guessed, so nothing is left
+/// unclaimed at the bottom.
+struct CrewAccordion: Layout {
     static let gap: CGFloat = 10
     static let minimumBox: CGFloat = 150
 
-    static func spans(
-        active: [Int],
-        reading: Int?,
-        paneHeight: CGFloat,
-        standingCount: Int
-    ) -> [Int: CGFloat] {
-        guard !active.isEmpty else { return [:] }
-        let rows = active.count + standingCount
-        let chrome = 28 + gap * CGFloat(max(0, rows - 1))
-            + standingCardHeight * CGFloat(standingCount)
-        let free = max(paneHeight - chrome, CGFloat(active.count) * minimumBox)
-        let readingIsUp = reading.map(active.contains) ?? false
-        let shares = CGFloat(active.count) + (readingIsUp ? 1 : 0)
-        return active.reduce(into: [:]) { spans, issue in
-            let weight: CGFloat = (readingIsUp && issue == reading) ? 2 : 1
-            spans[issue] = max(minimumBox, free * weight / shares)
+    let spacing: CGFloat
+    let minimumBox: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard !subviews.isEmpty else { return }
+        let shares = subviews.map { $0[CrewShareKey.self] }
+        let cardHeights = subviews.indices.map { index -> CGFloat in
+            guard shares[index] == 0 else { return 0 }
+            return subviews[index]
+                .sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+                .height
+        }
+        let gaps = spacing * CGFloat(max(0, subviews.count - 1))
+        let boxCount = shares.filter { $0 > 0 }.count
+        let free = max(
+            bounds.height - gaps - cardHeights.reduce(0, +),
+            minimumBox * CGFloat(boxCount)
+        )
+        let totalShares = CGFloat(shares.reduce(0, +))
+
+        var y = bounds.minY
+        for (index, subview) in subviews.enumerated() {
+            let height = shares[index] == 0
+                ? cardHeights[index]
+                : (totalShares > 0 ? free * CGFloat(shares[index]) / totalShares : 0)
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: height)
+            )
+            y += height + spacing
         }
     }
+}
+
+/// Zero for a card, which keeps its own height; otherwise the share of what
+/// is left that this crew's box takes.
+struct CrewShareKey: LayoutValueKey {
+    static let defaultValue = 0
 }
 
 // MARK: Placeholder

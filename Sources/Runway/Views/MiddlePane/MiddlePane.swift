@@ -61,8 +61,8 @@ struct MiddlePane: View {
         .padding(.bottom, 12)
     }
 
-    /// The flight as a route: the legs behind it flown, the aircraft where it
-    /// is now, the legs ahead still dashed.
+    /// The flight as a route: the legs behind it flown in green, the aircraft
+    /// where it is now, the legs ahead in grey.
     private var legsBar: some View {
         let flown = flight.legs.filter(\.done).count
         return HStack(spacing: 4) {
@@ -99,17 +99,8 @@ struct MiddlePane: View {
 
     private func legSegment(done: Bool) -> some View {
         Capsule()
-            .fill(done ? Runway.green : Color.clear)
+            .fill(done ? Runway.green : Color.white.opacity(0.14))
             .frame(height: 3)
-            .overlay {
-                if !done {
-                    Capsule()
-                        .strokeBorder(
-                            style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5])
-                        )
-                        .foregroundStyle(Color.white.opacity(0.22))
-                }
-            }
     }
 
     private func statusChip(_ status: String) -> some View {
