@@ -33,7 +33,8 @@ struct AttentionAlert: Identifiable, Equatable {
     let id: UUID            // the box or Quick tab, so a second alert replaces the first
     let target: AgentAttentionTarget
     let location: String
-    let title: String
+    /// A quick agent's name can arrive after its banner, so this is settable.
+    var title: String
 }
 
 /// A custom command run from its shortcut, from start to finish.
@@ -269,7 +270,7 @@ struct QuickTerminalTabRequest: Equatable {
         if let activeFocusBoard {
             let reel = AssignedIssues.savedFocusReel(for: activeFocusBoard)
             activeFocusOrder = reel.issues
-            activeFocusIssueNumbers = Set(reel.visible)
+            activeFocusIssueNumbers = Set(reel.issues)
         }
         if boxes.contains(where: { $0.focusRepository != nil }) {
             focusBoardControlsBoxes = true
@@ -560,6 +561,16 @@ struct QuickTerminalTabRequest: Equatable {
         )
     }
 
+    /// A banner raised before its agent's name was known takes the name as
+    /// soon as the scan finds one.
+    private func nameQuickBanner(_ id: UUID, root: String) {
+        Task { @MainActor in
+            guard let name = await QuickAgentNames.shared.reload(root: root),
+                  let index = attentionAlerts.firstIndex(where: { $0.id == id }) else { return }
+            attentionAlerts[index].title = name
+        }
+    }
+
     func showCommandBanner(id: UUID, title: String) {
         commandBanners.removeAll { $0.id == id }
         commandBanners.append(CommandBanner(id: id, title: title))
@@ -704,6 +715,8 @@ struct QuickTerminalTabRequest: Equatable {
         // running shell and state, while quickState drives the selected tab UI.
         let quickRoots = QuickTerminalSession.tabRoots()
         let selectedQuickRoot = QuickTerminalSession.selectedRoot()
+        // Keep the /rename names warm: a banner names the agent that wants you.
+        QuickAgentNames.shared.refresh(roots: quickRoots)
         for (index, root) in quickRoots.enumerated() {
             let quickID = QuickTerminalSession.boxID(root: root)
             guard let data = try? Data(contentsOf: AgentControl.file(for: quickID)),
@@ -720,18 +733,20 @@ struct QuickTerminalTabRequest: Equatable {
             let next = AgentState(control: state)
             let previous = quickTabStates[root] ?? .idle
             if watchReady, next == .needsAction, previous != .needsAction {
+                let name = QuickAgentNames.shared.name(for: root)
                 if root != selectedQuickRoot || !quickVisible {
                     appendAttention(
                         AttentionAlert(
                             id: quickID,
                             target: .quick(root: root),
                             location: "Quick tab \(index + 1)",
-                            title: "Quick Agent"
+                            title: name ?? "Quick Agent"
                         )
                     )
+                    if name == nil { nameQuickBanner(quickID, root: root) }
                 }
                 RunwayNotificationManager.shared.show(
-                    "Quick tab \(index + 1) needs your attention",
+                    "\(name ?? "Quick tab \(index + 1)") needs your attention",
                     sound: true,
                     target: .quick(root: root)
                 )
