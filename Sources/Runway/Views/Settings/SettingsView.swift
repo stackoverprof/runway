@@ -119,6 +119,8 @@ struct SettingsView: View {
                 .tabItem { Label("Feed", systemImage: "dot.radiowaves.up.forward") }
             TerminalSettings()
                 .tabItem { Label("Terminal", systemImage: "terminal") }
+            HouseRulesSettings()
+                .tabItem { Label("House rules", systemImage: "list.bullet.clipboard") }
             AppearanceSettings()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
             ShortcutSettings()

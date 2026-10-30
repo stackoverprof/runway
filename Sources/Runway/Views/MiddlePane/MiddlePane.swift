@@ -17,8 +17,6 @@ struct MiddlePane: View {
     @State private var dragStartShare: CGFloat?
     @State private var draft = ""
 
-    private let sample = FlightPreview.sample
-
     /// The issue being flown, if one is picked and still ours.
     private var flight: AssignedIssue? { issues.issue(ws.flightNumber) }
 
@@ -554,37 +552,80 @@ struct MiddlePane: View {
             .background(Capsule().fill(state.color.opacity(0.12)))
     }
 
-    /// The evidence this flight has produced.
+    /// The evidence this flight has produced: whatever a walkthrough left in
+    /// this issue's folder.
     private var slidesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("WALKTHROUGH")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
-                ForEach(sample.slides, id: \.self) { slide in
-                    VStack(alignment: .leading, spacing: 5) {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(white: 0.08))
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay(
-                                Image(systemName: "photo")
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(Color.white.opacity(0.16))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                            )
-                        Text(slide)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.4))
-                            .lineLimit(1)
+        let slides = WalkthroughSlides.forIssue(flight?.number)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionLabel("WALKTHROUGH")
+                Spacer(minLength: 8)
+                if !slides.isEmpty {
+                    Button {
+                        NSWorkspace.shared.open(slides[0].deletingLastPathComponent())
+                    } label: {
+                        Text("Open folder")
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Runway.teal.opacity(0.85))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Runway.teal.opacity(0.1)))
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+            }
+
+            if slides.isEmpty {
+                Text("No walkthrough slides for this flight yet.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.white.opacity(0.3))
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
+                ForEach(slides, id: \.self) { slide in
+                    Button {
+                        NSWorkspace.shared.open(slide)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            slideThumbnail(slide)
+                            Text(slide.deletingPathExtension().lastPathComponent)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Color.white.opacity(0.4))
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
                 }
             }
         }
     }
 
-    /// The conversation this flight lives in, newest last, each line linking
-    /// back out to where it was said.
+    private func slideThumbnail(_ slide: URL) -> some View {
+        Group {
+            if let image = NSImage(contentsOf: slide) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color(white: 0.08)
+                    .overlay(
+                        Image(systemName: "photo")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.white.opacity(0.16))
+                    )
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+
     private var threadSection: some View {
         let entries = IssueBody.conversation("Situation Development", in: flight?.body ?? "")
         let home = IssueBody.homeThread("Situation Development", in: flight?.body ?? "")
@@ -789,84 +830,4 @@ enum CheckState {
         case .failing: Color(red: 0.94, green: 0.36, blue: 0.36)
         }
     }
-}
-
-// MARK: Placeholder
-
-/// Stand-in content, so the pane can be judged before flights are real.
-struct FlightPreview {
-    struct Leg: Identifiable {
-        let number: Int
-        let title: String
-        let done: Bool
-        /// What this leg is held up by, if anything.
-        var blocker: String?
-        /// True when the one holding it up is you.
-        var needsYou = false
-        var id: Int { number }
-    }
-
-    struct Pull: Identifiable {
-        let number: Int
-        let title: String
-        let branch: String
-        let checks: CheckState
-        var id: Int { number }
-    }
-
-    struct ThreadEntry: Identifiable {
-        let who: String
-        let when: String
-        let said: String
-        var id: String { who + when }
-    }
-
-    let number: Int
-    let title: String
-    let status: String
-    let legs: [Leg]
-    let acceptance: [String]
-    let pulls: [Pull]
-    let slides: [String]
-    let thread: [ThreadEntry]
-
-    /// A pilot's unsent message, in Erbin's voice.
-    static let sampleDraft = """
-    the POS booking form is in and holding a slot works. refunds wait on your     answer about the Teya path, want me to mirror the existing refund flow or     wait for the new one?
-    """
-
-    static let sample = FlightPreview(
-        number: 16200,
-        title: "Bookings: take a booking on the POS",
-        status: "holding",
-        legs: [
-            Leg(number: 16257, title: "Booking form on the POS", done: true,
-                blocker: "close it? acceptance met", needsYou: true),
-            Leg(number: 16261, title: "Hold a slot while paying", done: true,
-                blocker: "merge #16290? lunch lock on", needsYou: true),
-            Leg(number: 16264, title: "Refund a cancelled booking", done: false,
-                blocker: "waits on a reply from Arnar"),
-            Leg(number: 16270, title: "Receipt shows the slot", done: false),
-        ],
-        acceptance: [
-            "A booking taken on the POS appears in the dashboard within a minute.",
-            "A cancelled booking refunds in full, once.",
-            "The printed receipt names the slot and the staff member.",
-        ],
-        pulls: [
-            Pull(number: 16290, title: "feat(upsell-pos): booking form",
-                 branch: "feat/pos-booking-form-16257", checks: .passing),
-            Pull(number: 16294, title: "feat(bookings-api): hold a slot",
-                 branch: "feat/hold-slot-16261", checks: .running),
-        ],
-        slides: ["booking taken", "slot held", "refund"],
-        thread: [
-            ThreadEntry(who: "Erbin", when: "Tue 09:12",
-                        said: "Brauð wants bookings on the POS before 2 Jan."),
-            ThreadEntry(who: "Arnar", when: "Tue 14:40",
-                        said: "Refunds go through the same Teya path, I'll confirm the flow."),
-            ThreadEntry(who: "pilot", when: "Wed 08:05",
-                        said: "Two legs landed; the refund leg waits on Arnar's answer."),
-        ]
-    )
 }
