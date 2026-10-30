@@ -11,6 +11,7 @@ struct MiddlePane: View {
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
+    @State private var draft = FlightPreview.sampleDraft
 
     private let flight = FlightPreview.sample
 
@@ -60,21 +61,55 @@ struct MiddlePane: View {
         .padding(.bottom, 12)
     }
 
-    /// One mark per leg, filled as its crew lands it.
+    /// The flight as a route: the legs behind it flown, the aircraft where it
+    /// is now, the legs ahead still dashed.
     private var legsBar: some View {
-        HStack(spacing: 7) {
-            HStack(spacing: 3) {
-                ForEach(0..<flight.legs.count, id: \.self) { index in
-                    Capsule()
-                        .fill(flight.legs[index].done ? Runway.green : Color.white.opacity(0.12))
-                        .frame(height: 3)
+        let flown = flight.legs.filter(\.done).count
+        return HStack(spacing: 4) {
+            Circle()
+                .fill(Runway.green.opacity(0.9))
+                .frame(width: 5, height: 5)
+
+            ForEach(Array(flight.legs.enumerated()), id: \.element.id) { index, leg in
+                if index == flown, flown < flight.legs.count {
+                    Image(systemName: "airplane")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Runway.teal)
                 }
+                legSegment(done: leg.done)
             }
-            Text("\(flight.legs.filter(\.done).count)/\(flight.legs.count) legs")
+
+            if flown == flight.legs.count {
+                Image(systemName: "airplane.arrival")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Runway.green)
+            }
+
+            Circle()
+                .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                .frame(width: 5, height: 5)
+
+            Text("\(flown)/\(flight.legs.count) legs")
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.32))
                 .fixedSize()
+                .padding(.leading, 2)
         }
+    }
+
+    private func legSegment(done: Bool) -> some View {
+        Capsule()
+            .fill(done ? Runway.green : Color.clear)
+            .frame(height: 3)
+            .overlay {
+                if !done {
+                    Capsule()
+                        .strokeBorder(
+                            style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5])
+                        )
+                        .foregroundStyle(Color.white.opacity(0.22))
+                }
+            }
     }
 
     private func statusChip(_ status: String) -> some View {
@@ -364,7 +399,29 @@ struct MiddlePane: View {
     /// back out to where it was said.
     private var threadSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("SITUATION")
+            HStack {
+                sectionLabel("SITUATION")
+                Spacer(minLength: 8)
+                Button {
+                    // The flight's home thread, wherever the talking happens.
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Open thread")
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(Runway.teal.opacity(0.85))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Runway.teal.opacity(0.1)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Open this flight's thread in Slack")
+            }
+
             ForEach(flight.thread) { entry in
                 HStack(alignment: .top, spacing: 9) {
                     VStack(spacing: 0) {
@@ -395,7 +452,87 @@ struct MiddlePane: View {
                     .padding(.bottom, 8)
                 }
             }
+
+            draftComposer
         }
+    }
+
+    /// What a pilot drafted, in your voice, waiting for you to send or bin it.
+    private var draftComposer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                sectionLabel("DRAFT")
+                Circle()
+                    .fill(Runway.amber)
+                    .frame(width: 4, height: 4)
+                Text("unsent")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Runway.amber.opacity(0.8))
+            }
+
+            TextEditor(text: $draft)
+                .font(.system(size: 11.5))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(minHeight: 72)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                )
+                .overlay(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text("Nothing drafted for this flight yet.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Color.white.opacity(0.25))
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 16)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack(spacing: 8) {
+                Button {
+                    draft = ""
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Color.white.opacity(0.45))
+                        .frame(width: 26, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Bin this draft")
+                .disabled(draft.isEmpty)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    // Sending is yours; the pilot only ever drafts.
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 9.5))
+                        Text("Send")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(draft.isEmpty ? Color.white.opacity(0.3) : Color.black.opacity(0.85))
+                    .padding(.horizontal, 12)
+                    .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(draft.isEmpty ? Color.white.opacity(0.05) : Runway.teal)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .disabled(draft.isEmpty)
+            }
+        }
+        .padding(.top, 4)
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -491,6 +628,11 @@ struct FlightPreview {
     let pulls: [Pull]
     let slides: [String]
     let thread: [ThreadEntry]
+
+    /// A pilot's unsent message, in Erbin's voice.
+    static let sampleDraft = """
+    the POS booking form is in and holding a slot works. refunds wait on your     answer about the Teya path, want me to mirror the existing refund flow or     wait for the new one?
+    """
 
     static let sample = FlightPreview(
         number: 16200,

@@ -35,7 +35,7 @@ struct ContentView: View {
                         context.workspace.middleWidth = start + translation
                     }
 
-                    Color.black
+                    RightPane()
                         .frame(maxWidth: .infinity)
                 }
                 .frame(maxHeight: .infinity)
