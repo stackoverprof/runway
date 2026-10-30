@@ -1,0 +1,1296 @@
+import SwiftUI
+import Foundation
+
+/// The agent control channel + portable integration helpers for coding agents.
+///
+/// - Any agent/script in a box can set its name/description/state by writing JSON
+///   to `$RUNWAY_CONTROL`:  echo '{"state":"running"}' > "$RUNWAY_CONTROL"
+/// - Every agent can discover the integration through `runway-help` and
+///   `$RUNWAY_SKILL_PATH`; `runway-agent` adds coarse status to any CLI.
+/// - Claude receives richer automatic hooks from a Runway-scoped PATH wrapper.
+///   No agent-specific configuration or user shell files are modified.
+enum AgentControl {
+    static let supportDir: URL = {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = base.appendingPathComponent("Runway", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    static var feedDir: URL {
+        let dir = supportDir.appendingPathComponent("feed", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var feedInbox: URL { feedDir.appendingPathComponent("inbox.jsonl") }
+    static var feedPostScript: URL { supportDir.appendingPathComponent("feed-post.py") }
+    static var controlDir: URL { supportDir.appendingPathComponent("control", isDirectory: true) }
+    static var issueCommandDir: URL {
+        let dir = supportDir.appendingPathComponent("issue-commands", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var issueResponseDir: URL {
+        let dir = supportDir.appendingPathComponent("issue-responses", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var zdotdir: URL { supportDir.appendingPathComponent("zsh", isDirectory: true) }
+    static var hooksFile: URL { supportDir.appendingPathComponent("claude-hooks.json") }
+    /// One byte appended by anything that changes an agent's state. Runway
+    /// watches this single file, so a state write is noticed at once instead of
+    /// on the next poll: a control file rewritten in place changes no directory
+    /// entry, so the directory watcher never sees it.
+    static var statePulse: URL { supportDir.appendingPathComponent("state-pulse") }
+
+    /// Shell fragment every state writer ends with.
+    static let pulseCommand = #"[ -n "$RUNWAY_STATE_PULSE" ] && printf . >> "$RUNWAY_STATE_PULSE""#
+
+    static func ensureStatePulse() {
+        try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: statePulse.path) {
+            FileManager.default.createFile(atPath: statePulse.path, contents: nil)
+        }
+    }
+
+    /// Keep the pulse file from growing forever. One byte per state change, so
+    /// this trims after tens of thousands of them.
+    static func trimStatePulse(largerThan limit: Int = 64 * 1024) {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: statePulse.path)
+        let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        guard size > limit else { return }
+        try? Data().write(to: statePulse)
+    }
+    static var binDir: URL { supportDir.appendingPathComponent("bin", isDirectory: true) }
+    static var integrationDir: URL { supportDir.appendingPathComponent("integration", isDirectory: true) }
+    static var integrationGuide: URL { integrationDir.appendingPathComponent("SKILL.md") }
+    static var providerSessionsDir: URL {
+        let dir = supportDir.appendingPathComponent("provider-sessions", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Images Runway had to materialize from a drag that carried no file on disk.
+    /// Runway's own folder, so dropping a screenshot on a terminal never leaves a
+    /// second copy in ~/Downloads.
+    static var dropsDir: URL {
+        let dir = supportDir.appendingPathComponent("drops", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Dropped images are scratch: an agent reads one right after the drop and
+    /// never again. The retention window is a setting, and can be turned off
+    /// entirely, in which case nothing is pruned.
+    static func pruneDrops(olderThan age: TimeInterval? = SettingsKey.dropRetention()) {
+        guard let age else { return }
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dropsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return }
+        let cutoff = Date().addingTimeInterval(-age)
+        for file in files {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            guard let modified, modified < cutoff else { continue }
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    static func file(for id: UUID) -> URL {
+        controlDir.appendingPathComponent("\(id.uuidString).json")
+    }
+
+    /// Where the box's shell records its working directory (restored on relaunch).
+    static func cwdFile(for id: UUID) -> URL {
+        controlDir.appendingPathComponent("\(id.uuidString).cwd")
+    }
+
+    /// Where a Runway-scoped agent wrapper records the conversation id it bound,
+    /// so the box can hand back a working resume command.
+    static func sessionFile(for id: UUID) -> URL {
+        controlDir.appendingPathComponent("\(id.uuidString).session")
+    }
+
+    /// A provider binding owned by the issue, not its temporary terminal card.
+    /// It intentionally survives card cleanup and app restarts.
+    static func issueProviderSessionFile(repository: String, issueNumber: Int) -> URL {
+        let id = DeterministicSessionID.uuid(for: [
+            "runway-issue-provider-binding-v1",
+            repository.lowercased(),
+            String(issueNumber),
+        ].joined(separator: ":"))
+        return providerSessionsDir.appendingPathComponent("\(id.uuidString.lowercased()).json")
+    }
+
+    static func quickProviderSessionFile(root: String = QuickTerminalSession.root()) -> URL {
+        let id = DeterministicSessionID.uuid(for: "runway-quick-provider-binding-v1:\(root)")
+        return providerSessionsDir.appendingPathComponent("\(id.uuidString.lowercased()).json")
+    }
+
+    static func durableSession(
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
+    ) -> AgentSessionLocator.Resolved? {
+        let file: URL?
+        if quickTerminalSession {
+            file = quickProviderSessionFile(
+                root: quickTerminalRoot ?? QuickTerminalSession.root()
+            )
+        } else if let focusRepository, let focusIssueNumber {
+            file = issueProviderSessionFile(
+                repository: focusRepository,
+                issueNumber: focusIssueNumber
+            )
+        } else {
+            file = nil
+        }
+        guard let file,
+              let contents = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        return AgentSessionLocator.recorded(in: contents)
+    }
+
+    /// The folder an issue's conversation last ran in, so a card reopened for
+    /// it starts there. `nil` when nothing was recorded or the folder is gone.
+    static func durableWorkingDirectory(
+        focusRepository: String,
+        focusIssueNumber: Int
+    ) -> String? {
+        guard let directory = durableSession(
+            focusRepository: focusRepository,
+            focusIssueNumber: focusIssueNumber
+        )?.workingDirectory else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return directory
+    }
+
+    static func preferredAgentCommand(
+        fallback: String,
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
+    ) -> String {
+        guard let provider = durableSession(
+            focusRepository: focusRepository,
+            focusIssueNumber: focusIssueNumber,
+            quickTerminalSession: quickTerminalSession,
+            quickTerminalRoot: quickTerminalRoot
+        )?.provider.rawValue else { return fallback }
+        if fallback == provider || fallback.hasPrefix("\(provider) ") {
+            return fallback
+        }
+        return provider
+    }
+
+    /// Environment for a box's terminal: control paths, the portable guide, and
+    /// Runway-scoped command helpers.
+    static func environment(
+        for id: UUID,
+        autorun: String? = nil,
+        focusRepository: String? = nil,
+        focusIssueNumber: Int? = nil,
+        focusIssueTitle: String? = nil,
+        focusCheckoutPath: String? = nil,
+        issueAgentSessionsEnabled: Bool = false,
+        quickTerminalSession: Bool = false,
+        quickTerminalRoot: String? = nil
+    ) -> [String: String] {
+        try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
+        let binPath = binDir.path
+        let systemPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        var env = [
+            "RUNWAY_BOX": id.uuidString,
+            "RUNWAY_CONTROL": file(for: id).path,
+            "RUNWAY_CWD_FILE": cwdFile(for: id).path,
+            "RUNWAY_ISSUE_COMMAND_DIR": issueCommandDir.path,
+            "RUNWAY_SESSION_FILE": sessionFile(for: id).path,
+            "RUNWAY_CLAUDE_HOOKS": hooksFile.path,
+            "RUNWAY_STATE_PULSE": statePulse.path,
+            "ZDOTDIR": zdotdir.path,
+            "RUNWAY_SKILL_PATH": integrationGuide.path,
+            "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
+            "PATH": "\(binPath):\(systemPath)",
+        ]
+        let durableFile: URL?
+        if quickTerminalSession {
+            durableFile = quickProviderSessionFile(
+                root: quickTerminalRoot ?? QuickTerminalSession.root()
+            )
+        } else if issueAgentSessionsEnabled,
+                  let focusRepository,
+                  let focusIssueNumber {
+            durableFile = issueProviderSessionFile(
+                repository: focusRepository,
+                issueNumber: focusIssueNumber
+            )
+        } else {
+            durableFile = nil
+        }
+        if let durableFile {
+            env["RUNWAY_DURABLE_SESSION_FILE"] = durableFile.path
+        }
+        if let focusRepository, !focusRepository.isEmpty {
+            env["RUNWAY_REPOSITORY"] = focusRepository
+        }
+        env.merge(
+            issueIdentity(
+                repository: quickTerminalSession ? nil : focusRepository,
+                issueNumber: focusIssueNumber,
+                title: focusIssueTitle,
+                checkoutPath: focusCheckoutPath
+            )
+        ) { _, identity in identity }
+        let recorded = durableFile.flatMap { file -> AgentSessionLocator.Resolved? in
+            guard let contents = try? String(contentsOf: file, encoding: .utf8) else {
+                return nil
+            }
+            return AgentSessionLocator.recorded(in: contents)
+        }
+        if let autorun, !autorun.isEmpty {
+            env["RUNWAY_AUTORUN"] = scopedAutorun(autorun)
+        }
+        for provider in IssueAgentProvider.allCases {
+            // The quick terminal's conversation is not the opt-in Focus
+            // binding: keeping one session across relaunches is the panel's
+            // whole point, so it is always bound.
+            let sessionID: String?
+            if provider == .codex {
+                sessionID = recorded?.provider == .codex ? recorded?.sessionID : nil
+            } else {
+                let deterministicID: UUID? = quickTerminalSession
+                    ? QuickTerminalSession.id(
+                        provider: provider,
+                        root: quickTerminalRoot ?? QuickTerminalSession.root()
+                    )
+                    : (issueAgentSessionsEnabled
+                        ? IssueAgentSession.id(
+                            provider: provider,
+                            repository: focusRepository,
+                            issueNumber: focusIssueNumber
+                        )
+                        : nil)
+                sessionID = deterministicID?.uuidString.lowercased()
+            }
+            guard let sessionID else { continue }
+            let prefix = "RUNWAY_\(provider.rawValue.uppercased())_SESSION"
+            env["\(prefix)_ID"] = sessionID
+        }
+        return env
+    }
+
+    /// Who a Focus terminal works for. The Claude wrapper names the session
+    /// after `RUNWAY_AGENT_NAME`, and a SessionStart hook tells the agent its
+    /// issue, so "work on your issue" needs no pasted title. Empty for the
+    /// quick terminal and for boxes no issue owns.
+    static func issueIdentity(
+        repository: String?,
+        issueNumber: Int?,
+        title: String?,
+        checkoutPath: String?
+    ) -> [String: String] {
+        guard let repository, !repository.isEmpty, let issueNumber else { return [:] }
+        var identity = [
+            "RUNWAY_ISSUE": "\(repository)#\(issueNumber)",
+            "RUNWAY_ISSUE_NUMBER": String(issueNumber),
+            "RUNWAY_ISSUE_URL": "https://github.com/\(repository)/issues/\(issueNumber)",
+        ]
+        if let title, !title.isEmpty {
+            identity["RUNWAY_ISSUE_TITLE"] = title
+        }
+        if let checkoutPath, !checkoutPath.isEmpty {
+            let clone = CloneName.name(ofCheckout: checkoutPath)
+            identity["RUNWAY_CLONE"] = clone
+            identity["RUNWAY_AGENT_NAME"] = CloneName.agentName(clone: clone, issueNumber: issueNumber)
+        }
+        return identity
+    }
+
+    /// Resolve supported configured agents directly through Runway's adapter.
+    /// This avoids aliases and zsh's command hash bypassing the scoped PATH entry.
+    static func scopedAutorun(_ command: String) -> String {
+        for provider in IssueAgentProvider.allCases {
+            let name = provider.rawValue
+            guard command == name || command.hasPrefix("\(name) ") else { continue }
+            let executable = binDir.appendingPathComponent(name).path
+            let quoted = "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))'"
+            return quoted + command.dropFirst(name.count)
+        }
+        return command
+    }
+
+    static func cleanup(_ id: UUID) {
+        try? FileManager.default.removeItem(at: file(for: id))
+        try? FileManager.default.removeItem(at: cwdFile(for: id))
+        try? FileManager.default.removeItem(at: sessionFile(for: id))
+    }
+
+    /// Clear stale agent states at launch: the shells start fresh (nothing running
+    /// yet), so any leftover state file from a previous session is bogus.
+    static func resetStates() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: controlDir, includingPropertiesForKeys: nil) else { return }
+        for f in files where f.pathExtension == "json" { try? FileManager.default.removeItem(at: f) }
+    }
+
+    // MARK: One-time install (idempotent; call at launch)
+
+    static func install() {
+        try? FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: integrationDir, withIntermediateDirectories: true)
+        ensureStatePulse()
+        writeHooks()
+        writeZshWrapper()
+        writeIntegrationGuide()
+        writeBinScripts()
+        removeNotesHelpers()
+        cleanupLegacyGlobalInstall()
+    }
+
+    private static func removeNotesHelpers() {
+        for name in ["runway-post", "runway-delete", "runway-pin", "runway-unpin"] {
+            try? FileManager.default.removeItem(at: binDir.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: feedPostScript)
+    }
+
+    private static func writeBinScripts() {
+        let postPath = binDir.appendingPathComponent("runway-post")
+        let delPath = binDir.appendingPathComponent("runway-delete")
+        let pinPath = binDir.appendingPathComponent("runway-pin")
+        let unpinPath = binDir.appendingPathComponent("runway-unpin")
+        let helpPath = binDir.appendingPathComponent("runway-help")
+        let focusLogPath = binDir.appendingPathComponent("runway-focus-log")
+        let issuePath = binDir.appendingPathComponent("runway-issue")
+        let agentPath = binDir.appendingPathComponent("runway-agent")
+        let claudePath = binDir.appendingPathComponent("claude")
+        let codexPath = binDir.appendingPathComponent("codex")
+        let geminiPath = binDir.appendingPathComponent("gemini")
+
+        // 1. runway-post
+        let postScript = """
+        #!/usr/bin/env python3
+        import sys, os, json, datetime
+        
+        def main():
+            args = sys.argv[1:]
+            if "-h" in args or "--help" in args:
+                print("Runway API: Post a note or post to the activity feed.", file=sys.stderr)
+                print("Usage:", file=sys.stderr)
+                print("  runway-post \\"body text\\"                       (author: agent)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"body text\\"         (custom author)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"body text\\" \\"title\\" (custom title)", file=sys.stderr)
+                print("  runway-post \\"author_name\\" \\"title\\" - <<EOF     (multiline stdin)", file=sys.stderr)
+                sys.exit(0)
+            
+            feed = os.environ.get("RUNWAY_FEED")
+            if not feed:
+                print("runway-post: not in a Runway terminal (RUNWAY_FEED unset)", file=sys.stderr)
+                sys.exit(1)
+
+            def unesc(s):
+                return s.replace('\\\\n', '\\n').replace('\\\\t', '\\t')
+
+            stdin_body = ""
+            if args and args[-1] == "-":
+                stdin_body = sys.stdin.read()
+                args = args[:-1]
+
+            if stdin_body:
+                if len(args) == 0:
+                    author, title = "agent", ""
+                elif len(args) == 1:
+                    author, title = args[0], ""
+                else:
+                    author, title = args[0], args[1]
+                body = stdin_body
+            elif len(args) == 0:
+                return
+            elif len(args) == 1:
+                author, title, body = "agent", "", args[0]
+            elif len(args) == 2:
+                author, title, body = args[0], "", args[1]
+            else:
+                author, body, title = args[0], args[1], args[2]
+
+            title = unesc(title)
+            body = unesc(body)
+            if not body.strip():
+                return
+            
+            payload = {
+                "author": author,
+                "title": title,
+                "body": body,
+                "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            with open(feed, "a") as f:
+                f.write(json.dumps(payload) + "\\n")
+
+        if __name__ == "__main__":
+            main()
+        """
+        try? postScript.data(using: .utf8)?.write(to: postPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: postPath.path)
+
+        // 2. runway-delete
+        let delScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Delete a feed post or user note by ID.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-delete <post_id_or_note_id>   (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-delete: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"delete\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? delScript.data(using: .utf8)?.write(to: delPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: delPath.path)
+
+        // 3. runway-pin
+        let pinScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Pin a feed post or user note to the top of the Notes tab.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-pin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"pin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? pinScript.data(using: .utf8)?.write(to: pinPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pinPath.path)
+
+        // 4. runway-unpin
+        let unpinScript = """
+        #!/bin/zsh
+        if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ -z "$1" ]; then
+          echo 'Runway API: Unpin a feed post or user note from the top of the Notes tab.' >&2
+          echo 'Usage:' >&2
+          echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
+          exit 0
+        fi
+        if [ -z "$RUNWAY_FEED" ]; then
+          echo 'runway-unpin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+          exit 1
+        fi
+        echo "{\\"action\\":\\"unpin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        """
+        try? unpinScript.data(using: .utf8)?.write(to: unpinPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unpinPath.path)
+
+        // 5. runway-help: one discovery point that works for every coding agent.
+        let helpScript = """
+        #!/bin/zsh
+        exec /bin/cat "${RUNWAY_SKILL_PATH:-\(integrationGuide.path)}"
+        """
+        try? helpScript.data(using: .utf8)?.write(to: helpPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helpPath.path)
+
+        // 5. runway-issue: an agent-facing command channel for the Open, Focus,
+        // and Closed boards. The app consumes the request and writes a response
+        // file, so this works without accessibility automation or UI focus.
+        let issueScript = """
+        #!/usr/bin/env python3
+        import argparse, json, os, pathlib, sys, time, uuid
+
+        command_dir = pathlib.Path('\(issueCommandDir.path)')
+        response_dir = pathlib.Path('\(issueResponseDir.path)')
+
+        def main():
+            parser = argparse.ArgumentParser(prog='runway-issue')
+            parser.add_argument('--repo', default=os.environ.get('RUNWAY_REPOSITORY', ''))
+            parser.add_argument('--clone', default=os.environ.get('RUNWAY_CLONE', ''),
+                                help='the clone whose board to use, by folder name (monorepo, monosentry)')
+            sub = parser.add_subparsers(dest='action', required=True)
+
+            listing = sub.add_parser('list', help='list issues by board lane')
+            listing.add_argument('--lane', choices=['open', 'focus', 'closed'])
+            listing.add_argument('--repo', default=argparse.SUPPRESS)
+            listing.add_argument('--clone', default=argparse.SUPPRESS)
+
+            for lane in ('open', 'focus', 'closed'):
+                move = sub.add_parser(lane, help=f'move an issue to {lane}')
+                move.add_argument('issue', type=int)
+                move.add_argument('--before', type=int)
+                move.add_argument('--repo', default=argparse.SUPPRESS)
+                move.add_argument('--clone', default=argparse.SUPPRESS)
+
+            move = sub.add_parser('move', help='move an issue to a board lane')
+            move.add_argument('issue', type=int)
+            move.add_argument('--to', choices=['open', 'focus', 'closed'], required=True)
+            move.add_argument('--before', type=int)
+            move.add_argument('--repo', default=argparse.SUPPRESS)
+            move.add_argument('--clone', default=argparse.SUPPRESS)
+
+            args = parser.parse_args()
+            command_id = str(uuid.uuid4())
+            action = args.action
+            destination = action if action in ('open', 'focus', 'closed') else getattr(args, 'to', None)
+            payload = {
+                'id': command_id,
+                'action': 'list' if action == 'list' else 'move',
+                'repository': args.repo,
+                'clone': args.clone,
+                'issueNumber': getattr(args, 'issue', None),
+                'destination': destination,
+                'beforeNumber': getattr(args, 'before', None),
+                'lane': getattr(args, 'lane', None),
+            }
+            command_dir.mkdir(parents=True, exist_ok=True)
+            response_dir.mkdir(parents=True, exist_ok=True)
+            request = command_dir / f'{command_id}.json'
+            response = response_dir / f'{command_id}.json'
+            request.write_text(json.dumps(payload), encoding='utf-8')
+            # A clone or issue Runway has not seen yet costs a disk scan and a
+            # GitHub fetch before the reply.
+            deadline = time.time() + 45
+            while time.time() < deadline:
+                if response.exists():
+                    result = json.loads(response.read_text(encoding='utf-8'))
+                    try:
+                        response.unlink()
+                    except OSError:
+                        pass
+                    if not result.get('success'):
+                        print(result.get('error', 'Runway rejected the issue command.'), file=sys.stderr)
+                        return 1
+                    clone = result.get('clone') or ''
+                    if clone:
+                        for issue in result.get('focus', []):
+                            issue['agent'] = f"{clone}-{issue.get('number')}"
+                    if action == 'list':
+                        lane = args.lane
+                        if lane:
+                            print(json.dumps(result.get(lane, []), indent=2, ensure_ascii=False))
+                        else:
+                            print(json.dumps({key: result.get(key, []) for key in ('open', 'focus', 'closed')}, indent=2, ensure_ascii=False))
+                    else:
+                        print(json.dumps(result, indent=2, ensure_ascii=False))
+                    return 0
+                time.sleep(0.1)
+            print('Runway did not respond. Is the app running with this terminal?', file=sys.stderr)
+            return 2
+
+        if __name__ == '__main__':
+            raise SystemExit(main())
+        """
+        try? issueScript.data(using: .utf8)?.write(to: issuePath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: issuePath.path)
+
+        // 6. runway-agent: opt-in coarse status reporting for any command-line agent.
+        let agentScript = """
+        #!/bin/zsh
+        if [ "$#" -eq 0 ]; then
+          echo 'Usage: runway-agent <command> [arguments…]' >&2
+          exit 64
+        fi
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        exit $exit_code
+        """
+        try? agentScript.data(using: .utf8)?.write(to: agentPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agentPath.path)
+
+        // Preserve Claude's richer needs-action hooks without replacing a user's
+        // alias or shell function. This PATH wrapper is scoped to Runway terminals.
+        let claudeScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/claude" ]; then real="$dir/claude"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'claude: command not found' >&2
+          exit 127
+        fi
+        explicit_session=0
+        for arg in "$@"; do
+          case "$arg" in
+            -c|--continue|-r|--resume|--resume=*|--session-id|--session-id=*|--fork-session)
+              explicit_session=1
+              break
+              ;;
+          esac
+        done
+        # A one-shot `claude -p`, or a claude an agent starts from inside its own
+        # session, is not the conversation this terminal is about. It must not
+        # resume the bound conversation, and its hooks must not rebind it.
+        nested=0
+        [ -n "${CLAUDECODE:-}" ] && nested=1
+        for arg in "$@"; do
+          case "$arg" in
+            -p|--print) nested=1; break ;;
+          esac
+        done
+        if [ "$nested" -eq 1 ]; then
+          unset RUNWAY_SESSION_FILE RUNWAY_DURABLE_SESSION_FILE RUNWAY_CLAUDE_SESSION_ID
+          unset RUNWAY_AGENT_NAME RUNWAY_ISSUE
+        fi
+        # A Focus terminal's agent is named after its clone and issue
+        # (monorepo-14202), so another session can find it by that name.
+        name_args=()
+        if [ -n "${RUNWAY_AGENT_NAME:-}" ]; then
+          name_args=(--name "$RUNWAY_AGENT_NAME")
+          for arg in "$@"; do
+            case "$arg" in
+              -n|--name|--name=*) name_args=(); break ;;
+            esac
+          done
+        fi
+        # The binding follows the user. Once they /resume, /clear or start
+        # another conversation in this terminal, Runway's hook records it, and a
+        # restart reopens that one in its own folder rather than the original id.
+        bound_cwd=""
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ -f "${RUNWAY_DURABLE_SESSION_FILE:-}" ]; then
+          bound_provider=$(/usr/bin/plutil -extract provider raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          bound_id=$(/usr/bin/plutil -extract sessionId raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          if [ "$bound_provider" = "claude" ] && [ -n "$bound_id" ]; then
+            RUNWAY_CLAUDE_SESSION_ID="$bound_id"
+            bound_cwd=$(/usr/bin/plutil -extract cwd raw -o - -- "$RUNWAY_DURABLE_SESSION_FILE" 2>/dev/null)
+          fi
+        fi
+        session_args=()
+        session_mode="unbound"
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ]; then
+          transcript=""
+          if [ -d "$HOME/.claude/projects" ]; then
+            transcript=$(/usr/bin/find "$HOME/.claude/projects" -type f -name "$RUNWAY_CLAUDE_SESSION_ID.jsonl" -print -quit 2>/dev/null)
+          fi
+          if [ -n "$transcript" ]; then
+            session_args=(--resume "$RUNWAY_CLAUDE_SESSION_ID")
+            session_mode="resume"
+            # Claude looks a conversation up by the folder it ran in.
+            if [ -n "$bound_cwd" ] && [ -d "$bound_cwd" ] && [ "$bound_cwd" != "$PWD" ]; then
+              cd "$bound_cwd" || true
+            fi
+          else
+            session_args=(--session-id "$RUNWAY_CLAUDE_SESSION_ID")
+            session_mode="create"
+          fi
+        elif [ "$explicit_session" -eq 1 ]; then
+          session_mode="explicit"
+        fi
+        export RUNWAY_CLAUDE_SESSION_MODE="$session_mode"
+        if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_CLAUDE_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
+          "$wrapper_dir/runway-session-record" claude "$RUNWAY_CLAUDE_SESSION_ID" "$PWD"
+        fi
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        exit $exit_code
+        """
+        try? claudeScript.data(using: .utf8)?.write(to: claudePath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudePath.path)
+
+        // Codex chooses its own session UUID. Capture it as soon as the TUI
+        // creates its transcript, then resume that exact UUID on future starts.
+        let codexScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/codex" ]; then real="$dir/codex"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'codex: command not found' >&2
+          exit 127
+        fi
+
+        write_session_record() {
+          local session_id="$1"
+          [ -z "$session_id" ] && return
+          [ -n "$RUNWAY_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_SESSION_FILE"
+          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"codex","sessionId":"%s"}' "$session_id" > "$RUNWAY_DURABLE_SESSION_FILE"
+        }
+
+        session_exists() {
+          [ -d "$HOME/.codex/sessions" ] || return 1
+          [ -n "$(/usr/bin/find "$HOME/.codex/sessions" -type f -name "*-$1.jsonl" -print -quit 2>/dev/null)" ]
+        }
+
+        monitor_pid=""
+        marker=""
+        capture_new_session() {
+          marker=$(/usr/bin/mktemp -t runway-codex-session)
+          (
+            local attempt candidate first_line session_id session_cwd originator
+            for attempt in {1..300}; do
+              while IFS= read -r -d '' candidate; do
+                first_line=$(/usr/bin/head -n 1 "$candidate" 2>/dev/null)
+                [ -z "$first_line" ] && continue
+                session_id=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.id raw -o - -- - 2>/dev/null)
+                session_cwd=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.cwd raw -o - -- - 2>/dev/null)
+                originator=$(printf '%s' "$first_line" | /usr/bin/plutil -extract payload.originator raw -o - -- - 2>/dev/null)
+                if [ -n "$session_id" ] && [ "$session_cwd" = "$PWD" ] && [ "$originator" = "codex-tui" ]; then
+                  write_session_record "$session_id"
+                  return 0
+                fi
+              done < <(/usr/bin/find "$HOME/.codex/sessions" -type f -name '*.jsonl' -newer "$marker" -print0 2>/dev/null)
+              /bin/sleep 0.1
+            done
+          ) &
+          monitor_pid=$!
+        }
+
+        interactive=1
+        case "${1:-}" in
+          apply|app-server|cloud|completion|debug|exec|features|help|login|logout|mcp|mcp-server|review|sandbox|-h|--help|-V|--version)
+            interactive=0
+            ;;
+        esac
+
+        if [ "${1:-}" = "resume" ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+          write_session_record "$2"
+        elif [ "$interactive" -eq 1 ] && [ "${1:-}" != "resume" ] && [ -n "$RUNWAY_CODEX_SESSION_ID" ] && session_exists "$RUNWAY_CODEX_SESSION_ID"; then
+          write_session_record "$RUNWAY_CODEX_SESSION_ID"
+          set -- resume "$RUNWAY_CODEX_SESSION_ID" "$@"
+        elif [ "$interactive" -eq 1 ]; then
+          capture_new_session
+        fi
+
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        "$real" "$@"
+        exit_code=$?
+        [ -n "$monitor_pid" ] && /bin/kill "$monitor_pid" 2>/dev/null
+        [ -n "$marker" ] && /bin/rm -f "$marker"
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        exit $exit_code
+        """
+        try? codexScript.data(using: .utf8)?.write(to: codexPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexPath.path)
+
+        // Gemini also supports caller-assigned session UUIDs. This wrapper uses
+        // the same issue-owned identity while preserving explicit user flags.
+        let geminiScript = """
+        #!/bin/zsh
+        wrapper_dir="${0:A:h}"
+        real=""
+        for dir in "${(@s/:/)PATH}"; do
+          [ "$dir" = "$wrapper_dir" ] && continue
+          if [ -x "$dir/gemini" ]; then real="$dir/gemini"; break; fi
+        done
+        if [ -z "$real" ]; then
+          echo 'gemini: command not found' >&2
+          exit 127
+        fi
+        explicit_session=0
+        for arg in "$@"; do
+          case "$arg" in
+            -r|--resume|--resume=*|--session-id|--session-id=*|--session-file|--session-file=*)
+              explicit_session=1
+              break
+              ;;
+          esac
+        done
+        session_args=()
+        session_mode="unbound"
+        if [ "$explicit_session" -eq 0 ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ]; then
+          short_id="${RUNWAY_GEMINI_SESSION_ID[1,8]}"
+          transcript=""
+          if [ -d "$HOME/.gemini/tmp" ]; then
+            transcript=$(/usr/bin/find "$HOME/.gemini/tmp" -type f -path '*/chats/*' \\( -name "*-$short_id.json" -o -name "*-$short_id.jsonl" \\) -print -quit 2>/dev/null)
+          fi
+          if [ -n "$transcript" ]; then
+            session_args=(--resume "$RUNWAY_GEMINI_SESSION_ID")
+            session_mode="resume"
+          else
+            session_args=(--session-id "$RUNWAY_GEMINI_SESSION_ID")
+            session_mode="create"
+          fi
+        elif [ "$explicit_session" -eq 1 ]; then
+          session_mode="explicit"
+        fi
+        export RUNWAY_GEMINI_SESSION_MODE="$session_mode"
+        if [ -n "$RUNWAY_SESSION_FILE" ] && [ -n "$RUNWAY_GEMINI_SESSION_ID" ] && [ "$explicit_session" -eq 0 ]; then
+          printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_SESSION_FILE"
+          [ -n "$RUNWAY_DURABLE_SESSION_FILE" ] && printf '{"provider":"gemini","sessionId":"%s"}' "$RUNWAY_GEMINI_SESSION_ID" > "$RUNWAY_DURABLE_SESSION_FILE"
+        fi
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"running"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        "$real" "${session_args[@]}" "$@"
+        exit_code=$?
+        [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        \(pulseCommand)
+        exit $exit_code
+        """
+        try? geminiScript.data(using: .utf8)?.write(to: geminiPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: geminiPath.path)
+
+        for (path, script) in [
+            (sessionRecorderPath, sessionRecorderScript),
+            (claudeSessionHookPath, claudeSessionHookScript),
+            (issueContextHookPath, issueContextHookScript),
+        ] {
+            try? script.data(using: .utf8)?.write(to: path)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        }
+    }
+
+    static var sessionRecorderPath: URL { binDir.appendingPathComponent("runway-session-record") }
+    static var claudeSessionHookPath: URL { binDir.appendingPathComponent("runway-claude-session-hook") }
+    static var issueContextHookPath: URL { binDir.appendingPathComponent("runway-issue-context") }
+
+    /// SessionStart hook: what Claude prints here it reads before the first
+    /// prompt, and SessionStart fires again on resume and /clear, so a Focus
+    /// agent always knows which issue "your issue" is. It only informs; work
+    /// starts when the user asks.
+    static let issueContextHookScript = #"""
+    #!/bin/zsh -f
+    [ -t 0 ] || /bin/cat > /dev/null
+    [ -n "${RUNWAY_ISSUE:-}" ] || exit 0
+    repository="${RUNWAY_ISSUE%#*}"
+    number="${RUNWAY_ISSUE##*#}"
+    title="${RUNWAY_ISSUE_TITLE:-}"
+    agent="${RUNWAY_AGENT_NAME:-this session}"
+    printf 'You are %s, the agent Runway opened for one GitHub issue: %s#%s' "$agent" "$repository" "$number"
+    [ -n "$title" ] && printf ' "%s"' "$title"
+    printf ' (%s).\n' "${RUNWAY_ISSUE_URL:-https://github.com/$repository/issues/$number}"
+    printf 'When the user says "your issue", they mean this one. Read it with `gh issue view %s --repo %s` before working on it. Do not start work until the user asks.\n' "$number" "$repository"
+    exit 0
+    """#
+
+    /// `runway-session-record <provider> <session-id> [cwd]`: the one writer of
+    /// a terminal's conversation record, its per-card file and, for a Focus
+    /// issue or a Quick Agent tab, the durable binding that outlives the card.
+    static let sessionRecorderScript = #"""
+    #!/bin/zsh -f
+    provider="${1:-}"
+    session_id="${2:-}"
+    dir="${3:-}"
+    if [ -z "$provider" ] || [ -z "$session_id" ]; then exit 0; fi
+    json_escape() {
+      local s="$1"
+      s="${s//\\/\\\\}"
+      s="${s//\"/\\\"}"
+      printf '%s' "$s"
+    }
+    record=$(printf '{"provider":"%s","sessionId":"%s"' "$(json_escape "$provider")" "$(json_escape "$session_id")")
+    [ -n "$dir" ] && record="$record$(printf ',"cwd":"%s"' "$(json_escape "$dir")")"
+    record="$record}"
+    [ -n "${RUNWAY_SESSION_FILE:-}" ] && printf '%s' "$record" > "$RUNWAY_SESSION_FILE"
+    [ -n "${RUNWAY_DURABLE_SESSION_FILE:-}" ] && printf '%s' "$record" > "$RUNWAY_DURABLE_SESSION_FILE"
+    exit 0
+    """#
+
+    /// Claude hook that records the conversation actually on screen. A
+    /// `/resume`, `/clear`, or `claude --resume` typed by hand starts a session
+    /// the wrapper never saw; without this the card stayed bound to the id it
+    /// was launched with, and reopening the issue went back to that one.
+    static let claudeSessionHookScript = #"""
+    #!/bin/zsh -f
+    [ -n "${RUNWAY_SESSION_FILE:-}" ] || exit 0
+    input=$(/bin/cat)
+    session_id=$(printf '%s' "$input" | /usr/bin/plutil -extract session_id raw -o - -- - 2>/dev/null)
+    dir=$(printf '%s' "$input" | /usr/bin/plutil -extract cwd raw -o - -- - 2>/dev/null)
+    [ -n "$session_id" ] || exit 0
+    exec "${0:A:h}/runway-session-record" claude "$session_id" "$dir"
+    """#
+
+    private static func ensureFeedInbox() {
+        if !FileManager.default.fileExists(atPath: feedInbox.path) {
+            FileManager.default.createFile(atPath: feedInbox.path, contents: nil)
+        }
+    }
+
+    private static func writeHooks() {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: hookSettings,
+            options: [.prettyPrinted]
+        ) else { return }
+        try? data.write(to: hooksFile)
+    }
+
+    /// The claude settings Runway hands its wrapper. Separated from the write so
+    /// the state each hook reports can be asserted.
+    static var hookSettings: [String: Any] {
+        func reporter(_ state: String) -> [String: Any] {
+            return ["hooks": [[
+                "type": "command",
+                "command": "[ -n \"$RUNWAY_CONTROL\" ] && printf '{\"state\":\"\(state)\"}' > \"$RUNWAY_CONTROL\"; \(pulseCommand); true",
+            ]]]
+        }
+        // Stop is the moment the agent stops working and hands the turn back,
+        // which is exactly when it needs the user: it reports needs-action, not
+        // idle. Waiting for Claude's own Notification hook is what made the
+        // amber state arrive a minute late, or not at all. Idle now means the
+        // session itself ended.
+        // SessionStart fires for a fresh start, --resume, /resume and /clear,
+        // each with the id now on screen. UserPromptSubmit catches up a
+        // session that started before the hook existed.
+        func running(_ script: URL, after matcher: [String: Any]) -> [String: Any] {
+            var matcher = matcher
+            let hooks = matcher["hooks"] as? [[String: Any]] ?? []
+            let quotedPath = "'\(script.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+            matcher["hooks"] = hooks + [[
+                "type": "command",
+                "command": "\(quotedPath); true",
+            ]]
+            return matcher
+        }
+        func recordingSession(_ matcher: [String: Any]) -> [String: Any] {
+            running(claudeSessionHookPath, after: matcher)
+        }
+        let settings: [String: Any] = ["hooks": [
+            "SessionStart": [running(issueContextHookPath, after: recordingSession(reporter("running")))],
+            "UserPromptSubmit": [recordingSession(reporter("running"))],
+            "PreToolUse": [reporter("running")],
+            "PostToolUse": [reporter("running")],
+            "Notification": [reporter("needs-action")],
+            "Stop": [reporter("needs-action")],
+            "SessionEnd": [reporter("idle")],
+        ]]
+        return settings
+    }
+
+    private static func writeIntegrationGuide() {
+        let markdown = """
+        ---
+        name: runway-app-integration
+        description: Harness Runway terminal features from any coding agent or shell.
+        ---
+
+        # Runway Integration Skill
+
+        This portable guide is available to every coding agent and shell running
+        inside Runway. Run `runway-help` at any time to read it. No agent-specific
+        files are installed in your home directory.
+
+        ## Environment Variables
+
+        Each Runway terminal box exposes the following environment variables to its shell:
+        - `RUNWAY_BOX`: The unique UUID of the terminal card.
+        - `RUNWAY_CONTROL`: Absolute path to a JSON file controlling the card's metadata and state.
+        - `RUNWAY_FOCUS_LOG`: Append-only JSONL history of issues entering and leaving Focus.
+        - `RUNWAY_CWD_FILE`: Absolute path to the file tracking the terminal's current directory.
+        - `RUNWAY_STATE_PULSE`: Append one byte here after writing state (`printf . >> "$RUNWAY_STATE_PULSE"`). Runway watches this single file, so the card updates at once instead of on the next poll.
+        - `RUNWAY_SESSION_FILE`: Where Runway's scoped wrappers record the conversation id they bound, so the terminal can offer a resume command.
+        - `RUNWAY_DURABLE_SESSION_FILE`: The issue-owned provider binding that survives terminal-card removal and app relaunches.
+        - `RUNWAY_ISSUE`, `RUNWAY_ISSUE_NUMBER`, `RUNWAY_ISSUE_TITLE`, `RUNWAY_ISSUE_URL`: The issue a Focus terminal works on (`owner/repo#123`). Claude reads it at session start, so "work on your issue" needs no pasted title.
+        - `RUNWAY_CLONE`: The clone whose Focus board owns the terminal, by folder name (`monorepo`, `monosentry`). A worktree container (`monorepo/main`) is named by its container.
+        - `RUNWAY_AGENT_NAME`: `<clone>-<issue>`, e.g. `monorepo-14202`. Runway's Claude wrapper starts the session under this name, so other sessions can address it.
+        - `RUNWAY_SKILL_PATH`: Path to this Runway API guide.
+        - `RUNWAY_AGENT_GUIDE`: A short discovery hint for coding agents.
+        - `RUNWAY_CLAUDE_SESSION_ID` / `RUNWAY_CODEX_SESSION_ID` / `RUNWAY_GEMINI_SESSION_ID`: Provider conversation IDs. Focus terminals expose them while Focus conversation binding is enabled in Settings (on by default); the quick terminal carries its own kept conversation, rotated only by the `+` button in its header. Runway's wrappers create or resume Claude and Gemini IDs, capture Codex's generated UUID, and remember the last provider used.
+
+        ---
+
+        ## 1. Update Card Status and Metadata
+
+        You can dynamically update the card's **State Dot (color)**, **Title**, and **Description** at any time.
+
+        ### Updating State
+        To change the colored dot next to your terminal card, write a JSON payload to `$RUNWAY_CONTROL`:
+        ```bash
+        # Set status to active/busy (Green dot)
+        echo '{"state":"running"}' > "$RUNWAY_CONTROL"
+
+        # Set status to needs attention (Amber dot)
+        echo '{"state":"needs-action"}' > "$RUNWAY_CONTROL"
+
+        # Set status back to idle (Grey dot)
+        echo '{"state":"idle"}' > "$RUNWAY_CONTROL"
+        ```
+
+        Runway notices a state write on its next poll, up to 1.5 seconds later.
+        To have the card update at once, append one byte to the pulse file after
+        writing state:
+        ```bash
+        echo '{"state":"needs-action"}' > "$RUNWAY_CONTROL"
+        printf . >> "$RUNWAY_STATE_PULSE"
+        ```
+
+        ### Updating Name or Description
+        Write a JSON payload to `$RUNWAY_CONTROL` containing `name` and/or `description`:
+        ```bash
+        # Rename the terminal card title
+        echo '{"name":"Build Runner"}' > "$RUNWAY_CONTROL"
+
+        # Update the right-side gray description text
+        echo '{"description":"Building release 2.0.0..."}' > "$RUNWAY_CONTROL"
+
+        # Update state, name, and description in one go
+        echo '{"state":"running", "name":"Linter", "description":"Checking types..."}' > "$RUNWAY_CONTROL"
+        ```
+        Updates written to `$RUNWAY_CONTROL` are processed **instantly** by the app.
+        Focus terminal names and descriptions are issue-owned and read-only. For those
+        cards, metadata writes are ignored, the description shows the issue reference
+        such as `#1234`, and clicking it copies that reference. State updates still apply.
+
+        ## 2. Read Focus Work History
+
+        Runway appends one JSON object to `$RUNWAY_FOCUS_LOG` whenever an issue
+        enters or leaves the Focus board. Reordering within Focus is not logged.
+        Each event includes an ISO-8601 `timestamp`, IANA `timeZone`, `action`, `repository`,
+        `issueNumber`, `issueTitle`, `issueState`, `fromLane`, `toLane`, and `cause`.
+
+        ```bash
+        # Read the complete journal
+        runway-focus-log
+
+        # Select an exact UTC time range
+        jq -c 'select(.timestamp >= "2026-07-29T08:43:00Z" and .timestamp <= "2026-07-30T05:00:00Z")' "$RUNWAY_FOCUS_LOG"
+        ```
+
+        Pair `entered_focus` and `exited_focus` events by repository and issue
+        number to reconstruct work sessions. An entry with
+        `cause: "initial_snapshot"` marks an issue that was already focused when
+        logging began. `cause: "github_rollback"` compensates for a move that
+        GitHub rejected. Focus is one list seen through a window of a few
+        cards; sliding that window never logs anything, because a card scrolled
+        out of view is still in Focus.
+
+        ## 3. Manage the Issue Boards
+
+        Runway exposes the board state through `runway-issue`. From a Runway terminal,
+        the repository is inferred from `RUNWAY_REPOSITORY`; outside one, pass `--repo`.
+
+        ```bash
+        runway-issue list
+        runway-issue list --lane focus
+        runway-issue focus 123
+        runway-issue open 123
+        runway-issue closed 123
+        runway-issue move 123 --to focus --before 456
+        ```
+
+        Pass `--clone <name>` to act on a specific clone's board; inside a Focus terminal it
+        defaults to `RUNWAY_CLONE`. A board that is not on screen works too: Runway applies the
+        move to that board's saved Focus and opens or closes its terminals without switching the view. Each Focus issue in the JSON carries `agent`, the session name of its
+        Claude agent (`<clone>-<issue>`). Moving an issue out of Focus closes its terminal and
+        ends that agent. Move issues between lanes only when the user asks.
+
+        Moving between Open and Closed also updates GitHub. Moving into or out of Focus
+        updates Runway immediately and persists the order. The command waits for Runway
+        to acknowledge the request and returns JSON for agents to consume.
+
+        ## 4. Run Any Agent With Automatic Status
+
+        Use `runway-agent` with any command-line coding agent to mark the card
+        running until the command exits:
+
+        ```bash
+        runway-agent codex
+        runway-agent gemini
+        runway-agent my-custom-agent --flag
+        ```
+
+        Claude receives richer automatic status hooks when launched normally as
+        `claude` inside Runway.
+        """
+
+        try? markdown.write(to: integrationGuide, atomically: true, encoding: .utf8)
+    }
+
+    /// Remove only files written by older Runway builds. Parent directories are
+    /// removed only when empty, so unrelated user configuration is untouched.
+    private static func cleanupLegacyGlobalInstall() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let legacyBin = home.appendingPathComponent(".runway/bin", isDirectory: true)
+        for name in ["runway-post", "runway-delete", "runway-pin", "runway-unpin"] {
+            try? FileManager.default.removeItem(at: legacyBin.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: legacyBin)
+
+        let legacySkillDir = home.appendingPathComponent(".gemini/config/skills/runway_api", isDirectory: true)
+        try? FileManager.default.removeItem(at: legacySkillDir.appendingPathComponent("SKILL.md"))
+        try? FileManager.default.removeItem(at: legacySkillDir)
+    }
+
+    private static func writeFeedPostScript() {
+        // Standalone script — avoids Swift→zsh→python escape corruption.
+        let py = """
+        #!/usr/bin/env python3
+        import json, sys, datetime
+
+        def unesc(s):
+            if not s:
+                return s
+            return (s.replace("\\\\n", chr(10))
+                     .replace("\\\\t", chr(9))
+                     .replace("\\\\r", chr(13)))
+
+        def main():
+            args = sys.argv[1:]
+            stdin_body = None
+            if args and args[-1] == "-":
+                stdin_body = sys.stdin.read()
+                args = args[:-1]
+
+            if stdin_body is not None:
+                if len(args) == 0:
+                    author, title = "agent", ""
+                elif len(args) == 1:
+                    author, title = args[0], ""
+                else:
+                    author, title = args[0], args[1]
+                body = stdin_body
+            elif len(args) == 0:
+                return
+            elif len(args) == 1:
+                author, title, body = "agent", "", args[0]
+            elif len(args) == 2:
+                author, title, body = args[0], "", args[1]
+            else:
+                author, body, title = args[0], args[1], args[2]
+
+            title = unesc(title)
+            body = unesc(body)
+            if not body.strip():
+                return
+            print(json.dumps({
+                "author": author,
+                "title": title,
+                "body": body,
+                "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }))
+
+        if __name__ == "__main__":
+            main()
+        """
+        try? py.data(using: .utf8)?.write(to: feedPostScript)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: feedPostScript.path)
+    }
+
+    private static func writeZshWrapper() {
+        try? FileManager.default.createDirectory(at: zdotdir, withIntermediateDirectories: true)
+        let postScript = feedPostScript.path
+        // zsh reads each startup file from $ZDOTDIR; source the user's real ones
+        // so their environment and prompt remain unchanged. Agent integration is
+        // provided by scoped PATH helpers instead of replacing shell functions.
+        write(".zshenv", #"[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv""#)
+        write(".zprofile", #"[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile""#)
+        write(".zlogin", #"[ -f "$HOME/.zlogin" ] && source "$HOME/.zlogin""#)
+        write(".zshrc", """
+        # Managed by Runway. Loads your real zsh config and adds only Runway's
+        # working-directory and autorun hooks. Your files are never modified.
+        [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+        # The user's own config is sourced first and commonly prepends its own
+        # bin directories, which would shadow Runway's scoped wrappers. Move
+        # Runway's entry back to the front instead of merely ensuring it is
+        # present, so `claude` in a Runway terminal is always the wrapper.
+        runway_bin='\(binDir.path)'
+        path=("$runway_bin" "${(@)path:#${runway_bin}}")
+        export PATH
+        unset runway_bin
+        hash -r 2>/dev/null || true
+        # Post a markdown card to the activity timeline.
+        runway-post() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Post a note or post to the activity feed.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-post "body text"                       (author: agent)' >&2
+            echo '  runway-post "author_name" "body text"         (custom author)' >&2
+            echo '  runway-post "author_name" "body text" "title" (custom title)' >&2
+            echo '  runway-post "author_name" "title" - <<EOF     (multiline stdin)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-post: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            echo '  Use Runway quick terminal (⌘⌥Q) or an agent card.' >&2
+            return 1
+          fi
+          python3 '\(postScript)' "$@" >> "$RUNWAY_FEED"
+        }
+        # Delete a post or note by ID.
+        runway-delete() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Delete a feed post or user note by ID.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-delete <post_id_or_note_id>   (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-delete: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-delete <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"delete\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        }
+        # Pin a post or note by ID.
+        runway-pin() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Pin a feed post or user note to the top of the Notes tab.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-pin <post_id_or_note_id>      (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-pin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-pin <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"pin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        }
+        # Unpin a post or note by ID.
+        runway-unpin() {
+          if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+            echo 'Runway API: Unpin a feed post or user note from the top of the Notes tab.' >&2
+            echo 'Usage:' >&2
+            echo '  runway-unpin <post_id_or_note_id>    (e.g., note-1234 or agent-abcd)' >&2
+            return 0
+          fi
+          if [ -z "$RUNWAY_FEED" ]; then
+            echo 'runway-unpin: not in a Runway terminal (RUNWAY_FEED unset)' >&2
+            return 1
+          fi
+          if [ -z "$1" ]; then
+            echo 'Usage: runway-unpin <post_id>' >&2
+            return 1
+          fi
+          echo "{\\"action\\":\\"unpin\\",\\"id\\":\\"$1\\"}" >> "$RUNWAY_FEED"
+        }
+        # Record the working directory so Runway can reopen each agent in the same
+        # folder after a relaunch (written at startup, on cd, and at each prompt).
+        if [ -n "$RUNWAY_CWD_FILE" ]; then
+          _runway_cwd() { pwd > "$RUNWAY_CWD_FILE" 2>/dev/null; }
+          autoload -Uz add-zsh-hook 2>/dev/null
+          add-zsh-hook chpwd _runway_cwd 2>/dev/null
+          add-zsh-hook precmd _runway_cwd 2>/dev/null
+          _runway_cwd
+        fi
+        # New agents open straight into a command (e.g. claude). Runs once, before
+        # the first prompt, so the agent is up the moment the card appears; you
+        # drop to the shell when it exits.
+        if [ -n "$RUNWAY_AUTORUN" ]; then
+          _cmd="$RUNWAY_AUTORUN"; unset RUNWAY_AUTORUN
+          eval "$_cmd"
+        fi
+        """)
+    }
+
+    private static func write(_ name: String, _ contents: String) {
+        try? (contents + "\n").data(using: .utf8)?
+            .write(to: zdotdir.appendingPathComponent(name))
+    }
+}

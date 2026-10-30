@@ -1,12 +1,20 @@
 import SwiftUI
 import AppKit
+import GhosttyKit
 
 @main
 struct RunwayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // A relaunch from inside an agent would otherwise hand every terminal
+        // that agent's Claude session variables.
+        for name in ProcessInfo.processInfo.environment.keys where name.hasPrefix("CLAUDE") {
+            unsetenv(name)
+        }
         SettingsKey.registerDefaults()
+        // Must run before any terminal (GhosttyKit) loads its config.
+        RunwayTerminal.installTheme()
     }
 
     var body: some Scene {
@@ -56,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { Self.configureCloseWindowMenuItem() }
+        AgentControl.install()
+        AgentControl.resetStates()
         installShortcutMonitor()
         observeFullScreen()
     }
@@ -119,6 +129,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let ws = context.workspace
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
+        let quickFocused = ws.isQuickTerminalFocused
+
+        // ⌘T, ⌘W, ⌘1-9 and ⌘⇧[ ] drive the ATC panel's tabs while it has the
+        // keyboard, the way a browser's do.
+        if quickFocused, mods == [.command] {
+            if ev.keyCode == 17 { ws.requestQuickTabAction(.new); return true }
+            if ev.keyCode == 13 { ws.requestQuickTabAction(.close); return true }
+            if let key = ev.charactersIgnoringModifiers, let index = Int(key), (1...9).contains(index) {
+                ws.requestQuickTabAction(.select(index))
+                return true
+            }
+        }
+        if quickFocused, mods == [.command, .shift] {
+            if ev.keyCode == 33 { ws.requestQuickTabAction(.cycle(-1)); return true }
+            if ev.keyCode == 30 { ws.requestQuickTabAction(.cycle(1)); return true }
+        }
 
         // Fixed: ⌘F toggles search for whichever tab is active.
         if mods == [.command], ev.keyCode == 3 {
@@ -163,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch KeyBindings.shared.action(for: ev) {
         case .closeWindow:   return false               // handled before the lookup
         case .repoPicker:    ws.requestRepoPicker()
+        case .quickTerminal: ws.toggleQuick()
         case .none:          return false
         }
         return true

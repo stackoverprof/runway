@@ -13,8 +13,10 @@ struct LeftPane: View {
     @Bindable var feed: GitHubFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
+    @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
-    @State private var runwayScrollAnchor = RunwayScrollAnchor()
+    @State private var openIssueScrollAnchor = RunwayScrollAnchor()
+    @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
     @State private var feedScrollAnchor = RunwayScrollAnchor()
     @State private var pullScrollAnchor = RunwayScrollAnchor()
     /// there is expected, so it does not rebuild that lane's scroll view.
@@ -429,10 +431,104 @@ struct LeftPane: View {
         .clipped()
     }
 
-    /// Open space, waiting for whatever v3 puts here.
+    /// The issues assigned to you, Open or Closed.
     private var runwayTab: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(alignment: .leading, spacing: 0) {
+            runwayIssueTabs
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+
+            if assignedIssues.loading && !assignedIssues.hasSnapshot {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = assignedIssues.error, !assignedIssues.hasSnapshot {
+                feedNotice(error, systemImage: "exclamationmark.triangle")
+            } else {
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        issueList(assignedIssues.open, lane: .open)
+                            .frame(width: geo.size.width)
+                        issueList(assignedIssues.closed, lane: .closed)
+                            .frame(width: geo.size.width)
+                    }
+                    .offset(x: ws.runwayIssueTab == .open ? 0 : -geo.size.width)
+                    .animation(
+                        .spring(response: 0.38, dampingFraction: 0.85),
+                        value: ws.runwayIssueTab
+                    )
+                }
+                .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .clipped()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var runwayIssueTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(RunwayIssueTab.allCases) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { ws.runwayIssueTab = tab }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(tab.rawValue)
+                        Text("\(tab == .open ? assignedIssues.open.count : assignedIssues.closed.count)")
+                            .foregroundStyle(Color.white.opacity(0.35))
+                    }
+                    .font(.system(size: 10.5, weight: ws.runwayIssueTab == tab ? .semibold : .medium))
+                    .foregroundStyle(
+                        ws.runwayIssueTab == tab
+                            ? Color.white.opacity(0.9)
+                            : Color.white.opacity(0.4)
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(ws.runwayIssueTab == tab ? Color.white.opacity(0.1) : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
+    }
+
+    private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(issues) { issue in
+                    AssignedIssueCard(issue: issue, repository: issueRepositoryName)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .scrollAnchor(lane == .open ? openIssueScrollAnchor : closedIssueScrollAnchor)
+        }
+        .contentMargins(.vertical, 0, for: .scrollContent)
+        .scrollIndicators(.hidden)
+        .overlay {
+            if issues.isEmpty {
+                placeholderCard(
+                    icon: lane == .open ? "tray" : "checkmark.circle",
+                    title: lane == .open ? "No open issues" : "No closed issues",
+                    subtitle: "Issues assigned to you in this repository appear here."
+                )
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private var issueRepositoryName: String {
+        feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo
     }
 
     private var feedsTab: some View {
@@ -1152,6 +1248,7 @@ struct LeftPane: View {
     private func syncAllSources(tick: TimeInterval) {
         let ages = RepositorySyncCadence.ages(for: ws.selectedTab, tick: tick)
         Task { await feed.refresh(minimumAge: ages.feed) }
+        Task { await assignedIssues.revalidate(repository: feed.repo, minimumAge: ages.issues) }
         Task {
             await pullRequests.revalidate(
                 repository: feed.repo,
@@ -1163,7 +1260,7 @@ struct LeftPane: View {
     private func refreshSource(for tab: FeedTab, minimumAge: TimeInterval) {
         switch tab {
         case .runway:
-            return
+            Task { await assignedIssues.revalidate(repository: feed.repo, minimumAge: minimumAge) }
         case .feeds:
             Task { await feed.refresh(minimumAge: minimumAge) }
         case .pullRequests:
@@ -1189,7 +1286,7 @@ struct LeftPane: View {
 
     private func scrollAnchor(for tab: FeedTab) -> RunwayScrollAnchor {
         switch tab {
-        case .runway: runwayScrollAnchor
+        case .runway: ws.runwayIssueTab == .open ? openIssueScrollAnchor : closedIssueScrollAnchor
         case .feeds: feedScrollAnchor
         case .pullRequests: pullScrollAnchor
         }

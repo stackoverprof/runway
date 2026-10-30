@@ -3,6 +3,7 @@ import Foundation
 /// Freshness targets for one sync tick.
 struct RepositorySyncAges: Equatable {
     let feed: TimeInterval
+    let issues: TimeInterval
     let pulls: TimeInterval
 }
 
@@ -19,6 +20,7 @@ enum RepositorySyncCadence {
         let background = tick * backgroundMultiplier
         return RepositorySyncAges(
             feed: tab == .feeds ? tick : background,
+            issues: tab == .runway ? tick : background,
             pulls: tab == .pullRequests ? tick : background
         )
     }

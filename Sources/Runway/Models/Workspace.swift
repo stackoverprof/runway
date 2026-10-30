@@ -23,6 +23,22 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 }
 
+/// What the keyboard can ask of the ATC panel's tabs.
+enum QuickTerminalTabAction: Equatable {
+    case new
+    case close
+    case select(Int)
+    case selectRoot(String)
+    case cycle(Int)
+}
+
+/// One such ask, carried with an id so the same action twice in a row still
+/// arrives twice.
+struct QuickTerminalTabRequest: Equatable {
+    let id = UUID()
+    let action: QuickTerminalTabAction
+}
+
 /// Stepping through a tab's own options from the keyboard.
 enum SubtabNavigation {
     /// Wraps at both ends, so ⌘⌥] past the last option returns to the first.
@@ -31,6 +47,14 @@ enum SubtabNavigation {
         guard count > 1 else { return nil }
         return ((current + delta) % count + count) % count
     }
+}
+
+/// Open / Closed inside the Runway tab.
+enum RunwayIssueTab: String, CaseIterable, Identifiable {
+    case open = "Open"
+    case closed = "Closed"
+
+    var id: String { rawValue }
 }
 
 /// Everything / merges-only inside the Feeds tab.
@@ -76,12 +100,97 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 /// the requests the keyboard and `runway://` links raise against it.
 @MainActor @Observable final class Workspace {
     var selectedTab: FeedTab = .feeds
+    var runwayIssueTab: RunwayIssueTab = .open
     var feedFilter: FeedFilter = .all
     /// How wide the activity pane is; the rest of the window is the open space
     /// beside it.
     var leftWidth: CGFloat = 520
     var prTimeframe: PRTimeframe = .initial
     var isFullScreen = false
+
+    // MARK: ATC panel
+    //
+    // One agent above every flight, in a panel over the activity pane: the
+    // quick terminal, with tabs for as many controllers as you keep open.
+    var quickVisible = false
+    var quickPinned = false
+    var quickHeight: CGFloat = 0
+    var quickState: AgentState = .idle
+    var quickTabStates: [String: AgentState] = [:]
+    private(set) var quickTabRequest: QuickTerminalTabRequest?
+    /// Set by the panel so the rest of the app can hand it the keyboard.
+    @ObservationIgnored var focusQuick: (() -> Void)?
+    @ObservationIgnored var quickHasKeyboard: (() -> Bool)?
+    /// The terminal that had the keyboard before the panel took it.
+    @ObservationIgnored var focusedID: UUID?
+    @ObservationIgnored var lastTerminalScrollTS: TimeInterval = 0
+
+    /// Whether the ATC panel holds the keyboard right now.
+    var isQuickTerminalFocused: Bool {
+        quickVisible && quickHasKeyboard?() == true
+    }
+
+    func setFocus(_ id: UUID?) {
+        focusedID = id
+    }
+
+    func toggleQuick() {
+        quickVisible.toggle()
+        if quickVisible { focusQuick?() }
+    }
+
+    func requestQuickTabAction(_ action: QuickTerminalTabAction) {
+        quickTabRequest = QuickTerminalTabRequest(action: action)
+    }
+
+    /// Watch what the controllers report. Each writes a small control file as
+    /// it works, which is where the dot on its tab comes from.
+    func startAgentWatch() {
+        let path = AgentControl.controlDir.path
+        controlDescriptor = open(path, O_EVTONLY)
+        if controlDescriptor >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: controlDescriptor,
+                eventMask: .write,
+                queue: DispatchQueue.main
+            )
+            source.setEventHandler { [weak self] in
+                self?.pollControlFiles()
+            }
+            source.setCancelHandler { [weak self] in
+                guard let descriptor = self?.controlDescriptor else { return }
+                close(descriptor)
+            }
+            controlWatcher = source
+            source.resume()
+        }
+
+        // Backstop, for anything that writes a control file without touching
+        // the directory itself.
+        Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                pollControlFiles()
+                saveIfNeeded()
+            }
+        }
+    }
+
+    private func pollControlFiles() {
+        let roots = QuickTerminalSession.tabRoots()
+        var states: [String: AgentState] = [:]
+        for root in roots {
+            let id = QuickTerminalSession.boxID(root: root)
+            guard let data = try? Data(contentsOf: AgentControl.file(for: id)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let state = json["state"] as? String else { continue }
+            states[root] = AgentState(control: state)
+        }
+        if states != quickTabStates { quickTabStates = states }
+        let selected = QuickTerminalSession.selectedRoot()
+        let next = quickTabStates[selected] ?? .idle
+        if next != quickState { quickState = next }
+    }
 
     /// The feed this window reads. Each window can follow its own repository.
     @ObservationIgnored var repositoryFeed: GitHubFeed?
@@ -95,8 +204,12 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     private(set) var sourceRefreshTab: FeedTab = .feeds
 
     @ObservationIgnored private var lastSaved: Data?
+    @ObservationIgnored private var controlWatcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var controlDescriptor: Int32 = -1
 
     init() { load() }
+
+    deinit { controlWatcher?.cancel() }
 
     func requestFind() { findRequestID &+= 1 }
 
@@ -116,7 +229,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     /// Options the current tab offers below itself, in display order.
     var subtabLabels: [String] {
         switch selectedTab {
-        case .runway: []
+        case .runway: RunwayIssueTab.allCases.map(\.rawValue)
         case .feeds: FeedFilter.allCases.map(\.rawValue)
         case .pullRequests: PRTimeframe.allCases.map(\.rawValue)
         }
@@ -124,7 +237,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     var selectedSubtabIndex: Int {
         switch selectedTab {
-        case .runway: 0
+        case .runway: RunwayIssueTab.allCases.firstIndex(of: runwayIssueTab) ?? 0
         case .feeds: FeedFilter.allCases.firstIndex(of: feedFilter) ?? 0
         case .pullRequests: PRTimeframe.allCases.firstIndex(of: prTimeframe) ?? 0
         }
@@ -133,7 +246,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     func selectSubtab(index: Int) {
         switch selectedTab {
         case .runway:
-            return
+            guard RunwayIssueTab.allCases.indices.contains(index) else { return }
+            runwayIssueTab = RunwayIssueTab.allCases[index]
         case .feeds:
             guard FeedFilter.allCases.indices.contains(index) else { return }
             feedFilter = FeedFilter.allCases[index]
@@ -168,6 +282,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     private struct Persisted: Codable {
         var selectedTab: FeedTab?
         var leftWidth: CGFloat?
+        var quickHeight: CGFloat?
+        var quickPinned: Bool?
     }
 
     private static var stateFile: URL {
@@ -179,12 +295,19 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
               let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
         selectedTab = saved.selectedTab ?? .feeds
         leftWidth = saved.leftWidth ?? leftWidth
+        quickHeight = saved.quickHeight ?? 0
+        quickPinned = saved.quickPinned ?? false
         lastSaved = data
     }
 
     /// Write the window's state if it changed. Cheap enough for the poll tick.
     func saveIfNeeded() {
-        let snapshot = Persisted(selectedTab: selectedTab, leftWidth: leftWidth)
+        let snapshot = Persisted(
+            selectedTab: selectedTab,
+            leftWidth: leftWidth,
+            quickHeight: quickHeight,
+            quickPinned: quickPinned
+        )
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
         try? data.write(to: Self.stateFile)

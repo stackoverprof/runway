@@ -9,6 +9,14 @@ enum SettingsKey {
     static let hideBots      = "runway.hideBots"
     static let confirmQuit   = "runway.confirmQuit"
     static let fireThreshold = "runway.fireThreshold"
+    static let agentCommandEnabled = "runway.agentCommandEnabled"
+    static let agentCommand  = "runway.agentCommand"
+    static let terminalFontFamily = "runway.terminalFontFamily"
+    static let terminalFontSize = "runway.terminalFontSize"
+    static let quickTerminalDirectory = "runway.quickTerminalDirectory"
+    static let quickAutoHide = "runway.quickAutoHide"
+    static let quickAutoHideSeconds = "runway.quickAutoHideSeconds"
+    static let dropRetentionDays = "runway.dropRetentionDays"
     static let personProfiles = "runway.personProfiles"
     static let brandHeaderStyle = "runway.brandHeaderStyle"
     static let brandTitle = "runway.brandTitle"
@@ -17,6 +25,34 @@ enum SettingsKey {
     static let cloneSearchDepth = "runway.cloneSearchDepth"
     static let pullsTimeframe = "runway.pullsTimeframe"
     static let taglineEnabled = "runway.taglineEnabled"
+
+    /// The command each agent terminal runs on launch, empty for a plain shell.
+    static var configuredAgentCommand: String {
+        guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
+        return (UserDefaults.standard.string(forKey: agentCommand) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Seconds the ATC panel waits before hiding itself.
+    static func quickAutoHideDelay(in defaults: UserDefaults = .standard) -> TimeInterval {
+        let saved = defaults.integer(forKey: quickAutoHideSeconds)
+        return TimeInterval(min(max(saved == 0 ? 3 : saved, 1), 60))
+    }
+
+    static func quickAutoHideEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: quickAutoHide) == nil
+            ? true
+            : defaults.bool(forKey: quickAutoHide)
+    }
+
+    /// How long a dropped image is kept before Runway prunes it. Zero days
+    /// means keep them.
+    static func dropRetention(in defaults: UserDefaults = .standard) -> TimeInterval? {
+        guard defaults.object(forKey: dropRetentionDays) != nil else { return 7 * 86_400 }
+        let days = defaults.integer(forKey: dropRetentionDays)
+        guard days > 0 else { return nil }
+        return TimeInterval(min(days, 365)) * 86_400
+    }
 
     // Readers for the settings that shape behaviour elsewhere. Each takes the
     // store, so a test can hand in its own domain instead of racing the shared
@@ -46,6 +82,13 @@ enum SettingsKey {
         defaults.register(defaults: [
             pollInterval: 45, idleMinutes: 30, officeHours: 6,
             hideBots: true, confirmQuit: true, fireThreshold: 5,
+            agentCommandEnabled: false, agentCommand: "claude",
+            terminalFontFamily: TerminalFont.defaultFamily,
+            terminalFontSize: TerminalFont.defaultSize,
+            quickTerminalDirectory: "",
+            quickAutoHide: true,
+            quickAutoHideSeconds: 3,
+            dropRetentionDays: 7,
             personProfiles: [],
             brandHeaderStyle: "text",
             brandTitle: "Activity",
@@ -71,6 +114,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             FeedSettings()
                 .tabItem { Label("Feed", systemImage: "dot.radiowaves.up.forward") }
+            TerminalSettings()
+                .tabItem { Label("Terminal", systemImage: "terminal") }
             AppearanceSettings()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
             ShortcutSettings()

@@ -61,12 +61,13 @@ struct KeyChord: Codable, Equatable {
 
 /// The customizable actions (⌘1–9 "jump to card" stays fixed).
 enum AppAction: String, CaseIterable {
-    case closeWindow, repoPicker
+    case closeWindow, repoPicker, quickTerminal
 
     var label: String {
         switch self {
         case .closeWindow:   return "Close window"
         case .repoPicker:    return "Switch repository"
+        case .quickTerminal: return "Toggle ATC panel"
         }
     }
 
@@ -74,6 +75,7 @@ enum AppAction: String, CaseIterable {
         switch self {
         case .closeWindow:   return KeyChord(keyCode: 13, modifiers: [.command, .shift])   // ⌘⇧W
         case .repoPicker:    return KeyChord(keyCode: 15, modifiers: [.command])           // ⌘R
+        case .quickTerminal: return KeyChord(keyCode: 12, modifiers: [.command, .option])  // ⌘⌥Q
         }
     }
 }

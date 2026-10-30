@@ -16,6 +16,7 @@ struct ContentView: View {
             let maxLeft = max(minLeft, total - minRight - splitLayoutWidth)
             let left = min(max(context.workspace.leftWidth, minLeft), maxLeft)
 
+            ZStack(alignment: .bottomLeading) {
             HStack(spacing: 0) {
                 LeftPane(ws: context.workspace, feed: context.githubFeed)
                     .frame(width: left)
@@ -54,6 +55,18 @@ struct ContentView: View {
             }
             .frame(maxHeight: .infinity)
             .coordinateSpace(name: "split")
+
+            // Always mounted, so its shell keeps running; slides in and out
+            // with ⌘⌥Q.
+            QuickTerminal(
+                ws: context.workspace,
+                width: left,
+                availableHeight: geo.size.height,
+                resizePane: { proposedWidth in
+                    context.workspace.leftWidth = min(max(proposedWidth, minLeft), maxLeft)
+                }
+            )
+            }
         }
         .ignoresSafeArea()
         .overlay(alignment: .top) {
