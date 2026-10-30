@@ -125,6 +125,7 @@ final class WindowDragNSView: NSView {
 @MainActor @Observable final class RunwayWindowContext {
     let workspace = Workspace()
     let githubFeed = GitHubFeed()
+    let issues = AssignedIssues()
     private var started = false
 
     func startIfNeeded() {

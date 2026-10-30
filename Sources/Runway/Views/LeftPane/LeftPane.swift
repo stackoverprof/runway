@@ -11,9 +11,9 @@ import AppKit
 struct LeftPane: View {
     @Bindable var ws: Workspace
     @Bindable var feed: GitHubFeed
+    @Bindable var assignedIssues: AssignedIssues
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
-    @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
     @State private var openIssueScrollAnchor = RunwayScrollAnchor()
     @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
@@ -506,7 +506,16 @@ struct LeftPane: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 ForEach(issues) { issue in
-                    AssignedIssueCard(issue: issue, repository: issueRepositoryName)
+                    AssignedIssueCard(
+                        issue: issue,
+                        repository: issueRepositoryName,
+                        isFlying: ws.flightNumber == issue.number
+                    )
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            ws.flightNumber = issue.number
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 16)

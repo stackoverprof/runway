@@ -101,6 +101,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 @MainActor @Observable final class Workspace {
     var selectedTab: FeedTab = .feeds
     var runwayIssueTab: RunwayIssueTab = .open
+    /// The issue being flown: what the middle and right panes answer for.
+    var flightNumber: Int?
     var feedFilter: FeedFilter = .all
     /// How wide the activity pane is, and the pane beside it. The third pane
     /// takes whatever is left.
@@ -282,6 +284,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     private struct Persisted: Codable {
         var selectedTab: FeedTab?
+        var flightNumber: Int?
         var leftWidth: CGFloat?
         var middleWidth: CGFloat?
         var quickHeight: CGFloat?
@@ -296,6 +299,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         guard let data = try? Data(contentsOf: Self.stateFile),
               let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
         selectedTab = saved.selectedTab ?? .feeds
+        flightNumber = saved.flightNumber
         leftWidth = saved.leftWidth ?? leftWidth
         middleWidth = saved.middleWidth ?? middleWidth
         quickHeight = saved.quickHeight ?? 0
@@ -307,6 +311,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     func saveIfNeeded() {
         let snapshot = Persisted(
             selectedTab: selectedTab,
+            flightNumber: flightNumber,
             leftWidth: leftWidth,
             middleWidth: middleWidth,
             quickHeight: quickHeight,

@@ -6,21 +6,27 @@ import SwiftUI
 /// Nothing here is wired to real data yet. The sample below is placeholder, so
 /// the shape can be judged before a flight model exists.
 struct MiddlePane: View {
+    @Bindable var ws: Workspace
+    @Bindable var issues: AssignedIssues
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
     @State private var draft = FlightPreview.sampleDraft
-    /// The flight's own issue: open while it flies, closed once it lands.
-    @State private var flightClosed = false
 
-    private let flight = FlightPreview.sample
+    private let sample = FlightPreview.sample
+
+    /// The issue being flown, if one is picked and still ours.
+    private var flight: AssignedIssue? { issues.issue(ws.flightNumber) }
 
     var body: some View {
         GeometryReader { geo in
             let terminalHeight = max(140, min(geo.size.height - 180, geo.size.height * terminalShare))
 
+            if flight == nil {
+                nothingFlying
+            } else {
             VStack(spacing: 0) {
                 flightHeader
                 seatStrip
@@ -31,8 +37,21 @@ struct MiddlePane: View {
                 sectionBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            }
         }
         .background(Color(white: 0.035))
+    }
+
+    private var nothingFlying: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "airplane.departure")
+                .font(.system(size: 17))
+                .foregroundStyle(Color.white.opacity(0.16))
+            Text("Pick an issue to fly")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.3))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Header
@@ -44,14 +63,14 @@ struct MiddlePane: View {
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.3))
                     .tracking(0.8)
-                Text(verbatim: GitHubNumber.reference(flight.number))
+                Text(verbatim: GitHubNumber.reference(flight?.number ?? 0))
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Runway.teal.opacity(0.9))
                 Spacer(minLength: 8)
-                statusChip(flight.status)
+                statusChip(flight?.isClosed == true ? "landed" : "in the air")
             }
 
-            Text(flight.title)
+            Text(flight?.title ?? "")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.white.opacity(0.94))
                 .lineLimit(2)
@@ -66,22 +85,29 @@ struct MiddlePane: View {
     /// The flight as a route: the legs behind it flown in green, the aircraft
     /// where it is now, the legs ahead in grey.
     private var legsBar: some View {
-        let flown = flight.legs.filter(\.done).count
+        let legs = flight?.legs ?? []
+        let flown = legs.filter(\.isClosed).count
         return HStack(spacing: 4) {
             Circle()
                 .fill(Runway.green.opacity(0.9))
                 .frame(width: 5, height: 5)
 
-            ForEach(Array(flight.legs.enumerated()), id: \.element.id) { index, leg in
-                if index == flown, flown < flight.legs.count {
+            ForEach(Array(legs.enumerated()), id: \.element.id) { index, leg in
+                if index == flown, flown < legs.count {
                     Image(systemName: "airplane")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Runway.teal)
                 }
-                legSegment(done: leg.done)
+                legSegment(done: leg.isClosed)
             }
 
-            if flown == flight.legs.count {
+            if legs.isEmpty {
+                Capsule()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(height: 3)
+            }
+
+            if !legs.isEmpty, flown == legs.count {
                 Image(systemName: "airplane.arrival")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Runway.green)
@@ -91,7 +117,7 @@ struct MiddlePane: View {
                 .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                 .frame(width: 5, height: 5)
 
-            Text("\(flown)/\(flight.legs.count) legs")
+            Text(legs.isEmpty ? "no crews yet" : "\(flown)/\(legs.count) crews")
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.32))
                 .fixedSize()
@@ -258,7 +284,7 @@ struct MiddlePane: View {
             ScrollViewReader { strip in
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        ForEach(flight.legs) { leg in
+                        ForEach(flight?.legs ?? []) { leg in
                             legCard(leg)
                                 .id(leg.number)
                         }
@@ -281,7 +307,7 @@ struct MiddlePane: View {
 
             sectionLabel("ACCEPTANCE")
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(flight.acceptance, id: \.self) { line in
+                ForEach(sample.acceptance, id: \.self) { line in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: "square")
                             .font(.system(size: 9))
@@ -293,7 +319,7 @@ struct MiddlePane: View {
                 }
             }
 
-            stateButton
+            stateButton(closed: flight?.isClosed == true)
                 .padding(.top, 4)
         }
     }
@@ -301,15 +327,16 @@ struct MiddlePane: View {
     /// Where the flight is: the first leg still in the air, or the last one
     /// when they have all landed.
     private var currentLeg: Int? {
-        flight.legs.first { !$0.done }?.number ?? flight.legs.last?.number
+        let legs = flight?.legs ?? []
+        return legs.first { !$0.isClosed }?.number ?? legs.last?.number
     }
 
-    private func legCard(_ leg: FlightPreview.Leg) -> some View {
+    private func legCard(_ leg: IssueLeg) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: leg.done ? "checkmark.circle.fill" : "circle")
+                Image(systemName: leg.isClosed ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 10))
-                    .foregroundStyle(leg.done ? Runway.green : Color.white.opacity(0.25))
+                    .foregroundStyle(leg.isClosed ? Runway.green : Color.white.opacity(0.25))
                 Text(verbatim: GitHubNumber.reference(leg.number))
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.32))
@@ -318,27 +345,17 @@ struct MiddlePane: View {
 
             Text(leg.title)
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(leg.done ? 0.45 : 0.85))
-                .strikethrough(leg.done, color: Color.white.opacity(0.3))
+                .foregroundStyle(Color.white.opacity(leg.isClosed ? 0.45 : 0.85))
+                .strikethrough(leg.isClosed, color: Color.white.opacity(0.3))
                 .multilineTextAlignment(.leading)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let blocker = leg.blocker {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    if leg.needsYou {
-                        Circle()
-                            .fill(Runway.amber)
-                            .frame(width: 4, height: 4)
-                    }
-                    Text(blocker)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(
-                            leg.needsYou ? Runway.amber : Color.white.opacity(0.38)
-                        )
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
+            if let elsewhere = leg.repository {
+                Text(elsewhere.split(separator: "/").last.map(String.init) ?? elsewhere)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.3))
+                    .lineLimit(1)
             }
         }
         .padding(9)
@@ -347,14 +364,14 @@ struct MiddlePane: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(leg.done ? 0.06 : 0.11), lineWidth: 1)
+                .stroke(Color.white.opacity(leg.isClosed ? 0.06 : 0.11), lineWidth: 1)
         )
     }
 
     /// Close the flight's issue once it has landed, or put it back in the air.
-    private var stateButton: some View {
+    private func stateButton(closed flightClosed: Bool) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) { flightClosed.toggle() }
+            // Closing for real lands in the next step, with the CLI behind it.
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: flightClosed ? "arrow.counterclockwise.circle" : "checkmark.circle")
@@ -383,7 +400,7 @@ struct MiddlePane: View {
     private var pullsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("PULL REQUESTS")
-            ForEach(flight.pulls) { pull in
+            ForEach(sample.pulls) { pull in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 7) {
                         Text(verbatim: GitHubNumber.reference(pull.number))
@@ -428,7 +445,7 @@ struct MiddlePane: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("WALKTHROUGH")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
-                ForEach(flight.slides, id: \.self) { slide in
+                ForEach(sample.slides, id: \.self) { slide in
                     VStack(alignment: .leading, spacing: 5) {
                         RoundedRectangle(cornerRadius: 6)
                             .fill(Color(white: 0.08))
@@ -479,7 +496,7 @@ struct MiddlePane: View {
                 .help("Open this flight's thread in Slack")
             }
 
-            ForEach(flight.thread) { entry in
+            ForEach(sample.thread) { entry in
                 HStack(alignment: .top, spacing: 9) {
                     VStack(spacing: 0) {
                         Circle()

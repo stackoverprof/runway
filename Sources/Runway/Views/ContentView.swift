@@ -17,7 +17,11 @@ struct ContentView: View {
 
             ZStack(alignment: .bottomLeading) {
                 HStack(spacing: 0) {
-                    LeftPane(ws: context.workspace, feed: context.githubFeed)
+                    LeftPane(
+                        ws: context.workspace,
+                        feed: context.githubFeed,
+                        assignedIssues: context.issues
+                    )
                         .frame(width: widths.left)
 
                     divider { translation in
@@ -26,7 +30,7 @@ struct ContentView: View {
                         context.workspace.leftWidth = start + translation
                     }
 
-                    MiddlePane()
+                    MiddlePane(ws: context.workspace, issues: context.issues)
                         .frame(width: widths.middle)
 
                     divider { translation in
@@ -35,7 +39,7 @@ struct ContentView: View {
                         context.workspace.middleWidth = start + translation
                     }
 
-                    RightPane()
+                    RightPane(ws: context.workspace, issues: context.issues)
                         .frame(maxWidth: .infinity)
                 }
                 .frame(maxHeight: .infinity)

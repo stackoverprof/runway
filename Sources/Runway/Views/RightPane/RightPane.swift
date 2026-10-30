@@ -10,22 +10,29 @@ import SwiftUI
 ///
 /// Placeholder content: no crew model exists yet, so this is the shape.
 struct RightPane: View {
-    @State private var crews = CrewPreview.sample
-    @State private var reading: Int? = CrewPreview.sample.first(where: \.isActive)?.issueNumber
+    @Bindable var ws: Workspace
+    @Bindable var issues: AssignedIssues
+    /// Which crews are up, and which one you are reading.
+    @State private var active: Set<Int> = []
+    @State private var reading: Int?
+
+    private var crews: [IssueLeg] {
+        (issues.issue(ws.flightNumber)?.legs ?? []).filter { !$0.isClosed }
+    }
 
     var body: some View {
         // The cards take their own height, measured rather than guessed, and
         // the crews that are up divide every point that is left.
         CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
-            ForEach($crews) { $crew in
-                if crew.isActive {
-                    activeBox($crew)
+            ForEach(crews) { crew in
+                if active.contains(crew.number) {
+                    activeBox(crew)
                         .layoutValue(
                             key: CrewShareKey.self,
-                            value: reading == crew.issueNumber ? 2 : 1
+                            value: reading == crew.number ? 2 : 1
                         )
                 } else {
-                    standingCard($crew)
+                    standingCard(crew)
                         .layoutValue(key: CrewShareKey.self, value: 0)
                 }
             }
@@ -33,23 +40,37 @@ struct RightPane: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
+        .overlay {
+            if crews.isEmpty { noCrews }
+        }
         .background(Color.black)
+    }
+
+    private var noCrews: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "person.2")
+                .font(.system(size: 16))
+                .foregroundStyle(Color.white.opacity(0.14))
+            Text(ws.flightNumber == nil ? "No flight picked" : "This flight has no crews yet")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.28))
+        }
     }
 
     // MARK: Stood down
 
     /// Nothing running, nothing on screen but the issue it answers for.
-    private func standingCard(_ crew: Binding<CrewPreview>) -> some View {
+    private func standingCard(_ crew: IssueLeg) -> some View {
         HStack(spacing: 10) {
             Circle()
                 .strokeBorder(Color.white.opacity(0.3), lineWidth: 1.2)
                 .frame(width: 11, height: 11)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: "\(crew.wrappedValue.repository) \(GitHubNumber.reference(crew.wrappedValue.issueNumber))")
+                Text(verbatim: crewSubtitle(crew))
                     .font(.system(size: 11))
                     .foregroundStyle(Color.white.opacity(0.42))
-                Text(crew.wrappedValue.title)
+                Text(crew.title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.72))
                     .lineLimit(1)
@@ -57,7 +78,7 @@ struct RightPane: View {
 
             Spacer(minLength: 8)
 
-            activateButton(crew, active: false)
+            activateButton(crew, up: false)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.055)))
@@ -66,39 +87,53 @@ struct RightPane: View {
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 9))
-        .onTapGesture { activate(crew) }
+        .onTapGesture { bringUp(crew) }
         .pointerCursor()
+    }
+
+    /// The repository a crew works in, named only as far as it is useful.
+    private func crewHome(_ crew: IssueLeg) -> String {
+        if let elsewhere = crew.repository {
+            return String(elsewhere.split(separator: "/").last ?? "")
+        }
+        let flightURL = issues.issue(ws.flightNumber)?.url.pathComponents ?? []
+        guard flightURL.count >= 3 else { return "" }
+        return flightURL[flightURL.count - 3]
+    }
+
+    private func crewSubtitle(_ crew: IssueLeg) -> String {
+        let home = crewHome(crew)
+        let reference = GitHubNumber.reference(crew.number)
+        return home.isEmpty ? reference : home + " " + reference
+    }
+
+    private func crewSession(_ crew: IssueLeg) -> String {
+        let home = crewHome(crew)
+        return home.isEmpty ? "crew-\(crew.number)" : "\(home)-\(crew.number)"
     }
 
     // MARK: Flying
 
-    private func activeBox(_ crew: Binding<CrewPreview>) -> some View {
-        let value = crew.wrappedValue
-        let isReading = reading == value.issueNumber
+    private func activeBox(_ crew: IssueLeg) -> some View {
+        let isReading = reading == crew.number
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(value.state.color)
+                    .fill(Color.white.opacity(0.3))
                     .frame(width: 7, height: 7)
-                    .shadow(color: value.state.color.opacity(0.7), radius: 4)
 
-                Text(value.title)
+                Text(crew.title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                     .lineLimit(1)
 
                 Spacer(minLength: 8)
 
-                Text(value.branch)
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.26))
-                    .lineLimit(1)
-
-                Text(verbatim: GitHubNumber.reference(value.issueNumber))
+                Text(verbatim: GitHubNumber.reference(crew.number))
                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.4))
 
-                activateButton(crew, active: true)
+                activateButton(crew, up: true)
             }
             .padding(.horizontal, 11)
             .frame(height: 28)
@@ -110,7 +145,7 @@ struct RightPane: View {
                     Image(systemName: "terminal")
                         .font(.system(size: 14))
                         .foregroundStyle(Color.white.opacity(0.16))
-                    Text("\(value.repository)-\(value.issueNumber)")
+                    Text(crewSession(crew))
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.3))
                 }
@@ -127,42 +162,42 @@ struct RightPane: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) { reading = value.issueNumber }
+            withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
         }
     }
 
     /// The one control that matters on a card: bring this crew up, or stand it
     /// down and give the pane back.
-    private func activateButton(_ crew: Binding<CrewPreview>, active: Bool) -> some View {
+    private func activateButton(_ crew: IssueLeg, up: Bool) -> some View {
         Button {
-            if active { standDown(crew) } else { activate(crew) }
+            if up { standDown(crew) } else { bringUp(crew) }
         } label: {
-            Image(systemName: active ? "stop.fill" : "play.fill")
+            Image(systemName: up ? "stop.fill" : "play.fill")
                 .font(.system(size: 8.5))
-                .foregroundStyle(active ? Color.white.opacity(0.45) : Runway.green)
+                .foregroundStyle(up ? Color.white.opacity(0.45) : Runway.green)
                 .frame(width: 20, height: 20)
                 .background(
-                    Circle().fill(active ? Color.white.opacity(0.06) : Runway.green.opacity(0.12))
+                    Circle().fill(up ? Color.white.opacity(0.06) : Runway.green.opacity(0.12))
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
-        .help(active ? "Stand this crew down" : "Bring this crew up")
+        .help(up ? "Stand this crew down" : "Bring this crew up")
     }
 
-    private func activate(_ crew: Binding<CrewPreview>) {
+    private func bringUp(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            crew.wrappedValue.isActive = true
-            reading = crew.wrappedValue.issueNumber
+            active.insert(crew.number)
+            reading = crew.number
         }
     }
 
-    private func standDown(_ crew: Binding<CrewPreview>) {
+    private func standDown(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            crew.wrappedValue.isActive = false
-            if reading == crew.wrappedValue.issueNumber {
-                reading = crews.first { $0.isActive }?.issueNumber
+            active.remove(crew.number)
+            if reading == crew.number {
+                reading = crews.first { active.contains($0.number) }?.number
             }
         }
     }
@@ -228,50 +263,4 @@ struct CrewAccordion: Layout {
 /// is left that this crew's box takes.
 struct CrewShareKey: LayoutValueKey {
     static let defaultValue = 0
-}
-
-// MARK: Placeholder
-
-struct CrewPreview: Identifiable {
-    enum State {
-        case running
-        case needsYou
-        case idle
-
-        var color: Color {
-            switch self {
-            case .running: Runway.green
-            case .needsYou: Runway.amber
-            case .idle: Color.white.opacity(0.3)
-            }
-        }
-    }
-
-    let issueNumber: Int
-    let repository: String
-    let title: String
-    let branch: String
-    let state: State
-    var isActive: Bool
-
-    var id: Int { issueNumber }
-
-    static let sample: [CrewPreview] = [
-        CrewPreview(issueNumber: 16257, repository: "monorepo",
-                    title: "Booking form on the POS",
-                    branch: "feat/pos-booking-form-16257",
-                    state: .running, isActive: true),
-        CrewPreview(issueNumber: 16261, repository: "monorepo",
-                    title: "Hold a slot while paying",
-                    branch: "feat/hold-slot-16261",
-                    state: .needsYou, isActive: true),
-        CrewPreview(issueNumber: 16264, repository: "monorepo",
-                    title: "Refund a cancelled booking",
-                    branch: "fix/refund-cancelled-16264",
-                    state: .idle, isActive: false),
-        CrewPreview(issueNumber: 16270, repository: "monorepo",
-                    title: "Receipt shows the slot",
-                    branch: "feat/receipt-slot-16270",
-                    state: .idle, isActive: false),
-    ]
 }

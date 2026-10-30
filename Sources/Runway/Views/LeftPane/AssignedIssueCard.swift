@@ -5,6 +5,8 @@ import SwiftUI
 struct AssignedIssueCard: View {
     let issue: AssignedIssue
     let repository: String
+    /// True when this is the issue the other two panes are answering for.
+    var isFlying = false
     @State private var hovering = false
 
     var body: some View {
@@ -31,6 +33,16 @@ struct AssignedIssueCard: View {
                 .foregroundStyle(Color.white.opacity(0.94))
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
+
+            if issue.isFlight {
+                Text("\(issue.landedLegs)/\(issue.legs.count) crews landed")
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(Runway.teal.opacity(0.7))
+            } else if let parent = issue.parent {
+                Text("crew of \(GitHubNumber.reference(parent))")
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.3))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -40,7 +52,12 @@ struct AssignedIssueCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9)
-                .stroke(Color.white.opacity(hovering ? 0.24 : 0.14), lineWidth: 1)
+                .stroke(
+                    isFlying
+                        ? Runway.teal.opacity(0.55)
+                        : Color.white.opacity(hovering ? 0.24 : 0.14),
+                    lineWidth: 1
+                )
         )
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onHover { hovering = $0 }
