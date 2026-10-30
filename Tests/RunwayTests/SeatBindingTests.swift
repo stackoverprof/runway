@@ -17,6 +17,21 @@ struct SeatBindingTests {
         #expect(pilot != copilot)
     }
 
+    @Test("A pilot and its copilot never share one conversation id")
+    func seatConversationsDiffer() {
+        let pilot = IssueAgentSession.id(
+            provider: .claude, repository: "VISKA-IO/monorepo", issueNumber: 17345, seat: "pilot"
+        )
+        let copilot = IssueAgentSession.id(
+            provider: .claude, repository: "VISKA-IO/monorepo", issueNumber: 17345, seat: "copilot"
+        )
+        let crew = IssueAgentSession.id(
+            provider: .claude, repository: "VISKA-IO/monorepo", issueNumber: 17345
+        )
+        #expect(pilot != copilot)
+        #expect(pilot != crew)
+    }
+
     @Test("A crew keeps the binding its issue already had")
     func crewKeepsItsBinding() {
         let crew = AgentControl.issueProviderSessionFile(

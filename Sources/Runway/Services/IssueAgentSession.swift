@@ -23,24 +23,35 @@ enum IssueAgentSession {
     static func id(
         provider: IssueAgentProvider,
         repository: String?,
-        issueNumber: Int?
+        issueNumber: Int?,
+        seat: String? = nil
     ) -> UUID? {
         guard let repository, !repository.isEmpty,
               let issueNumber else { return nil }
-        return id(provider: provider, repository: repository, issueNumber: issueNumber)
+        return id(
+            provider: provider,
+            repository: repository,
+            issueNumber: issueNumber,
+            seat: seat
+        )
     }
 
+    /// `seat` separates the two agents a flight carries. A crew passes none,
+    /// so the conversation its issue already had is the one it comes back to.
     static func id(
         provider: IssueAgentProvider,
         repository: String,
-        issueNumber: Int
+        issueNumber: Int,
+        seat: String? = nil
     ) -> UUID {
-        DeterministicSessionID.uuid(for: [
+        var parts = [
             "runway-agent-session-v1",
             provider.rawValue,
             repository.lowercased(),
             String(issueNumber),
-        ].joined(separator: ":"))
+        ]
+        if let seat, !seat.isEmpty { parts.append(seat) }
+        return DeterministicSessionID.uuid(for: parts.joined(separator: ":"))
     }
 }
 

@@ -282,7 +282,8 @@ enum AgentControl {
                         ? IssueAgentSession.id(
                             provider: provider,
                             repository: focusRepository,
-                            issueNumber: focusIssueNumber
+                            issueNumber: focusIssueNumber,
+                            seat: rank == .crew ? nil : rank.rawValue
                         )
                         : nil)
                 sessionID = deterministicID?.uuidString.lowercased()
