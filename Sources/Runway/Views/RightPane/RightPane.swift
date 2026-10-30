@@ -5,7 +5,8 @@ import SwiftUI
 /// A crew is either active or stood down. Stood down it is a card, the same
 /// card the issue reads as elsewhere, costing nothing but a line. Activated it
 /// opens into its terminal, and the active crews share the pane between them,
-/// the one you are reading taking the larger share.
+/// the one you are reading taking the larger share. The pane never scrolls:
+/// every crew of the flight is on screen at once.
 ///
 /// Placeholder content: no crew model exists yet, so this is the shape.
 struct RightPane: View {
@@ -23,20 +24,20 @@ struct RightPane: View {
                 standingCount: standing.count
             )
 
-            ScrollView {
-                VStack(spacing: 10) {
-                    ForEach($crews) { $crew in
-                        if crew.isActive {
-                            activeBox($crew, height: spans[crew.issueNumber] ?? 220)
-                        } else {
-                            standingCard($crew)
-                        }
+            // An accordion, never a scroller: every crew is on screen at once,
+            // the ones that are up sharing whatever the cards leave behind.
+            VStack(spacing: CrewSpanPolicy.gap) {
+                ForEach($crews) { $crew in
+                    if crew.isActive {
+                        activeBox($crew, height: spans[crew.issueNumber] ?? CrewSpanPolicy.minimumBox)
+                    } else {
+                        standingCard($crew)
                     }
                 }
-                .padding(14)
             }
-            .scrollIndicators(.hidden)
-            .contentMargins(.vertical, 0, for: .scrollContent)
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
         }
         .background(Color.black)
     }
