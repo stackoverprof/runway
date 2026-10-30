@@ -63,7 +63,7 @@ struct RightPane: View {
     private func standingCard(_ crew: IssueLeg) -> some View {
         HStack(spacing: 10) {
             Circle()
-                .strokeBorder(Color.white.opacity(0.3), lineWidth: 1.2)
+                .strokeBorder(crewColour(crew).opacity(0.8), lineWidth: 1.2)
                 .frame(width: 11, height: 11)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -119,8 +119,9 @@ struct RightPane: View {
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(Color.white.opacity(0.3))
+                    .fill(crewColour(crew))
                     .frame(width: 7, height: 7)
+                    .shadow(color: crewColour(crew).opacity(0.7), radius: 4)
 
                 Text(crew.title)
                     .font(.system(size: 12, weight: .semibold))
@@ -139,17 +140,7 @@ struct RightPane: View {
             .frame(height: 28)
             .background(RunwayTerminal.headerBar)
 
-            ZStack {
-                Color(white: 0.045)
-                VStack(spacing: 5) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.white.opacity(0.16))
-                    Text(crewSession(crew))
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.3))
-                }
-            }
+            crewTerminal(crew)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -163,6 +154,57 @@ struct RightPane: View {
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
+        }
+    }
+
+    @ViewBuilder
+    private func crewTerminal(_ crew: IssueLeg) -> some View {
+        if let repository = crewRepository(crew) {
+            TerminalSurfaceView(
+                boxID: FlightCrewSessions.boxID(
+                    rank: .crew,
+                    repository: repository,
+                    issue: crew.number
+                ),
+                workspace: ws,
+                config: FlightCrewSessions.config(
+                    rank: .crew,
+                    repository: repository,
+                    issue: crew.number,
+                    title: crew.title,
+                    flight: ws.flightNumber,
+                    reportsTo: pilotName
+                )
+            )
+            .id("crew-\(repository)-\(crew.number)")
+            .background(RunwayTerminal.body)
+        } else {
+            Color(white: 0.045)
+        }
+    }
+
+    /// A crew works in its own repository when the flight reaches into one.
+    private func crewRepository(_ crew: IssueLeg) -> String? {
+        crew.repository ?? issues.repository
+    }
+
+    private var pilotName: String? {
+        guard let repository = issues.repository, let flight = ws.flightNumber else { return nil }
+        return FlightCrewSessions.sessionName(
+            rank: .pilot,
+            repository: repository,
+            issue: flight
+        )
+    }
+
+    /// What this crew is doing: green while it works, amber when it wants you.
+    private func crewColour(_ crew: IssueLeg) -> Color {
+        guard let repository = crewRepository(crew) else { return Color.white.opacity(0.3) }
+        let id = FlightCrewSessions.boxID(rank: .crew, repository: repository, issue: crew.number)
+        switch ws.agentStates[id] ?? .idle {
+        case .needsAction: return Runway.amber
+        case .running: return Runway.green
+        default: return Color.white.opacity(0.3)
         }
     }
 

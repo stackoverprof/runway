@@ -8,12 +8,14 @@ import SwiftUI
 struct MiddlePane: View {
     @Bindable var ws: Workspace
     @Bindable var issues: AssignedIssues
+    @State private var pullRequests = PullRequests.shared
+    @State private var closing = false
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
-    @State private var draft = FlightPreview.sampleDraft
+    @State private var draft = ""
 
     private let sample = FlightPreview.sample
 
@@ -150,7 +152,7 @@ struct MiddlePane: View {
                 } label: {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(seat == .pilot ? Runway.green : Color.white.opacity(0.22))
+                            .fill(seatColour(seat))
                             .frame(width: 5, height: 5)
                         Text(seat.rawValue)
                             .font(.system(
@@ -179,22 +181,78 @@ struct MiddlePane: View {
         .padding(.bottom, 8)
     }
 
-    private var terminalArea: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color(white: 0.055))
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            VStack(spacing: 6) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color.white.opacity(0.18))
-                Text("\(crewTab.rawValue) terminal")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
-            }
+    @ViewBuilder
+    /// What the seat is doing: green while it works, amber when it wants you.
+    private func seatColour(_ seat: PilotSeat) -> Color {
+        guard let flight, let repository = issues.repository else {
+            return Color.white.opacity(0.22)
         }
-        .padding(.horizontal, 12)
+        let id = FlightCrewSessions.boxID(
+            rank: seat == .pilot ? .pilot : .copilot,
+            repository: repository,
+            issue: flight.number
+        )
+        switch ws.agentStates[id] ?? .idle {
+        case .needsAction: return Runway.amber
+        case .running: return Runway.green
+        default: return Color.white.opacity(0.22)
+        }
+    }
+
+    private var terminalArea: some View {
+        Group {
+        if let flight, let repository = issues.repository {
+            // Both seats stay mounted, so switching back finds the
+            // conversation where you left it rather than starting one.
+            ZStack {
+                ForEach(PilotSeat.allCases) { seat in
+                    seatTerminal(seat, flight: flight, repository: repository)
+                        .opacity(crewTab == seat ? 1 : 0)
+                        .allowsHitTesting(crewTab == seat)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .padding(.horizontal, 12)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(white: 0.055))
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            }
+            .padding(.horizontal, 12)
+        }
+        }
+    }
+
+    private func seatTerminal(
+        _ seat: PilotSeat,
+        flight: AssignedIssue,
+        repository: String
+    ) -> some View {
+        let rank: AgentRank = seat == .pilot ? .pilot : .copilot
+        return TerminalSurfaceView(
+            boxID: FlightCrewSessions.boxID(
+                rank: rank,
+                repository: repository,
+                issue: flight.number
+            ),
+            workspace: ws,
+            config: FlightCrewSessions.config(
+                rank: rank,
+                repository: repository,
+                issue: flight.number,
+                title: flight.title,
+                flight: flight.number,
+                reportsTo: "you"
+            )
+        )
+        .id("\(rank.rawValue)-\(repository)-\(flight.number)")
+        .background(RunwayTerminal.body)
     }
 
     /// Drag to give the terminal more of the pane, or less.
@@ -306,15 +364,23 @@ struct MiddlePane: View {
             }
 
             sectionLabel("ACCEPTANCE")
+            let acceptance = IssueBody.steps("Acceptance", in: flight?.body ?? "")
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(sample.acceptance, id: \.self) { line in
+                if acceptance.isEmpty {
+                    Text("This issue says nothing about what done looks like.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                }
+                ForEach(acceptance) { line in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: "square")
+                        Image(systemName: line.done ? "checkmark.square.fill" : "square")
                             .font(.system(size: 9))
-                            .foregroundStyle(Color.white.opacity(0.22))
-                        Text(line)
+                            .foregroundStyle(
+                                line.done ? Runway.green.opacity(0.8) : Color.white.opacity(0.22)
+                            )
+                        Text(line.text)
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.white.opacity(0.72))
+                            .foregroundStyle(Color.white.opacity(line.done ? 0.45 : 0.72))
                     }
                 }
             }
@@ -371,10 +437,17 @@ struct MiddlePane: View {
     /// Close the flight's issue once it has landed, or put it back in the air.
     private func stateButton(closed flightClosed: Bool) -> some View {
         Button {
-            // Closing for real lands in the next step, with the CLI behind it.
+            guard let number = flight?.number, !closing else { return }
+            closing = true
+            Task {
+                await issues.setClosed(!flightClosed, issue: number)
+                closing = false
+            }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: flightClosed ? "arrow.counterclockwise.circle" : "checkmark.circle")
+                Image(systemName: closing
+                    ? "hourglass"
+                    : (flightClosed ? "arrow.counterclockwise.circle" : "checkmark.circle"))
                     .font(.system(size: 11, weight: .medium))
                 Text(flightClosed ? "Reopen issue" : "Close issue")
                     .font(.system(size: 11, weight: .medium))
@@ -400,35 +473,76 @@ struct MiddlePane: View {
     private var pullsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("PULL REQUESTS")
-            ForEach(sample.pulls) { pull in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 7) {
-                        Text(verbatim: GitHubNumber.reference(pull.number))
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Runway.green.opacity(0.82))
-                        Text(pull.title)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.white.opacity(0.75))
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        checkChip(pull.checks)
+            if flightPulls.isEmpty {
+                Text("No pull request names this flight or its crews yet.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.white.opacity(0.3))
+            }
+            ForEach(flightPulls) { pull in
+                Button {
+                    NSWorkspace.shared.open(pull.url)
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Text(verbatim: GitHubNumber.reference(pull.number))
+                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(stateColour(pull).opacity(0.85))
+                            Text(pull.title)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.white.opacity(0.75))
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(stateLabel(pull))
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundStyle(stateColour(pull))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(stateColour(pull).opacity(0.12)))
+                        }
+                        HStack(spacing: 5) {
+                            Text(pull.headRefName)
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 7, weight: .semibold))
+                            Text(pull.baseRefName)
+                        }
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.27))
+                        .lineLimit(1)
                     }
-                    HStack(spacing: 5) {
-                        Text(pull.branch)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 7, weight: .semibold))
-                        Text("main")
-                    }
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.27))
-                    .lineLimit(1)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.03)))
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.03)))
+                .buttonStyle(.plain)
+                .pointerCursor()
             }
         }
+    }
+
+    /// Every PR whose branch ends in this flight's number or one of its
+    /// crews', which is what the branch convention makes possible.
+    private var flightPulls: [RepositoryPullRequest] {
+        guard let flight else { return [] }
+        let numbers = Set([flight.number] + flight.legs.map(\.number))
+        return pullRequests.pullRequests
+            .filter { pull in
+                BranchIssue.number(in: pull.headRefName).map(numbers.contains) ?? false
+            }
+            .sorted { $0.number > $1.number }
+    }
+
+    private func stateLabel(_ pull: RepositoryPullRequest) -> String {
+        if pull.isMerged { return "MERGED" }
+        if !pull.isOpen { return "CLOSED" }
+        return pull.isDraft ? "DRAFT" : "OPEN"
+    }
+
+    private func stateColour(_ pull: RepositoryPullRequest) -> Color {
+        if pull.isMerged { return Runway.purple }
+        if !pull.isOpen { return Color.white.opacity(0.38) }
+        return pull.isDraft ? Runway.amber : Runway.green
     }
 
     private func checkChip(_ state: CheckState) -> some View {
@@ -472,31 +586,41 @@ struct MiddlePane: View {
     /// The conversation this flight lives in, newest last, each line linking
     /// back out to where it was said.
     private var threadSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let entries = IssueBody.conversation("Situation Development", in: flight?.body ?? "")
+        let home = IssueBody.homeThread("Situation Development", in: flight?.body ?? "")
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 sectionLabel("SITUATION")
                 Spacer(minLength: 8)
-                Button {
-                    // The flight's home thread, wherever the talking happens.
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Open thread")
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                if let home {
+                    Button {
+                        NSWorkspace.shared.open(home)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.forward.app")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("Open thread")
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundStyle(Runway.teal.opacity(0.85))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Runway.teal.opacity(0.1)))
+                        .contentShape(Capsule())
                     }
-                    .foregroundStyle(Runway.teal.opacity(0.85))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Runway.teal.opacity(0.1)))
-                    .contentShape(Capsule())
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("Open this flight's thread where it lives")
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("Open this flight's thread in Slack")
             }
 
-            ForEach(sample.thread) { entry in
+            if entries.isEmpty {
+                Text("This issue keeps no conversation log yet.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.white.opacity(0.3))
+            }
+
+            ForEach(entries) { entry in
                 HStack(alignment: .top, spacing: 9) {
                     VStack(spacing: 0) {
                         Circle()
@@ -510,14 +634,15 @@ struct MiddlePane: View {
                     .padding(.top, 5)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
+                        Button {
+                            if let link = entry.link { NSWorkspace.shared.open(link) }
+                        } label: {
                             Text(entry.who)
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Runway.teal.opacity(0.85))
-                            Text(entry.when)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.26))
                         }
+                        .buttonStyle(.plain)
+                        .pointerCursor()
                         Text(entry.said)
                             .font(.system(size: 11.5))
                             .foregroundStyle(Color.white.opacity(0.78))

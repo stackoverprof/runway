@@ -23,6 +23,9 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
     let createdAt: Date?
     let updatedAt: Date?
     let url: URL
+    /// The issue's own text, which carries its Acceptance, its Progress and
+    /// the conversation it lives in.
+    var body: String = ""
     /// The flight this issue is a crew of, when it is one.
     var parent: Int?
     var legs: [IssueLeg] = []
@@ -40,6 +43,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
         url: URL,
+        body: String = "",
         parent: Int? = nil,
         legs: [IssueLeg] = []
     ) {
@@ -50,6 +54,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.url = url
+        self.body = body
         self.parent = parent
         self.legs = legs
     }
@@ -66,6 +71,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         createdAt = try fields.decodeIfPresent(Date.self, forKey: .createdAt)
         updatedAt = try fields.decodeIfPresent(Date.self, forKey: .updatedAt)
         url = try fields.decode(URL.self, forKey: .url)
+        body = try fields.decodeIfPresent(String.self, forKey: .body) ?? ""
         parent = try fields.decodeIfPresent(Int.self, forKey: .parent)
         legs = try fields.decodeIfPresent([IssueLeg].self, forKey: .legs) ?? []
     }
@@ -93,6 +99,8 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         var fetchedAt: Date
     }
 
+    /// The repository this board was read from.
+    private(set) var repository: String?
     @ObservationIgnored private var loadedRepository: String?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var snapshots = AssignedIssues.readSnapshots()
@@ -117,6 +125,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         guard !repository.isEmpty else {
             loadTask?.cancel()
             issues = []
+            self.repository = nil
             loadedRepository = nil
             hasSnapshot = false
             error = nil
@@ -126,6 +135,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         loadTask?.cancel()
         loadTask = nil
         loadedRepository = repository
+        self.repository = repository
         issues = snapshots[repository]?.issues ?? []
         hasSnapshot = snapshots[repository] != nil
         error = nil
@@ -152,7 +162,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
                 "--assignee", "@me",
                 "--state", "all",
                 "--limit", "1000",
-                "--json", "number,title,state,closedAt,createdAt,updatedAt,url",
+                "--json", "number,title,state,closedAt,createdAt,updatedAt,url,body",
             ], cacheFor: 30)
             async let crewData = GH.query([
                 "api", "graphql",
@@ -183,6 +193,17 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         loadTask = task
         await task.value
         loadTask = nil
+    }
+
+    /// Open or close an issue, then read the board back so the panes follow.
+    func setClosed(_ closed: Bool, issue number: Int) async {
+        guard let repository = loadedRepository else { return }
+        _ = await GH.query([
+            "issue", closed ? "close" : "reopen", String(number),
+            "--repo", repository,
+        ], cacheFor: 0)
+        snapshots[repository] = nil
+        await revalidate(repository: repository)
     }
 
     // MARK: Crews

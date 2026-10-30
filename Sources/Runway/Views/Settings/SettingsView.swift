@@ -26,11 +26,14 @@ enum SettingsKey {
     static let pullsTimeframe = "runway.pullsTimeframe"
     static let taglineEnabled = "runway.taglineEnabled"
 
-    /// The command each agent terminal runs on launch, empty for a plain shell.
+    /// The command every agent starts with. Runway flies Claude, so that is
+    /// the default; turning it off leaves a plain shell.
     static var configuredAgentCommand: String {
-        guard UserDefaults.standard.bool(forKey: agentCommandEnabled) else { return "" }
-        return (UserDefaults.standard.string(forKey: agentCommand) ?? "")
+        let enabled = UserDefaults.standard.object(forKey: agentCommandEnabled) as? Bool ?? true
+        guard enabled else { return "" }
+        let command = (UserDefaults.standard.string(forKey: agentCommand) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? "claude" : command
     }
 
     /// Seconds the ATC panel waits before hiding itself.
@@ -82,7 +85,7 @@ enum SettingsKey {
         defaults.register(defaults: [
             pollInterval: 45, idleMinutes: 30, officeHours: 6,
             hideBots: true, confirmQuit: true, fireThreshold: 5,
-            agentCommandEnabled: false, agentCommand: "claude",
+            agentCommandEnabled: true, agentCommand: "claude",
             terminalFontFamily: TerminalFont.defaultFamily,
             terminalFontSize: TerminalFont.defaultSize,
             quickTerminalDirectory: "",

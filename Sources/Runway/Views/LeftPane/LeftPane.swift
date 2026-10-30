@@ -1605,17 +1605,8 @@ struct LeftPane: View {
 private struct BranchNameText: View {
     let name: String
 
-    /// A branch names its issue last: `feat/designer-images-page-16283` keeps
-    /// that number when the middle is truncated away.
-    static func splitBranch(_ name: String) -> (stem: String, number: String?) {
-        guard let dash = name.lastIndex(of: "-"), dash != name.startIndex else { return (name, nil) }
-        let suffix = name[name.index(after: dash)...]
-        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return (name, nil) }
-        return (String(name[..<dash]), String(name[dash...]))
-    }
-
     var body: some View {
-        let parts = Self.splitBranch(name)
+        let parts = BranchIssue.split(name)
         HStack(spacing: 0) {
             Text(parts.stem)
                 .truncationMode(.tail)

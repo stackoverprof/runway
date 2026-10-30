@@ -120,6 +120,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     var quickHeight: CGFloat = 0
     var quickState: AgentState = .idle
     var quickTabStates: [String: AgentState] = [:]
+    /// What every agent Runway started is doing, by its seat.
+    var agentStates: [UUID: AgentState] = [:]
     private(set) var quickTabRequest: QuickTerminalTabRequest?
     /// Set by the panel so the rest of the app can hand it the keyboard.
     @ObservationIgnored var focusQuick: (() -> Void)?
@@ -180,6 +182,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     }
 
     private func pollControlFiles() {
+        pollSeatStates()
         let roots = QuickTerminalSession.tabRoots()
         var states: [String: AgentState] = [:]
         for root in roots {
@@ -293,6 +296,24 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     private static var stateFile: URL {
         RunwayStorage.supportDir.appendingPathComponent("workspace.json")
+    }
+
+    /// Every control file Runway's own agents write, read in one pass.
+    private func pollSeatStates() {
+        let directory = AgentControl.controlDir
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        var states: [UUID: AgentState] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  let data = try? Data(contentsOf: file),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let state = json["state"] as? String else { continue }
+            states[id] = AgentState(control: state)
+        }
+        if states != agentStates { agentStates = states }
     }
 
     private func load() {

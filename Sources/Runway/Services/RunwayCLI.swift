@@ -118,6 +118,11 @@ extension AgentControl {
 
 
         def cmd_whoami(args):
+            card = os.environ.get("RUNWAY_ROLE_CARD", "")
+            if card and os.path.exists(card):
+                with open(card) as handle:
+                    sys.stdout.write(handle.read())
+                return
             rank = RANK or "unranked"
             print("You are %s in Runway." % rank)
             if FLIGHT:
