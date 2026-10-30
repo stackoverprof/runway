@@ -137,6 +137,13 @@ struct PullRequestDeveloper: Identifiable {
     private var loadedRepository: String?
     private var loadTask: Task<Void, Never>?
     private var loadTaskRepository: String?
+    /// True while the newest pull requests are on screen and the rest of the
+    /// repository's history is still arriving.
+    private(set) var catchingUpOnHistory = false
+    /// How many of the newest pull requests a cold start shows before it goes
+    /// back for everything.
+    static let firstPaintCount = 500
+
     @ObservationIgnored private var snapshots = PullRequests.readSnapshots()
     @ObservationIgnored private var developerCache: [DeveloperCacheKey: [PullRequestDeveloper]] = [:]
 
@@ -145,7 +152,7 @@ struct PullRequestDeveloper: Identifiable {
     }
 
     private static var snapshotFile: URL {
-        AgentControl.supportDir.appendingPathComponent("pull-requests-cache.json")
+        RunwayStorage.supportDir.appendingPathComponent("pull-requests-cache.json")
     }
 
     var developers: [PullRequestDeveloper] { developers(since: nil) }
@@ -181,6 +188,7 @@ struct PullRequestDeveloper: Identifiable {
     func restore(repository: String) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
+            catchingUpOnHistory = false
             pullRequests = []
             developerCache.removeAll()
             loadedRepository = nil
@@ -224,6 +232,35 @@ struct PullRequestDeveloper: Identifiable {
             let needsFullRefresh = previousSnapshot?.historyComplete != true
                 || cacheAge > 90 * 86_400
             let fields = "number,title,state,isDraft,author,createdAt,updatedAt,mergedAt,closedAt,url,headRefName,baseRefName"
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            // A repository's whole history is minutes of paging (monorepo is
+            // past 15,000 pull requests), and the tab used to spin for all of
+            // it. Put the newest few hundred on screen first and let the rest
+            // arrive behind them.
+            if needsFullRefresh,
+               let recentData = await GH.query([
+                   "pr", "list",
+                   "--repo", repository,
+                   "--state", "all",
+                   "--limit", "\(Self.firstPaintCount)",
+                   "--json", fields,
+               ], cacheFor: 30),
+               let recent = try? decoder.decode([RepositoryPullRequest].self, from: recentData),
+               !recent.isEmpty,
+               !Task.isCancelled,
+               loadedRepository == repository {
+                pullRequests = Self.pullRequestsAfterRefresh(
+                    current: pullRequests,
+                    fetched: recent,
+                    fullRefresh: false
+                )
+                developerCache.removeAll()
+                Self.discoverPeople(in: pullRequests)
+                hasSnapshot = true
+                catchingUpOnHistory = true
+                saveSnapshot(for: repository, fetchedAt: Date(), historyComplete: false)
+            }
             var arguments = [
                 "pr", "list",
                 "--repo", repository,
@@ -253,19 +290,24 @@ struct PullRequestDeveloper: Identifiable {
                 "--json", fields,
             ], cacheFor: 30)
             let (data, open) = await (windowData, openData)
-            guard !Task.isCancelled, loadedRepository == repository else { return }
+            guard !Task.isCancelled, loadedRepository == repository else {
+                catchingUpOnHistory = false
+                return
+            }
             guard let data, needsFullRefresh || open != nil else {
-                error = GitHubFeed.ghHint
+                // The newest ones are already on screen when this is a cold
+                // start, so only a load with nothing to show is an error.
+                if !hasSnapshot { error = GitHubFeed.ghHint }
+                catchingUpOnHistory = false
                 loading = false
                 return
             }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
             guard let fetched = try? decoder.decode([RepositoryPullRequest].self, from: data),
                   let fetchedOpen = try? open.map({
                       try decoder.decode([RepositoryPullRequest].self, from: $0)
                   }) ?? [] else {
                 error = "Runway could not read the pull requests returned by GitHub."
+                catchingUpOnHistory = false
                 loading = false
                 return
             }
@@ -283,6 +325,7 @@ struct PullRequestDeveloper: Identifiable {
                 historyComplete: needsFullRefresh
                     || previousSnapshot?.historyComplete == true
             )
+            catchingUpOnHistory = false
             loading = false
         }
         loadTask = task
@@ -355,7 +398,7 @@ struct PullRequestDeveloper: Identifiable {
         )
         guard let data = try? Self.encoder.encode(snapshots) else { return }
         try? FileManager.default.createDirectory(
-            at: AgentControl.supportDir,
+            at: RunwayStorage.supportDir,
             withIntermediateDirectories: true
         )
         try? data.write(to: Self.snapshotFile, options: .atomic)

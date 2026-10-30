@@ -10,7 +10,6 @@ struct RunwayURLCommandTests {
 
     @Test("A refresh names one tab")
     func oneTab() {
-        #expect(tabs("runway://refresh?tab=runway") == [.runway])
         #expect(tabs("runway://refresh?tab=feeds") == [.feeds])
         #expect(tabs("runway://refresh?tab=pulls") == [.pullRequests])
     }
@@ -24,7 +23,8 @@ struct RunwayURLCommandTests {
     @Test("Anything else is ignored")
     func ignored() {
         #expect(tabs("runway://refresh?tab=nope") == nil)
-        #expect(tabs("runway://open?tab=runway") == nil)
-        #expect(tabs("https://refresh?tab=runway") == nil)
+        #expect(tabs("runway://refresh?tab=runway") == nil)
+        #expect(tabs("runway://open?tab=feeds") == nil)
+        #expect(tabs("https://refresh?tab=feeds") == nil)
     }
 }

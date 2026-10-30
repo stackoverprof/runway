@@ -4,13 +4,13 @@ import Testing
 
 @Suite("Key bindings")
 struct KeyBindingsTests {
-    @Test("Quick terminal defaults to Command-Option-Q")
-    func quickTerminalDefault() {
-        let chord = AppAction.quickTerminal.defaultChord
+    @Test("Switching repository defaults to Command-R")
+    func repoPickerDefault() {
+        let chord = AppAction.repoPicker.defaultChord
 
-        #expect(chord.keyCode == 12)
-        #expect(chord.display == "⌥⌘Q")
-        #expect(chord.modifiers == NSEvent.ModifierFlags([.command, .option]).rawValue)
+        #expect(chord.keyCode == 15)
+        #expect(chord.display == "⌘R")
+        #expect(chord.modifiers == NSEvent.ModifierFlags([.command]).rawValue)
     }
 
     @Test("Fn-Shift matches whichever key completes the chord")

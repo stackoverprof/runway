@@ -46,7 +46,7 @@ enum AvatarFetchPolicy {
     private var refreshed: Set<String> = []
     private let diskDir: URL
 
-    init(diskDir: URL = AgentControl.supportDir.appendingPathComponent("avatars", isDirectory: true)) {
+    init(diskDir: URL = RunwayStorage.supportDir.appendingPathComponent("avatars", isDirectory: true)) {
         self.diskDir = diskDir
         try? FileManager.default.createDirectory(at: diskDir, withIntermediateDirectories: true)
     }

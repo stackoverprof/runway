@@ -6,7 +6,7 @@ enum BrandingManager {
     private static var cachedLogo: (filename: String, image: NSImage)?
 
     private static var directory: URL {
-        let url = AgentControl.supportDir.appendingPathComponent("branding", isDirectory: true)
+        let url = RunwayStorage.supportDir.appendingPathComponent("branding", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

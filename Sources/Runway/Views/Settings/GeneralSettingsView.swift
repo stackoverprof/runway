@@ -7,7 +7,6 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKey.confirmQuit) private var confirmQuit = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
-    @State private var issueOrderReset = false
 
     var body: some View {
         Form {
@@ -36,21 +35,6 @@ struct GeneralSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    Button("Reset Open & Closed Order", role: .destructive) {
-                        AssignedIssues.resetSavedBacklogOrder()
-                        issueOrderReset = true
-                    }
-                    .pointerCursor()
-                    if issueOrderReset {
-                        Text("Reset")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text("Restores the default GitHub ordering for Open and Closed issues. Focus membership and Focus order are not changed.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

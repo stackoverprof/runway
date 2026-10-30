@@ -131,7 +131,6 @@ final class WindowDragNSView: NSView {
         guard !started else { return }
         started = true
         workspace.repositoryFeed = githubFeed
-        workspace.startAgentWatch()
         githubFeed.startPolling()
     }
 

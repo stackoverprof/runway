@@ -2,17 +2,14 @@ import SwiftUI
 import AppKit
 
 enum FeedTab: String, CaseIterable, Codable {
-    case runway = "Runway"
     case feeds = "Feeds"
     case pullRequests = "Pulls"
 
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
-        // Preserve workspaces saved before Merge moved into Feeds and the old
-        // Posts or Notes tab was replaced by PR.
-        if value == "Merge" {
-            self = .feeds
-        } else if value == "Posts" || value == "Notes" || value == "PR" {
+        // Workspaces saved by earlier versions name tabs this one no longer
+        // has, Runway and Merge among them; they all open on Feeds.
+        if value == "Posts" || value == "Notes" || value == "PR" || value == "Pulls" {
             self = .pullRequests
         } else {
             self = FeedTab(rawValue: value) ?? .feeds
@@ -25,47 +22,6 @@ enum FeedTab: String, CaseIterable, Codable {
     }
 }
 
-/// Which way the right pane stacks its terminals. Vertical is the classic
-/// accordion; horizontal lays the same weighted accordion side by side, which
-/// suits wide monitors where terminals want columns, not slivers.
-/// An agent needing attention in a repository the user is not looking at.
-struct AttentionAlert: Identifiable, Equatable {
-    let id: UUID            // the box or Quick tab, so a second alert replaces the first
-    let target: AgentAttentionTarget
-    let location: String
-    /// A quick agent's name can arrive after its banner, so this is settable.
-    var title: String
-}
-
-/// A custom command run from its shortcut, from start to finish.
-struct CommandBanner: Identifiable, Equatable {
-    enum Phase: Equatable {
-        case running
-        case done
-        case failed(Int32)
-    }
-
-    let id: UUID            // the command, so a rerun replaces its banner
-    let title: String
-    var phase: Phase = .running
-    var log: URL?
-}
-
-struct FocusIssueRevealRequest: Equatable {
-    let id: UUID
-    let repository: String
-    let issueNumber: Int
-}
-
-enum TerminalLayoutAxis: String, Codable {
-    case vertical
-    case horizontal
-
-    var toggled: TerminalLayoutAxis {
-        self == .vertical ? .horizontal : .vertical
-    }
-}
-
 /// Stepping through a tab's own options from the keyboard.
 enum SubtabNavigation {
     /// Wraps at both ends, so ⌘⌥] past the last option returns to the first.
@@ -74,14 +30,6 @@ enum SubtabNavigation {
         guard count > 1 else { return nil }
         return ((current + delta) % count + count) % count
     }
-}
-
-/// Open / Closed inside the Runway tab.
-enum RunwayIssueTab: String, CaseIterable, Identifiable {
-    case open = "Open"
-    case closed = "Closed"
-
-    var id: String { rawValue }
 }
 
 /// Everything / merges-only inside the Feeds tab.
@@ -123,247 +71,35 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     }
 }
 
-enum QuickTerminalTabAction: Equatable {
-    case new
-    case close
-    case select(Int)
-    case selectRoot(String)
-    case cycle(Int)
-}
-
-struct QuickTerminalTabRequest: Equatable {
-    let id: Int
-    let action: QuickTerminalTabAction
-}
-
-/// App-wide state + actions for the agent list. Owned here (not in a view) so the
-/// app-level keyboard monitor can drive it even while a terminal has focus.
+/// What one window is showing: the tab in front, that tab's own option, and
+/// the requests the keyboard and `runway://` links raise against it.
 @MainActor @Observable final class Workspace {
-    static let shared = Workspace()
-
-    var boxes: [AgentBox] = [AgentBox(name: "agent1")]
-    /// Repository currently projected into the right pane. Boxes belonging to
-    /// other repositories remain mounted so their terminal sessions keep running.
-    var activeFocusRepository: String?
-    /// The clone of `activeFocusRepository` whose board is on screen, when it
-    /// is not the preferred one. Each clone keeps its own Focus board.
-    var activeFocusCheckout: String?
-    var activeFocusBoard: String? {
-        activeFocusRepository.map { FocusBoard.key($0, checkout: activeFocusCheckout) }
-    }
-    /// The active repository's whole Focus list, in order, and the part of it
-    /// inside the window. Only the window's terminals are on screen.
-    var activeFocusOrder: [Int] = []
-    var activeFocusIssueNumbers: Set<Int> = []
-    var focusIssueRevealRequest: FocusIssueRevealRequest?
-    /// The box the user last focused (click or keyboard). Drives the focus glow,
-    /// the accordion's larger share, and the solo target.
-    var focusedID: UUID?
-    /// Solo / zoom: show only the focused box, filling the pane.
-    var soloed = false
-    /// Vertical stack (default) or side-by-side columns; ⌘⌥L flips it.
-    var terminalLayoutAxis: TerminalLayoutAxis = SettingsKey.configuredLayoutAxis()
-
-    /// Quick terminal: a persistent background terminal overlaid bottom-left,
-    /// toggled with ⌘⌥Q. `quickHeight == 0` means "use 50% of the pane".
-    var quickVisible = false
-    var quickPinned = false
-    /// The quick panel filling the left pane, its tabs stacked as an accordion.
-    var quickExpanded = false
-    /// Where the left pane's header ends, so an expanded panel starts below it.
-    var leftPaneContentTop: CGFloat = 0
-    var quickHeight: CGFloat = 0
-    var quickState: AgentState = .idle
-    var quickTabStates: [String: AgentState] = [:]
-    var quickTabRequest: QuickTerminalTabRequest?
-    /// The currently selected feed tab in the left pane
     var selectedTab: FeedTab = .feeds
-    /// Sub-selection inside each tab. Held here, not in the view, so the keyboard
-    /// monitor reaches past the three top-level tabs into the tab's own controls.
-    var runwayIssueTab: RunwayIssueTab = .open
     var feedFilter: FeedFilter = .all
-    /// Pulls always opens on month-to-date. Deliberately not persisted, so every
-    /// launch starts on the month in progress rather than an old window.
     var prTimeframe: PRTimeframe = .initial
-    /// Incremented by the app-level ⌘F handler so the active left pane can
-    /// toggle its tab-specific search UI.
-    var findRequestID = 0
-    /// Incremented when the already-selected tab is picked again: the tab jumps
-    /// back to the top of its list and refetches.
-    var tabResetRequestID = 0
-    /// Incremented by a `runway://refresh` link: refetch `sourceRefreshTab` now,
-    /// without switching tab or scrolling, so a script that just changed an
-    /// issue can show it without taking focus.
-    var sourceRefreshRequestID = 0
-    var sourceRefreshTab: FeedTab = .runway
-    /// Incremented by the repo-switcher shortcut so the left pane opens its
-    /// searchable repository picker.
-    var repoPickerRequestID = 0
-    /// Set by the QuickTerminal so the key monitor can focus it (⌘← when open).
-    @ObservationIgnored var focusQuick: (() -> Void)?
-    @ObservationIgnored var repositoryFeed: GitHubFeed?
-    /// Set by the QuickTerminal: reports whether its surface is the window's
-    /// first responder right now.
-    @ObservationIgnored var quickHasKeyboard: (() -> Bool)?
-
-    /// True while the user is typing into the quick terminal. Background work
-    /// (Focus-board reconciliation, a terminal surface mounting) must never pull
-    /// the keyboard out from under it.
-    var isQuickTerminalFocused: Bool {
-        quickVisible && quickHasKeyboard?() == true
-    }
-
-    /// Width of the left pane (the split divider position).
-    var leftWidth: CGFloat = 460
-    /// Temporarily lifts the left pane so its actively dragged Focus card can
-    /// cross pane boundaries without lifting ordinary left-pane content.
-    var isFocusCardDragging = false
-    /// Once the Runway board has loaded, Focus is the sole owner of right-pane boxes.
-    var focusBoardControlsBoxes = false
-
-    /// True while the window is full screen (no traffic lights → less top inset).
     var isFullScreen = false
 
-    /// NSEvent.timestamp of the last terminal scroll we forwarded — throttles the
-    /// dense trackpad precise-scroll stream so mouse-reporting TUIs don't overshoot.
-    @ObservationIgnored var lastTerminalScrollTS: TimeInterval = 0
+    /// The feed this window reads. Each window can follow its own repository.
+    @ObservationIgnored var repositoryFeed: GitHubFeed?
 
-    /// Last raw control-file contents seen per box, so we only apply changes (and
-    /// don't clobber the user's UI edits with a stale file).
-    private var lastControl: [UUID: String] = [:]
-    @ObservationIgnored private var focusedBoxByRepository: [String: UUID] = [:]
-    @ObservationIgnored private var pendingAttention: (id: UUID, repository: String?)?
-    private var lastSaved: Data?
-    /// False until the first control-file poll completes, so adopting agents'
-    /// pre-existing needs-action state on launch doesn't fire a burst of toasts.
-    private var watchReady = false
+    /// Bumped to ask the view for something; the view watches the id, not a
+    /// flag, so the same request twice in a row still arrives twice.
+    private(set) var findRequestID = 0
+    private(set) var repoPickerRequestID = 0
+    private(set) var tabResetRequestID = 0
+    private(set) var sourceRefreshRequestID = 0
+    private(set) var sourceRefreshTab: FeedTab = .feeds
 
-    @ObservationIgnored private var dirWatcher: DispatchSourceFileSystemObject?
-    @ObservationIgnored private var dirDescriptor: Int32 = -1
-    @ObservationIgnored private var pulseWatcher: DispatchSourceFileSystemObject?
-    @ObservationIgnored private var pulseDescriptor: Int32 = -1
+    @ObservationIgnored private var lastSaved: Data?
 
-    /// Agents needing attention in a repository that is not on screen. The
-    /// card itself is parked, so the only way to know is to be told.
-    var attentionAlerts: [AttentionAlert] = []
-    var commandBanners: [CommandBanner] = []
-
-    init() {
-        load()
-        for index in boxes.indices {
-            guard let repository = boxes[index].focusRepository else { continue }
-            let followed = UserDefaults.standard.bool(forKey: SettingsKey.issueAgentSessionsEnabled)
-                ? boxes[index].focusIssueNumber.flatMap {
-                    AgentControl.durableWorkingDirectory(
-                        focusRepository: repository,
-                        focusIssueNumber: $0
-                    )
-                }
-                : nil
-            boxes[index].cwd = followed
-                ?? boxes[index].focusCheckout
-                ?? GitHubFeed.shared.localPath(for: repository)
-        }
-        if GitHubFeed.shared.repo.isEmpty {
-            activeFocusRepository = boxes.first?.focusRepository
-            activeFocusCheckout = boxes.first?.focusCheckout
-        } else {
-            activeFocusRepository = GitHubFeed.shared.repo
-            activeFocusCheckout = GitHubFeed.shared.focusCheckout(for: GitHubFeed.shared.repo)
-        }
-        if let activeFocusBoard {
-            let reel = AssignedIssues.savedFocusReel(for: activeFocusBoard)
-            activeFocusOrder = reel.issues
-            activeFocusIssueNumbers = Set(reel.issues)
-        }
-        if boxes.contains(where: { $0.focusRepository != nil }) {
-            focusBoardControlsBoxes = true
-        }
-        // Focus the first box on launch so the glow + accordion expansion match
-        // where the keyboard actually lands (the terminal that auto-focuses).
-        focusedID = activeBoxes.first?.id
-        if let activeFocusBoard, let focusedID {
-            focusedBoxByRepository[activeFocusBoard] = focusedID
-        }
-        // Quitting kills the processes, so reopen each restored card into the
-        // provider that most recently owned its issue conversation.
-        let cmd = SettingsKey.configuredAgentCommand
-        let bindingEnabled = UserDefaults.standard.bool(
-            forKey: SettingsKey.issueAgentSessionsEnabled
-        )
-        for i in boxes.indices {
-            let restoredCommand: String
-            if bindingEnabled,
-               let repository = boxes[i].focusRepository,
-               let issueNumber = boxes[i].focusIssueNumber {
-                restoredCommand = AgentControl.preferredAgentCommand(
-                    fallback: cmd,
-                    focusRepository: repository,
-                    focusIssueNumber: issueNumber
-                )
-            } else {
-                restoredCommand = cmd
-            }
-            if !restoredCommand.isEmpty { boxes[i].autorun = restoredCommand }
-        }
-    }
-
-    // MARK: Persistence
-
-    private struct Persisted: Codable {
-        var boxes: [AgentBox]
-        var leftWidth: CGFloat
-        var quickHeight: CGFloat
-        var accordion: Bool
-        var quickPinned: Bool?
-        var quickExpanded: Bool?
-        var selectedTab: FeedTab?
-        var layoutAxis: TerminalLayoutAxis?
-    }
-
-    private static var stateFile: URL { AgentControl.supportDir.appendingPathComponent("workspace.json") }
-
-    private func load() {
-        guard let data = try? Data(contentsOf: Self.stateFile),
-              let s = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
-        if !s.boxes.isEmpty { boxes = s.boxes }
-        leftWidth = s.leftWidth
-        quickHeight = s.quickHeight
-        quickPinned = s.quickPinned ?? false
-        quickExpanded = s.quickExpanded ?? false
-        selectedTab = s.selectedTab ?? .feeds
-        terminalLayoutAxis = s.layoutAxis ?? SettingsKey.configuredLayoutAxis()
-        lastSaved = data
-    }
-
-    /// Write current layout to disk if it changed. Cheap enough to call on the poll tick.
-    func saveIfNeeded() {
-        let snapshot = Persisted(boxes: boxes, leftWidth: leftWidth,
-                                 quickHeight: quickHeight, accordion: true,
-                                 quickPinned: quickPinned, quickExpanded: quickExpanded,
-                                 selectedTab: selectedTab,
-                                 layoutAxis: terminalLayoutAxis)
-        guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
-        lastSaved = data
-        try? data.write(to: Self.stateFile)
-    }
-
-    func toggleQuick() {
-        quickVisible.toggle()
-        // Closing a pinned quick terminal also drops the pin: pinning is a
-        // "keep this open" request, so dismissing it retires that request and
-        // the next open behaves normally (auto-hide when it loses focus).
-        if !quickVisible { quickPinned = false }
-    }
-
-    func requestQuickTabAction(_ action: QuickTerminalTabAction) {
-        quickTabRequest = QuickTerminalTabRequest(id: (quickTabRequest?.id ?? 0) + 1, action: action)
-    }
+    init() { load() }
 
     func requestFind() { findRequestID &+= 1 }
 
     /// Picking the tab you are already on: back to the top, and refetch.
     func requestTabReset() { tabResetRequestID &+= 1 }
+
+    func requestRepoPicker() { repoPickerRequestID &+= 1 }
 
     /// Refetch one tab's source in place (see `RunwayURLCommand`).
     func requestSourceRefresh(_ tab: FeedTab) {
@@ -371,15 +107,11 @@ struct QuickTerminalTabRequest: Equatable {
         sourceRefreshRequestID &+= 1
     }
 
-    /// Open the searchable repository picker from the keyboard.
-    func requestRepoPicker() { repoPickerRequestID &+= 1 }
-
     // MARK: Subtabs
 
     /// Options the current tab offers below itself, in display order.
     var subtabLabels: [String] {
         switch selectedTab {
-        case .runway: RunwayIssueTab.allCases.map(\.rawValue)
         case .feeds: FeedFilter.allCases.map(\.rawValue)
         case .pullRequests: PRTimeframe.allCases.map(\.rawValue)
         }
@@ -387,7 +119,6 @@ struct QuickTerminalTabRequest: Equatable {
 
     var selectedSubtabIndex: Int {
         switch selectedTab {
-        case .runway: RunwayIssueTab.allCases.firstIndex(of: runwayIssueTab) ?? 0
         case .feeds: FeedFilter.allCases.firstIndex(of: feedFilter) ?? 0
         case .pullRequests: PRTimeframe.allCases.firstIndex(of: prTimeframe) ?? 0
         }
@@ -395,9 +126,6 @@ struct QuickTerminalTabRequest: Equatable {
 
     func selectSubtab(index: Int) {
         switch selectedTab {
-        case .runway:
-            guard RunwayIssueTab.allCases.indices.contains(index) else { return }
-            runwayIssueTab = RunwayIssueTab.allCases[index]
         case .feeds:
             guard FeedFilter.allCases.indices.contains(index) else { return }
             feedFilter = FeedFilter.allCases[index]
@@ -427,755 +155,28 @@ struct QuickTerminalTabRequest: Equatable {
         selectSubtab(index: next)
     }
 
-    var focusedIndex: Int? { boxes.firstIndex { $0.id == focusedID } }
+    // MARK: Persistence
 
-    var activeBoxes: [AgentBox] {
-        guard focusBoardControlsBoxes, let activeFocusBoard else { return boxes }
-        return boxes.filter {
-            $0.focusBoard == activeFocusBoard &&
-                $0.focusIssueNumber.map(activeFocusIssueNumbers.contains) == true
-        }
+    private struct Persisted: Codable {
+        var selectedTab: FeedTab?
     }
 
-    func isBoxInActiveRepository(_ box: AgentBox) -> Bool {
-        !focusBoardControlsBoxes || activeBoxes.contains { $0.id == box.id }
+    private static var stateFile: URL {
+        RunwayStorage.supportDir.appendingPathComponent("workspace.json")
     }
 
-    // MARK: Agent control channel
-
-    /// Poll each box's control file and apply name/description/state the agent wrote.
-    func startAgentWatch() {
-        let dirPath = AgentControl.controlDir.path
-        dirDescriptor = open(dirPath, O_EVTONLY)
-        if dirDescriptor >= 0 {
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: dirDescriptor,
-                eventMask: .write,
-                queue: DispatchQueue.main
-            )
-            source.setEventHandler { [weak self] in
-                guard let self else { return }
-                self.pollControlFiles()
-                self.saveIfNeeded()
-            }
-            source.setCancelHandler { [weak self] in
-                guard let fd = self?.dirDescriptor else { return }
-                close(fd)
-            }
-            dirWatcher = source
-            source.resume()
-        }
-
-        startStatePulseWatch()
-
-        // A clicked banner lands on the agent that raised it.
-        RunwayNotificationManager.shared.openAgent = { [weak self] target in
-            self?.openAttentionTarget(target)
-        }
-
-        // Backstop only. The pulse file carries every state change, so this
-        // tick exists for anything that writes a control file without pulsing.
-        Task { @MainActor in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                pollControlFiles()
-                saveIfNeeded()
-                AgentControl.trimStatePulse()
-                watchReady = true   // subsequent polls fire transition toasts
-            }
-        }
+    private func load() {
+        guard let data = try? Data(contentsOf: Self.stateFile),
+              let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
+        selectedTab = saved.selectedTab ?? .feeds
+        lastSaved = data
     }
 
-    /// Watch the one file every state writer appends a byte to.
-    ///
-    /// A control file is rewritten in place, which changes no directory entry,
-    /// so the directory watcher above never sees it and the state only surfaced
-    /// on the next poll. An append is a write to a file Runway can watch
-    /// directly, so the amber state now lands as soon as the agent stops.
-    private func startStatePulseWatch() {
-        AgentControl.ensureStatePulse()
-        pulseDescriptor = open(AgentControl.statePulse.path, O_EVTONLY)
-        guard pulseDescriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: pulseDescriptor,
-            eventMask: [.write, .extend, .delete, .rename],
-            queue: DispatchQueue.main
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let events = source.data
-            self.pollControlFiles()
-            self.saveIfNeeded()
-            // The file was replaced under us: the fd now points at nothing, so
-            // re-open or every later pulse is missed.
-            if events.contains(.delete) || events.contains(.rename) {
-                self.restartStatePulseWatch()
-            }
-        }
-        source.setCancelHandler { [weak self] in
-            guard let fd = self?.pulseDescriptor, fd >= 0 else { return }
-            close(fd)
-        }
-        pulseWatcher = source
-        source.resume()
-    }
-
-    private func restartStatePulseWatch() {
-        pulseWatcher?.cancel()
-        pulseWatcher = nil
-        pulseDescriptor = -1
-        startStatePulseWatch()
-    }
-
-    deinit {
-        dirWatcher?.cancel()
-        pulseWatcher?.cancel()
-    }
-
-    private var visibleRepository: String {
-        repositoryFeed?.repo ?? GitHubFeed.shared.repo
-    }
-
-    private func appendAttention(_ alert: AttentionAlert) {
-        attentionAlerts.removeAll { $0.id == alert.id }
-        attentionAlerts.append(alert)
-        if attentionAlerts.count > 3 {
-            attentionAlerts.removeFirst(attentionAlerts.count - 3)
-        }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 12_000_000_000)
-            self.attentionAlerts.removeAll { $0.id == alert.id }
-        }
-    }
-
-    /// A card in the selected repository is already visible and already pulses,
-    /// so only a parked one raises an in-app alert. Boxes with no repository of
-    /// their own belong to whatever is on screen.
-    private func noteAttentionIfOffScreen(id: UUID, repository: String?, title: String) {
-        guard let repository, !repository.isEmpty,
-              !activeBoxes.contains(where: { $0.id == id }) else { return }
-        let issueNumber = boxes.first(where: { $0.id == id })?.focusIssueNumber
-        let location = repository.caseInsensitiveCompare(visibleRepository) == .orderedSame
-            ? "\(repository) · \(issueNumber.map(GitHubNumber.reference) ?? "Focus")"
-            : repository
-        appendAttention(
-            AttentionAlert(
-                id: id,
-                target: .box(id, repository: repository),
-                location: location,
-                title: title
-            )
-        )
-    }
-
-    /// A banner raised before its agent's name was known takes the name as
-    /// soon as the scan finds one.
-    private func nameQuickBanner(_ id: UUID, root: String) {
-        Task { @MainActor in
-            guard let name = await QuickAgentNames.shared.reload(root: root),
-                  let index = attentionAlerts.firstIndex(where: { $0.id == id }) else { return }
-            attentionAlerts[index].title = name
-        }
-    }
-
-    func showCommandBanner(id: UUID, title: String) {
-        commandBanners.removeAll { $0.id == id }
-        commandBanners.append(CommandBanner(id: id, title: title))
-    }
-
-    /// A finished command stays a moment, longer when it failed so its log
-    /// can be opened from the banner.
-    func finishCommandBanner(_ id: UUID, exitCode: Int32, log: URL) {
-        guard let index = commandBanners.firstIndex(where: { $0.id == id }) else { return }
-        commandBanners[index].phase = exitCode == 0 ? .done : .failed(exitCode)
-        commandBanners[index].log = log
-        let finished = commandBanners[index]
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: exitCode == 0 ? 4_000_000_000 : 15_000_000_000)
-            self.commandBanners.removeAll { $0 == finished }
-        }
-    }
-
-    func dismissCommandBanner(_ id: UUID) {
-        commandBanners.removeAll { $0.id == id }
-    }
-
-    func dismissAttention(_ alert: AttentionAlert) {
-        attentionAlerts.removeAll { $0.id == alert.id }
-    }
-
-    func openAttention(_ alert: AttentionAlert) {
-        dismissAttention(alert)
-        openAttentionTarget(alert.target)
-    }
-
-    func openAttentionTarget(_ target: AgentAttentionTarget) {
-        switch target {
-        case .box(let id, let repository):
-            revealAgent(id, in: repository)
-        case .quick(let root):
-            revealQuickTab(root)
-        }
-    }
-
-    func revealQuickTab(_ root: String) {
-        guard QuickTerminalSession.tabRoots().contains(root) else { return }
-        attentionAlerts.removeAll { $0.target == .quick(root: root) }
-        quickVisible = true
-        requestQuickTabAction(.selectRoot(root))
-    }
-
-    /// Jump to a waiting agent. When switching repositories, keep the target
-    /// until Focus-board reconciliation mounts that repository's boxes.
-    func revealAgent(_ box: UUID, in repository: String?) {
-        attentionAlerts.removeAll { $0.id == box }
-        pendingAttention = (box, repository)
-        if let agent = boxes.first(where: { $0.id == box }),
-           let issueNumber = agent.focusIssueNumber,
-           let issueRepository = agent.focusRepository {
-            focusIssueRevealRequest = FocusIssueRevealRequest(
-                id: UUID(), repository: issueRepository, issueNumber: issueNumber
-            )
-        }
-        let feed = repositoryFeed ?? GitHubFeed.shared
-        let switchingRepo = repository.map {
-            !$0.isEmpty && $0.caseInsensitiveCompare(visibleRepository) != .orderedSame
-        } ?? false
-        // The same repository on another clone's board is a switch too.
-        let target = boxes.first { $0.id == box }
-        let switchingCheckout = !switchingRepo && target?.focusRepository != nil
-            && activeFocusRepository != nil && target?.focusBoard != activeFocusBoard
-        if switchingRepo || switchingCheckout, let repository,
-           let checkout = target?.focusCheckout
-               ?? (target?.focusRepository).flatMap({ feed.checkouts(for: $0).first }) {
-            feed.selectCheckout(checkout, of: repository)
-            selectedTab = .runway
-        } else if switchingRepo, let repository {
-            feed.setRepo(repository)
-            selectedTab = .runway
-        }
-        let switching = switchingRepo || switchingCheckout
-        if !switching, activeBoxes.contains(where: { $0.id == box }) {
-            pendingAttention = nil
-            setFocus(box)
-            retryAttentionFocus(box)
-        }
-    }
-
-    private func retryAttentionFocus(_ box: UUID) {
-        Task { @MainActor in
-            for _ in 0..<20 {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                guard self.focusedID == box,
-                      self.activeBoxes.contains(where: { $0.id == box }) else { return }
-                if TerminalRegistry.shared.focusTerminal(box) { return }
-            }
-        }
-    }
-
-    private func pollControlFiles() {
-        for i in boxes.indices {
-            let id = boxes[i].id
-
-            // Working directory the box's shell recorded — persisted so the agent
-            // reopens in the same folder after a relaunch.
-            if let cwdData = try? Data(contentsOf: AgentControl.cwdFile(for: id)),
-               let dir = String(data: cwdData, encoding: .utf8)?
-                   .trimmingCharacters(in: .whitespacesAndNewlines),
-               !dir.isEmpty, dir != boxes[i].cwd {
-                boxes[i].cwd = dir
-            }
-
-            guard let data = try? Data(contentsOf: AgentControl.file(for: id)),
-                  let raw = String(data: data, encoding: .utf8) else { continue }
-            if lastControl[id] == raw { continue }   // unchanged → skip
-            lastControl[id] = raw
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if boxes[i].focusIssueNumber == nil,
-               let name = (json["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !name.isEmpty {
-                boxes[i].name = String(name.prefix(40))
-            }
-            if boxes[i].focusIssueNumber == nil,
-               let desc = json["description"] as? String {
-                boxes[i].detail = String(desc.prefix(40))
-            }
-            if let state = json["state"] as? String {
-                let next = AgentState(control: state)
-                if watchReady, next == .needsAction, boxes[i].state != .needsAction {
-                    noteAttentionIfOffScreen(
-                        id: id,
-                        repository: boxes[i].focusRepository,
-                        title: boxes[i].name
-                    )
-                    RunwayNotificationManager.shared.show(
-                        "\(boxes[i].name) needs your attention",
-                        sound: true,
-                        target: .box(id, repository: boxes[i].focusRepository)
-                    )
-                }
-                boxes[i].state = next
-            }
-        }
-        
-        // Poll each Quick Terminal tab independently. Inactive tabs keep their
-        // running shell and state, while quickState drives the selected tab UI.
-        let quickRoots = QuickTerminalSession.tabRoots()
-        let selectedQuickRoot = QuickTerminalSession.selectedRoot()
-        // Keep the /rename names warm: a banner names the agent that wants you.
-        QuickAgentNames.shared.refresh(roots: quickRoots)
-        for (index, root) in quickRoots.enumerated() {
-            let quickID = QuickTerminalSession.boxID(root: root)
-            guard let data = try? Data(contentsOf: AgentControl.file(for: quickID)),
-                  let raw = String(data: data, encoding: .utf8) else {
-                quickTabStates[root] = .idle
-                lastControl[quickID] = nil
-                continue
-            }
-            guard lastControl[quickID] != raw else { continue }
-            lastControl[quickID] = raw
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let state = json["state"] as? String else { continue }
-
-            let next = AgentState(control: state)
-            let previous = quickTabStates[root] ?? .idle
-            if watchReady, next == .needsAction, previous != .needsAction {
-                let name = QuickAgentNames.shared.name(for: root)
-                if root != selectedQuickRoot || !quickVisible {
-                    appendAttention(
-                        AttentionAlert(
-                            id: quickID,
-                            target: .quick(root: root),
-                            location: "Quick tab \(index + 1)",
-                            title: name ?? "Quick Agent"
-                        )
-                    )
-                    if name == nil { nameQuickBanner(quickID, root: root) }
-                }
-                RunwayNotificationManager.shared.show(
-                    "\(name ?? "Quick tab \(index + 1)") needs your attention",
-                    sound: true,
-                    target: .quick(root: root)
-                )
-            }
-            quickTabStates[root] = next
-        }
-        quickTabStates = quickTabStates.filter { quickRoots.contains($0.key) }
-        quickState = quickTabStates[selectedQuickRoot] ?? .idle
-    }
-
-    // MARK: Actions (driven by the keyboard monitor + clicks)
-
-    func newBox() {
-        guard !focusBoardControlsBoxes else { return }
-        var box = AgentBox(name: "agent\(boxes.count + 1)")
-        let cmd = SettingsKey.configuredAgentCommand
-        if !cmd.isEmpty { box.autorun = cmd }   // run it as the shell starts
-        boxes.append(box)
-        setFocus(box.id)
-    }
-
-    @discardableResult
-    func closeFocused() -> Bool {
-        guard !focusBoardControlsBoxes else { return true }
-        guard let idx = focusedIndex else { return false }
-        let removed = boxes.remove(at: idx)
-        TerminalRegistry.shared.unregister(id: removed.id)
-        AgentControl.cleanup(removed.id)
-        lastControl[removed.id] = nil
-        if boxes.isEmpty {
-            focusedID = nil
-            soloed = false
-        } else {
-            setFocus(boxes[min(idx, boxes.count - 1)].id)
-        }
-        return true
-    }
-
-    /// With Focus in charge, walks the whole Focus list (wrapping), sliding the
-    /// window when the next card is hidden.
-    func focus(offset: Int) {
-        if focusBoardControlsBoxes, let board = activeFocusBoard,
-           !activeFocusOrder.isEmpty {
-            let currentIssue = boxes.first { $0.id == focusedID }?.focusIssueNumber
-            let current = currentIssue.flatMap(activeFocusOrder.firstIndex(of:))
-            let count = activeFocusOrder.count
-            let next = current.map { (($0 + offset) % count + count) % count }
-                ?? (offset >= 0 ? 0 : count - 1)
-            focusIssue(activeFocusOrder[next], in: board)
-            return
-        }
-        let candidates = activeBoxes
-        guard !candidates.isEmpty else { return }
-        let current = candidates.firstIndex { $0.id == focusedID } ?? 0
-        let next = ((current + offset) % candidates.count + candidates.count) % candidates.count
-        setFocus(candidates[next].id)
-    }
-
-    /// True on the first card of the whole Focus list (not merely the first
-    /// one in the window), so ← reaches the quick terminal only from there.
-    var focusedIsFirstAgent: Bool {
-        if focusBoardControlsBoxes, let first = activeFocusOrder.first {
-            return boxes.first { $0.id == focusedID }?.focusIssueNumber == first
-        }
-        return activeBoxes.first?.id == focusedID
-    }
-
-    /// ⌘1-9: the Nth card of the whole Focus list, sliding the window to it.
-    func focus(index: Int) {
-        if focusBoardControlsBoxes, let board = activeFocusBoard {
-            guard activeFocusOrder.indices.contains(index) else { return }
-            focusIssue(activeFocusOrder[index], in: board)
-            return
-        }
-        let candidates = activeBoxes
-        guard candidates.indices.contains(index) else { return }
-        setFocus(candidates[index].id)
-    }
-
-    /// Focuses an issue's terminal. A hidden one is revealed first: the left
-    /// pane slides the window, and the next reconciliation hands it the keyboard.
-    func focusIssue(_ issueNumber: Int, in board: String) {
-        guard let box = boxes.first(where: {
-            $0.focusBoard == board && $0.focusIssueNumber == issueNumber
-        }), let repository = box.focusRepository else { return }
-        if activeBoxes.contains(where: { $0.id == box.id }) {
-            setFocus(box.id)
-            return
-        }
-        pendingAttention = (box.id, repository)
-        focusIssueRevealRequest = FocusIssueRevealRequest(
-            id: UUID(), repository: repository, issueNumber: issueNumber
-        )
-    }
-
-    func moveFocused(by delta: Int) {
-        guard !focusBoardControlsBoxes else { return }
-        guard let idx = focusedIndex else { return }
-        let target = idx + delta
-        guard boxes.indices.contains(target) else { return }
-        boxes.swapAt(idx, target)
-    }
-
-    func toggleSolo() {
-        guard focusedID != nil else { return }
-        soloed.toggle()
-    }
-
-    func toggleLayoutAxis() {
-        terminalLayoutAxis = terminalLayoutAxis.toggled
-        saveIfNeeded()
-    }
-
-    /// Set the visual focus and give that box's terminal keyboard focus.
-    ///
-    /// `moveKeyboard: false` moves the glow and the accordion share only. Use it
-    /// for anything the user did not directly ask for, so a background refresh
-    /// never interrupts typing somewhere else in the window.
-    func setFocus(_ id: UUID?, moveKeyboard: Bool = true) {
-        focusedID = id
-        if let id,
-           let board = boxes.first(where: { $0.id == id })?.focusBoard {
-            focusedBoxByRepository[board] = id
-        }
-        guard moveKeyboard else { return }
-        TerminalRegistry.shared.focusTerminal(id)
-    }
-
-    /// Reconcile one repository's Focus list without disturbing terminal
-    /// sessions owned by other repositories. Every Focus issue keeps a box;
-    /// only those in `visibleIssueNumbers` (the window) are on screen.
-    /// Per issue, the agent command and folder a Focus terminal reopens with,
-    /// when Focus conversation binding is on.
-    private static func issueAgentLaunch(
-        issues: [AssignedIssue],
-        repository: String
-    ) -> (commands: [Int: String], directories: [Int: String]) {
-        let bindingEnabled = UserDefaults.standard.bool(
-            forKey: SettingsKey.issueAgentSessionsEnabled
-        )
-        let commandsByIssue = bindingEnabled
-            ? Dictionary(uniqueKeysWithValues: issues.map { issue in
-                (
-                    issue.number,
-                    AgentControl.preferredAgentCommand(
-                        fallback: SettingsKey.configuredAgentCommand,
-                        focusRepository: repository,
-                        focusIssueNumber: issue.number
-                    )
-                )
-            })
-            : [:]
-        let directoriesByIssue: [Int: String] = bindingEnabled
-            ? issues.reduce(into: [:]) { result, issue in
-                result[issue.number] = AgentControl.durableWorkingDirectory(
-                    focusRepository: repository,
-                    focusIssueNumber: issue.number
-                )
-            }
-            : [:]
-        return (commandsByIssue, directoriesByIssue)
-    }
-
-    /// Opens or closes the terminals of a board that is not on screen, after a
-    /// `runway-issue` command changed its Focus reel. The view, the focused box
-    /// and the board on screen stay as they are.
-    func reconcileOffScreenBoard(issues: [AssignedIssue], repository: String, checkout: String?) {
-        let board = FocusBoard.key(repository, checkout: checkout)
-        guard board != activeFocusBoard else { return }
-        let (commandsByIssue, directoriesByIssue) = Self.issueAgentLaunch(
-            issues: issues,
-            repository: repository
-        )
-        let reconciliation = FocusBoxReconciler.reconcile(
-            previousBoxes: boxes,
-            issues: issues,
-            repository: repository,
-            checkout: checkout,
-            workingDirectory: (checkout ?? GitHubFeed.shared.checkouts(for: repository).first
-                ?? GitHubFeed.shared.localPath(for: repository))
-                .map(CloneName.root(ofCheckout:)),
-            workingDirectoriesByIssue: directoriesByIssue,
-            command: SettingsKey.configuredAgentCommand,
-            commandsByIssue: commandsByIssue,
-            retainUnmanagedBoxes: true
-        )
-        for removed in reconciliation.removedBoxes {
-            TerminalRegistry.shared.unregister(id: removed.id)
-            AgentControl.cleanup(removed.id)
-            lastControl[removed.id] = nil
-        }
-        boxes = reconciliation.boxes
-    }
-
-    func syncFocusBoard(
-        issues: [AssignedIssue],
-        visibleIssueNumbers: [Int],
-        repository: String,
-        checkout: String? = nil
-    ) {
-        let wasFocusControlled = focusBoardControlsBoxes
-        focusBoardControlsBoxes = true
-        let previousBoxes = boxes
-        if let activeFocusBoard, let focusedID,
-           previousBoxes.contains(where: {
-               $0.id == focusedID && $0.focusBoard == activeFocusBoard
-           }) {
-            focusedBoxByRepository[activeFocusBoard] = focusedID
-        }
-
-        let board = FocusBoard.key(repository, checkout: checkout)
-        let previousRepositoryBoxes = previousBoxes.filter {
-            $0.focusBoard == board
-        }
-        let visibleSet = Set(visibleIssueNumbers)
-        let previousRepositoryFocusID = focusedBoxByRepository[board]
-            ?? focusedID.flatMap { id in
-                previousRepositoryBoxes.contains(where: {
-                    $0.id == id && $0.focusIssueNumber.map(visibleSet.contains) == true
-                }) ? id : nil
-            }
-        let previousFocusedIndex = previousRepositoryFocusID.flatMap { id in
-            previousRepositoryBoxes.firstIndex { $0.id == id }
-        } ?? 0
-        let (commandsByIssue, directoriesByIssue) = Self.issueAgentLaunch(
-            issues: issues,
-            repository: repository
-        )
-        let reconciliation = FocusBoxReconciler.reconcile(
-            previousBoxes: previousBoxes,
-            issues: issues,
-            repository: repository,
-            checkout: checkout,
-            workingDirectory: (checkout ?? GitHubFeed.shared.localPath(for: repository))
-                .map(CloneName.root(ofCheckout:)),
-            workingDirectoriesByIssue: directoriesByIssue,
-            command: SettingsKey.configuredAgentCommand,
-            commandsByIssue: commandsByIssue,
-            retainUnmanagedBoxes: wasFocusControlled
-        )
-        let nextRepositoryBoxes = reconciliation.repositoryBoxes.filter {
-            $0.focusIssueNumber.map(visibleSet.contains) == true
-        }
-
-        for removed in reconciliation.removedBoxes {
-            TerminalRegistry.shared.unregister(id: removed.id)
-            AgentControl.cleanup(removed.id)
-            lastControl[removed.id] = nil
-        }
-        boxes = reconciliation.boxes
-        activeFocusRepository = repository
-        activeFocusCheckout = checkout
-        activeFocusOrder = issues.map(\.number)
-        activeFocusIssueNumbers = visibleSet
-
-        if nextRepositoryBoxes.isEmpty {
-            setFocus(nil)
-            soloed = false
-        } else {
-            let attentionID = pendingAttention.flatMap { pending -> UUID? in
-                guard (pending.repository == nil ||
-                       pending.repository?.caseInsensitiveCompare(repository) == .orderedSame),
-                      nextRepositoryBoxes.contains(where: { $0.id == pending.id }) else { return nil }
-                return pending.id
-            }
-            let nextFocusID: UUID
-            if let attentionID {
-                nextFocusID = attentionID
-            } else if let previousRepositoryFocusID,
-               nextRepositoryBoxes.contains(where: { $0.id == previousRepositoryFocusID }) {
-                nextFocusID = previousRepositoryFocusID
-            } else if let nearest = Self.nearestVisibleBox(
-                to: previousRepositoryFocusID.flatMap { id in
-                    previousRepositoryBoxes.first { $0.id == id }?.focusIssueNumber
-                },
-                in: nextRepositoryBoxes,
-                order: issues.map(\.number)
-            ) {
-                // The focused card slid out of the window: stay on the edge
-                // it left from rather than jumping across the window.
-                nextFocusID = nearest
-            } else {
-                nextFocusID = nextRepositoryBoxes[
-                    min(previousFocusedIndex, nextRepositoryBoxes.count - 1)
-                ].id
-            }
-            // This runs on every background issue refresh, so it must be inert
-            // for the keyboard. Only hand the keyboard over when the focused box
-            // genuinely changed, and never while the quick terminal has it.
-            // Otherwise a routine poll yanks the caret mid-keystroke.
-            setFocus(
-                nextFocusID,
-                moveKeyboard: attentionID != nil ||
-                    (nextFocusID != focusedID && !isQuickTerminalFocused)
-            )
-            if attentionID != nil {
-                pendingAttention = nil
-                retryAttentionFocus(nextFocusID)
-            }
-        }
-        saveIfNeeded()
-    }
-
-    /// The on-screen box whose issue sits closest in Focus order to `issue`.
-    static func nearestVisibleBox(
-        to issueNumber: Int?,
-        in visibleBoxes: [AgentBox],
-        order: [Int]
-    ) -> UUID? {
-        guard let issueNumber, let position = order.firstIndex(of: issueNumber) else { return nil }
-        return visibleBoxes.min { lhs, rhs in
-            distance(lhs, from: position, order: order) < distance(rhs, from: position, order: order)
-        }?.id
-    }
-
-    private static func distance(_ box: AgentBox, from position: Int, order: [Int]) -> Int {
-        guard let index = box.focusIssueNumber.flatMap(order.firstIndex(of:)) else { return .max }
-        return abs(index - position)
-    }
-}
-
-struct FocusBoxReconciliation {
-    let boxes: [AgentBox]
-    let repositoryBoxes: [AgentBox]
-    let removedBoxes: [AgentBox]
-}
-
-enum FocusBoxReconciler {
-    static func reconcile(
-        previousBoxes: [AgentBox],
-        issues: [AssignedIssue],
-        repository: String,
-        checkout: String? = nil,
-        workingDirectory: String?,
-        workingDirectoriesByIssue: [Int: String] = [:],
-        command: String,
-        commandsByIssue: [Int: String] = [:],
-        retainUnmanagedBoxes: Bool
-    ) -> FocusBoxReconciliation {
-        let board = FocusBoard.key(repository, checkout: checkout)
-        let previousRepositoryBoxes = previousBoxes.filter {
-            $0.focusBoard == board
-        }
-        var usedIDs = Set<UUID>()
-        var repositoryBoxes: [AgentBox] = []
-
-        for issue in issues {
-            if var existing = previousRepositoryBoxes.first(where: {
-                $0.focusIssueNumber == issue.number
-            }) {
-                existing.name = issue.title
-                existing.cwd = workingDirectoriesByIssue[issue.number] ?? workingDirectory
-                repositoryBoxes.append(existing)
-                usedIDs.insert(existing.id)
-            } else {
-                var box = AgentBox(
-                    name: issue.title,
-                    detail: "",
-                    // An issue whose conversation moved to another folder
-                    // reopens there, not in the repository's clone.
-                    cwd: workingDirectoriesByIssue[issue.number] ?? workingDirectory,
-                    focusRepository: repository,
-                    focusIssueNumber: issue.number,
-                    focusCheckout: checkout
-                )
-                let issueCommand = commandsByIssue[issue.number] ?? command
-                if !issueCommand.isEmpty { box.autorun = issueCommand }
-                repositoryBoxes.append(box)
-                usedIDs.insert(box.id)
-            }
-        }
-
-        let removedRepositoryBoxes = previousRepositoryBoxes.filter {
-            !usedIDs.contains($0.id)
-        }
-        let removedUnmanagedBoxes = retainUnmanagedBoxes
-            ? []
-            : previousBoxes.filter { $0.focusRepository == nil }
-        let retainedBoxes = previousBoxes.filter {
-            $0.focusBoard != board
-                && (retainUnmanagedBoxes || $0.focusRepository != nil)
-        }
-        return FocusBoxReconciliation(
-            boxes: retainedBoxes + repositoryBoxes,
-            repositoryBoxes: repositoryBoxes,
-            removedBoxes: removedRepositoryBoxes + removedUnmanagedBoxes
-        )
-    }
-}
-
-/// Maps box ids to their terminal NSViews (both directions) so clicks resolve to
-/// a box, and keyboard navigation can make a box's terminal first responder.
-@MainActor final class TerminalRegistry {
-    static let shared = TerminalRegistry()
-    var clickFocusPolicy = TerminalClickFocusPolicy()
-    private var viewToID: [ObjectIdentifier: UUID] = [:]
-    private var idToView: [UUID: NSView] = [:]
-    private var initSentinel = false
-
-    func register(_ view: NSView, id: UUID) {
-        viewToID[ObjectIdentifier(view)] = id
-        idToView[id] = view
-    }
-
-    func unregister(id: UUID) {
-        if let view = idToView[id] { viewToID.removeValue(forKey: ObjectIdentifier(view)) }
-        idToView.removeValue(forKey: id)
-    }
-
-    /// Walks up from `view` to find the first registered terminal and its box id.
-    func boxID(under view: NSView) -> UUID? {
-        var node: NSView? = view
-        while let cur = node {
-            if let id = viewToID[ObjectIdentifier(cur)] { return id }
-            node = cur.superview
-        }
-        return nil
-    }
-
-    @discardableResult
-    func focusTerminal(_ id: UUID?) -> Bool {
-        guard let id, let view = idToView[id], let window = view.window else { return false }
-        return window.makeFirstResponder(view)
+    /// Write the window's state if it changed. Cheap enough for the poll tick.
+    func saveIfNeeded() {
+        let snapshot = Persisted(selectedTab: selectedTab)
+        guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
+        lastSaved = data
+        try? data.write(to: Self.stateFile)
     }
 }

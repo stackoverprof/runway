@@ -59,107 +59,21 @@ struct KeyChord: Codable, Equatable {
     }
 }
 
-/// What a ⌘⌥ arrow means once the layout axis is taken into account.
-///
-/// Agents are laid out down the pane in the vertical stack and across it in the
-/// horizontal one, so the arrows that step between them follow the axis: ↑ / ↓
-/// when they are stacked, ← / → when they are side by side. Pressing ↑ to reach
-/// the terminal on your left is the awkwardness this removes.
-///
-/// The quick terminal sits in the bottom-left corner of the window on either
-/// axis, so it is always reached leftward with ← and returned from with →. In
-/// the row layout it acts as the cell left of the first agent: ← crosses over
-/// only from that first agent and steps between agents everywhere else. While
-/// the quick terminal is closed there is nothing over there to reach, so ← and →
-/// step between agents too and neither arrow is ever dead.
-enum ArrowNavigation {
-    enum Outcome: Equatable {
-        case focusPrevious
-        case focusNext
-        case reorderPrevious
-        case reorderNext
-        case focusQuickTerminal
-        case focusAgents
-    }
-
-    // Arrow key codes, matched by position rather than character.
-    private static let left: UInt16 = 123
-    private static let right: UInt16 = 124
-    private static let down: UInt16 = 125
-    private static let up: UInt16 = 126
-
-    static func outcome(
-        keyCode: UInt16,
-        shifted: Bool,
-        axis: TerminalLayoutAxis,
-        quickTerminalVisible: Bool,
-        quickTerminalFocused: Bool = false,
-        focusedIsFirstAgent: Bool = false
-    ) -> Outcome? {
-        // Reordering never leaves the agents, so it keeps every arrow.
-        //
-        // The quick terminal is bottom-left of the window on either axis, so it
-        // is always reached leftward: ← and → and never ↑ / ↓, whichever way the
-        // agents are stacked. In the row layout it behaves as the cell left of
-        // the first agent, so ← only crosses over from that first agent and
-        // steps between agents anywhere else. In the stack the agents step with
-        // ↑ / ↓, leaving ← free to cross from any of them.
-        if !shifted, quickTerminalVisible {
-            if quickTerminalFocused {
-                if keyCode == right { return .focusAgents }
-                // Already at the leftmost cell: nothing further left to reach.
-                if keyCode == left { return .focusQuickTerminal }
-            } else if keyCode == left, axis == .vertical || focusedIsFirstAgent {
-                return .focusQuickTerminal
-            }
-        }
-
-        // Up and left run toward the first agent on either axis, down and right
-        // toward the last, so the direction itself needs no special casing.
-        switch keyCode {
-        case up, left:
-            return shifted ? .reorderPrevious : .focusPrevious
-        case down, right:
-            return shifted ? .reorderNext : .focusNext
-        default:
-            return nil
-        }
-    }
-}
-
 /// The customizable actions (⌘1–9 "jump to card" stays fixed).
 enum AppAction: String, CaseIterable {
-    case newBox, closeBox, closeWindow, navigatePrev, navigateNext, reorderUp, reorderDown, solo, quickTerminal, repoPicker, layoutAxis
+    case closeWindow, repoPicker
 
     var label: String {
         switch self {
-        case .newBox:        return "New agent"
-        case .closeBox:      return "Close agent"
         case .closeWindow:   return "Close window"
-        case .navigatePrev:  return "Focus previous"
-        case .navigateNext:  return "Focus next"
-        case .reorderUp:     return "Move agent up"
-        case .reorderDown:   return "Move agent down"
-        case .solo:          return "Toggle focus mode"
-        case .quickTerminal: return "Toggle quick terminal"
         case .repoPicker:    return "Switch repository"
-        case .layoutAxis:    return "Toggle horizontal layout"
         }
     }
 
     var defaultChord: KeyChord {
         switch self {
-        case .newBox:        return KeyChord(keyCode: 45, modifiers: [.command])                       // ⌘N
-        case .closeBox:      return KeyChord(keyCode: 13, modifiers: [.command])                       // ⌘W
-        case .closeWindow:   return KeyChord(keyCode: 13, modifiers: [.command, .shift])               // ⌘⇧W
-        case .navigatePrev:  return KeyChord(keyCode: 126, modifiers: [.command, .option])             // ⌘⌥↑
-        case .navigateNext:  return KeyChord(keyCode: 125, modifiers: [.command, .option])             // ⌘⌥↓
-        case .reorderUp:     return KeyChord(keyCode: 126, modifiers: [.command, .option, .shift])     // ⌘⌥⇧↑
-        case .reorderDown:   return KeyChord(keyCode: 125, modifiers: [.command, .option, .shift])     // ⌘⌥⇧↓
-        case .solo:          return KeyChord(keyCode: 36, modifiers: [.command, .option])              // ⌘⌥↩
-        case .quickTerminal: return KeyChord(keyCode: 12, modifiers: [.command, .option])              // ⌘⌥Q
-        case .repoPicker:    return KeyChord(keyCode: 15, modifiers: [.command])                       // ⌘R
-        case .layoutAxis:    return KeyChord(keyCode: 37, modifiers: [.command, .option])              // ⌘⌥L
+        case .closeWindow:   return KeyChord(keyCode: 13, modifiers: [.command, .shift])   // ⌘⇧W
+        case .repoPicker:    return KeyChord(keyCode: 15, modifiers: [.command])           // ⌘R
         }
     }
 }

@@ -206,3 +206,16 @@ enum LocalRepositoryDirectory {
         return folder == name || (folder == "main" && parent == name)
     }
 }
+
+/// A folder path a user typed or picked, expanded and checked.
+enum FolderPath {
+    static func resolved(_ path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return expanded
+    }
+}

@@ -116,10 +116,10 @@ enum FeedRevealPolicy {
     /// another repository's events under this one's key. A cached event carries no
     /// repository of its own, so a mixed entry cannot be repaired, only dropped.
     private static var cacheFile: URL {
-        AgentControl.supportDir.appendingPathComponent("feed-cache.v2.json")
+        RunwayStorage.supportDir.appendingPathComponent("feed-cache.v2.json")
     }
     private static var legacyCacheFile: URL {
-        AgentControl.supportDir.appendingPathComponent("feed-cache.json")
+        RunwayStorage.supportDir.appendingPathComponent("feed-cache.json")
     }
     /// Runs once per launch, before the first cache read.
     private static let discardLegacyCache: Void = {
@@ -298,13 +298,9 @@ enum FeedRevealPolicy {
         repoListTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.repoListTask = nil }
-            let scan = await Task.detached(priority: .utility) {
-                (
-                    repositories: LocalRepositoryDirectory.discoverOnDevice(),
-                    focusMovement: FocusActivityLog.latestMovementByRepository()
-                )
+            let localRepositories = await Task.detached(priority: .utility) {
+                LocalRepositoryDirectory.discoverOnDevice()
             }.value
-            let localRepositories = scan.repositories
             // Discovery lists the preferred clone of each repository first.
             var checkouts: [String: [String]] = [:]
             for local in localRepositories {
@@ -312,13 +308,12 @@ enum FeedRevealPolicy {
             }
             let paths = checkouts.compactMapValues(\.first)
             let repos = Self.uniqueRepositories(localRepositories.map(\.nameWithOwner))
-            // Ranked by Focus board movement, then by last selected. A rescan
+            // Ranked by how recently each was selected. A rescan
             // may re-rank because the picker freezes its list while it is open
             // (holdRepositoryList), so rows can only move while nobody is
             // reading them.
             let ordered = RepositoryRanking.ranked(
                 Self.uniqueRepositories(repos + [self.repo] + self.availableRepos),
-                focusMovement: scan.focusMovement,
                 recents: Self.recentRepositories
             ).filter {
                 Self.path(for: $0, in: paths) != nil

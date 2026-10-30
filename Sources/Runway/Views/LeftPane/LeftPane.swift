@@ -7,44 +7,16 @@ import AppKit
 /// refresh, another agent) still rebuilds the container. A card leaving, a
 /// reorder, or a card the user dropped in keeps it, with the offset pulled
 /// back inside the content, so the list stays where the user was reading.
-struct RunwayIssueListIdentity: Hashable {
-    let repository: String
-    let lane: AssignedIssueLane
-    let query: String
-    let arrivals: Int
-    let resetGeneration: Int
-
-    /// True when `new` holds an issue `old` did not, other than the one the
-    /// user just moved there.
-    static func hasArrivals(from old: [Int], to new: [Int], movedByUser: Int?) -> Bool {
-        let previous = Set(old)
-        return new.contains { !previous.contains($0) && $0 != movedByUser }
-    }
-}
-
 /// Left pane: a "working now" presence strip on top, then the activity stream.
 struct LeftPane: View {
     @Bindable var ws: Workspace
     @Bindable var feed: GitHubFeed
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
-    @State private var hoveringNewIssue = false
-    @State private var assignedIssues = AssignedIssues()
     @State private var pullRequests = PullRequests.shared
-    @State private var focusIssueDrag = FocusIssueDrag()
     @State private var feedScrollAnchor = RunwayScrollAnchor()
     @State private var pullScrollAnchor = RunwayScrollAnchor()
-    @State private var openIssueScrollAnchor = RunwayScrollAnchor()
-    @State private var closedIssueScrollAnchor = RunwayScrollAnchor()
-    @State private var issueListResetGeneration = 0
-    @State private var issueListArrivals: [AssignedIssueLane: Int] = [:]
-    /// The card the user last dragged or ticked into another lane. Its arrival
     /// there is expected, so it does not rebuild that lane's scroll view.
-    @State private var userMovedIssue: Int?
-    /// Lanes scrolled to their top when the user dragged a card out of them.
-    @State private var lanesAtTopBeforeMove: Set<AssignedIssueLane> = []
-    @State private var issueSearchVisible = false
-    @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
     @State private var feedSearchQuery = ""
     @State private var prSearchVisible = false
@@ -58,8 +30,6 @@ struct LeftPane: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
-    @AppStorage(SettingsKey.focusBoardCollapsed) private var focusBoardCollapsed = false
-    @AppStorage(SettingsKey.focusLimit) private var focusLimit = FocusReel.defaultLimit
 
     private static let taglines = [
         "WHAT HAS BEEN HAPPENING",
@@ -96,11 +66,6 @@ struct LeftPane: View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                    // An expanded quick panel starts here, below the brand row
-                    // and the repository picker.
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
-                        ws.leftPaneContentTop = $0
-                    }
                 if feed.events.isEmpty, let error = feed.lastError {
                     // gh missing / not signed in / bad repo: explain, don't spin.
                     feedNotice(error, systemImage: "exclamationmark.triangle")
@@ -124,36 +89,14 @@ struct LeftPane: View {
             }
             .clipped()
 
-            focusDragOverlay
         }
-        .coordinateSpace(name: FocusIssueDrag.coordinateSpaceName)
-        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: {
-            focusIssueDrag.spaceOriginInWindow = $0
-        }
-        .onPreferenceChange(RunwayIssueCardFramePreferenceKey.self) {
-            focusIssueDrag.updateCardFrames($0)
-        }
-        .onPreferenceChange(RunwayIssueLaneFramePreferenceKey.self) {
-            focusIssueDrag.updateLaneFrames($0)
-        }
-        .onPreferenceChange(RunwayIssueTabsFramePreferenceKey.self) {
-            focusIssueDrag.updateIssueTabsFrame($0)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .assignedIssueBacklogOrderReset)) { _ in
-            withAnimation(.easeInOut(duration: 0.16)) {
-                assignedIssues.resetBacklogOrder()
-            }
-            issueListResetGeneration &+= 1
-        }
-        // Coming back to the window refreshes everything, not only the tab in
-        // front. Feeds used to be the only source that refreshed here, which is
-        // why Pulls and Runway lagged behind it.
+        // Coming back to the window refreshes both sources, not only the tab
+        // in front.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            syncAllSources(tick: 15, forceIssuesFullRefresh: true)
+            syncAllSources(tick: 15)
         }
-        // One clock for all three sources. They used to poll on separate timers,
-        // and Pulls and Runway only while their own tab was on screen, so those
-        // tabs showed minutes-old data the moment you switched to them.
+        // One clock for both sources, so neither shows minutes-old data the
+        // moment you switch to it.
         .task(id: feed.repo) {
             while !Task.isCancelled {
                 let interval = feed.pollInterval
@@ -171,42 +114,6 @@ struct LeftPane: View {
         .onChange(of: ws.sourceRefreshRequestID) { _, _ in
             refreshSource(for: ws.sourceRefreshTab, minimumAge: 0)
         }
-        // The Focus board owns the right pane whatever the left pane is showing,
-        // so its repository reconciliation lives here rather than inside the
-        // Runway tab. Only the selected tab stays mounted, and hanging this off
-        // that tab left the terminals on the old repository until it reappeared.
-        .task(id: focusBoardKey) {
-            assignedIssues.restore(repository: feed.repo, board: focusBoardKey)
-            revealRequestedFocusIssue()
-            syncFocusBoard()
-            await assignedIssues.revalidate(repository: feed.repo)
-            revealRequestedFocusIssue()
-            syncFocusBoard()
-        }
-        .task(id: feed.repo) {
-            assignedIssues.onOffScreenFocusChange = { [ws] change in
-                ws.reconcileOffScreenBoard(
-                    issues: change.issues,
-                    repository: change.repository,
-                    checkout: change.checkout
-                )
-            }
-            await assignedIssues.processIssueCommands(repository: feed.repo)
-        }
-        // Observe the complete Focus records, not only membership. GitHub title
-        // edits must refresh the issue-owned terminal header without replacing
-        // its stable box and live shell session.
-        .onChange(of: assignedIssues.allFocused) { _, _ in
-            guard focusIssueDrag.issueNumber == nil else { return }
-            syncFocusBoard()
-        }
-        .onChange(of: assignedIssues.focusReel) { _, _ in
-            guard focusIssueDrag.issueNumber == nil else { return }
-            syncFocusBoard()
-        }
-        .onChange(of: ws.focusIssueRevealRequest) { _, _ in
-            revealRequestedFocusIssue()
-        }
         .onChange(of: ws.selectedTab) { previousTab, tab in
             closeEmptySearch(for: previousTab)
             focusedSearchTab = nil
@@ -218,9 +125,6 @@ struct LeftPane: View {
         .onChange(of: ws.repoPickerRequestID) { _, _ in
             showRepoPicker = true
             feed.fetchRepoList()
-        }
-        .task(id: emptySearchIsOpen(for: .runway)) {
-            await closeSearchAfterIdle(for: .runway)
         }
         .task(id: emptySearchIsOpen(for: .feeds)) {
             await closeSearchAfterIdle(for: .feeds)
@@ -235,19 +139,6 @@ struct LeftPane: View {
     /// Only the floating card reads the pointer position. Reading it here
     /// would re-run this whole body, every lane and all its cards, on each
     /// mouse move, which made dragging crawl on boards with hundreds of issues.
-    @ViewBuilder
-    private var focusDragOverlay: some View {
-        if let issueNumber = focusIssueDrag.issueNumber,
-           let issue = assignedIssues.issues.first(where: { $0.number == issueNumber }) {
-            FocusDragCard(
-                drag: focusIssueDrag,
-                issue: issue,
-                repository: issueRepositoryName
-            )
-            .zIndex(Double.greatestFiniteMagnitude)
-        }
-    }
-
     private var feedDivider: some View {
         Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
     }
@@ -473,29 +364,8 @@ struct LeftPane: View {
 
     private var subHeader: some View {
         HStack(alignment: .center, spacing: 8) {
-            if ws.selectedTab == .runway {
-                // The whole label is the hit area, not just the chevron.
-                Button {
-                    withAnimation(focusBoardCollapseAnimation) {
-                        focusBoardCollapsed.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(subHeaderText)
-                            .fixedSize()
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .rotationEffect(.degrees(focusBoardCollapsed ? -90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help(focusBoardCollapsed ? "Show Focus board" : "Hide Focus board")
-            } else {
-                Text(subHeaderText)
-                    .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
-            }
+            Text(subHeaderText)
+                .opacity(ws.selectedTab == .feeds ? taglineOpacity : 1)
             Spacer(minLength: 8)
             feedTabs
         }
@@ -523,13 +393,8 @@ struct LeftPane: View {
         .onDisappear { taglineTask?.cancel() }
     }
 
-    private var focusBoardCollapseAnimation: Animation {
-        .spring(response: 0.34, dampingFraction: 0.86)
-    }
-
     private var subHeaderText: String {
         switch ws.selectedTab {
-        case .runway: "ON TODAY'S MISSIONS"
         case .feeds: displayedTagline
         case .pullRequests: "PULL REQUESTS BY DEV"
         }
@@ -537,17 +402,14 @@ struct LeftPane: View {
 
     private var selectedTabIndex: Int {
         switch ws.selectedTab {
-        case .runway: 0
-        case .feeds: 1
-        case .pullRequests: 2
+        case .feeds: 0
+        case .pullRequests: 1
         }
     }
 
     private var slidingTabContent: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                runwayTab
-                    .frame(width: geometry.size.width)
                 feedsTab
                     .frame(width: geometry.size.width)
                 pullRequestTab
@@ -635,6 +497,18 @@ struct LeftPane: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
 
+            if pullRequests.catchingUpOnHistory {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).scaleEffect(0.55)
+                        .frame(width: 10, height: 10)
+                    Text("NEWEST \(PullRequests.firstPaintCount) · STILL READING THIS REPOSITORY'S HISTORY")
+                        .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.28))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
             if pullRequests.loading && !pullRequests.hasSnapshot {
                 ProgressView()
                     .controlSize(.small)
@@ -1109,13 +983,6 @@ struct LeftPane: View {
     /// is the number its branch ends with, by the branch convention.
     @ViewBuilder
     private func pullRequestMenu(_ pullRequest: RepositoryPullRequest) -> some View {
-        if let issueNumber = BranchIssue.number(in: pullRequest.headRefName) {
-            Button("Focus issue \(GitHubNumber.reference(issueNumber))") {
-                focusIssueFromPullRequest(issueNumber)
-            }
-            .disabled(!canFocusIssue(issueNumber))
-            Divider()
-        }
         Button("Copy PR link") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(pullRequest.url.absoluteString, forType: .string)
@@ -1125,34 +992,6 @@ struct LeftPane: View {
 
     /// Only an issue on this repository's board can be focused, and only while
     /// Focus has room for one more.
-    private func canFocusIssue(_ issueNumber: Int) -> Bool {
-        guard assignedIssues.issues.contains(where: { $0.number == issueNumber }) else { return false }
-        return assignedIssues.focusContains(issueNumber) || assignedIssues.canAddToFocus
-    }
-
-    /// A card in Open or Closed joins Focus from its own menu, the way one
-    /// dragged onto the board does.
-    private func addIssueToFocus(_ issueNumber: Int) {
-        userMovedIssue = issueNumber
-        focusBoardCollapsed = false
-        withAnimation(.easeInOut(duration: 0.18)) {
-            assignedIssues.promoteToFocus(issueNumber: issueNumber)
-        }
-        syncFocusBoard()
-    }
-
-    private func focusIssueFromPullRequest(_ issueNumber: Int) {
-        guard canFocusIssue(issueNumber) else { return }
-        if !assignedIssues.focusContains(issueNumber) {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                assignedIssues.promoteToFocus(issueNumber: issueNumber)
-            }
-        }
-        focusBoardCollapsed = false
-        withAnimation(.easeInOut(duration: 0.15)) { ws.selectedTab = .runway }
-        syncFocusBoard()
-    }
-
     private func pullRequestTimeframeText(_ pullRequest: RepositoryPullRequest) -> String? {
         if pullRequest.isMerged {
             let mergedAt = pullRequest.mergedAt ?? pullRequest.closedAt ?? pullRequest.updatedAt
@@ -1174,489 +1013,6 @@ struct LeftPane: View {
         return clock(date)
     }
 
-    private var runwayTab: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !focusBoardCollapsed {
-                runwayFocusBoard
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-                    .layoutPriority(2)
-                    .transition(
-                        .opacity
-                            .combined(with: .move(edge: .top))
-                            .combined(with: .scale(scale: 0.97, anchor: .top))
-                    )
-            }
-
-            runwayBacklog
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-        }
-        .animation(focusBoardCollapseAnimation, value: focusBoardCollapsed)
-        .animation(.spring(response: 0.38, dampingFraction: 0.85), value: ws.runwayIssueTab)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .clipped()
-    }
-
-    private var runwayBacklog: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(spacing: 8) {
-                runwayIssueTabs
-
-                if issueSearchVisible {
-                    issueSearchField
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-
-            if assignedIssues.loading && assignedIssues.issues.isEmpty {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = assignedIssues.error, assignedIssues.issues.isEmpty {
-                feedNotice(error, systemImage: "exclamationmark.triangle")
-            } else if assignedIssues.issues.isEmpty, !feed.repo.isEmpty {
-                newIssuePlaceholder
-            } else {
-                GeometryReader { geo in
-                    HStack(spacing: 0) {
-                        runwayIssueList(filteredOpenIssues, lane: .open)
-                            .frame(width: geo.size.width)
-                        runwayIssueList(filteredClosedIssues, lane: .closed)
-                            .frame(width: geo.size.width)
-                    }
-                    .offset(x: -CGFloat(runwayIssueTabIndex) * geo.size.width)
-                    .animation(
-                        .spring(response: 0.38, dampingFraction: 0.85),
-                        value: ws.runwayIssueTab
-                    )
-                }
-                .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .clipped()
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: issueSearchQuery) { _, _ in
-            updateIssueSearchTab()
-        }
-        .onChange(of: filteredOpenIssues.count) { _, _ in
-            updateIssueSearchTab()
-        }
-        .onChange(of: filteredClosedIssues.count) { _, _ in
-            updateIssueSearchTab()
-        }
-    }
-
-    /// The Focus board: every issue in Focus, each card at its own height.
-    /// The board is as tall as its cards, and takes that room from the Open
-    /// and Closed lane below it.
-    private var runwayFocusBoard: some View {
-        ZStack(alignment: .topLeading) {
-            if assignedIssues.allFocused.isEmpty,
-               focusIssueDrag.focusPreviewKey == nil {
-                focusEmptyState
-                    .transition(.opacity)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(assignedIssues.focused) { issue in
-                    if focusIssueDrag.shouldInsertFocusPlaceholder(before: issue.number),
-                       showsFocusDropPlaceholder {
-                        Color.clear
-                            .frame(height: focusIssueDrag.visualSize.height)
-                    }
-
-                    focusCard(issue)
-                        .transition(.opacity)
-                }
-
-                if focusIssueDrag.shouldAppendFocusPlaceholder, showsFocusDropPlaceholder {
-                    Color.clear
-                        .frame(height: focusIssueDrag.visualSize.height)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.16), value: assignedIssues.focusedIssueNumbers)
-        .animation(.easeInOut(duration: 0.16), value: focusIssueDrag.focusPreviewKey)
-        .padding(8)
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
-        .clipped()
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: RunwayIssueLaneFramePreferenceKey.self,
-                    value: [
-                        .focus: proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                    ]
-                )
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(assignedIssues.allFocused.isEmpty ? 0.015 : 0.025))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(
-                    Color.white.opacity(0.11),
-                    style: StrokeStyle(
-                        lineWidth: 1,
-                        dash: assignedIssues.allFocused.isEmpty ? [5, 5] : []
-                    )
-                )
-        }
-    }
-
-    /// A card dragged in from Open or Closed gets a slot only while Focus is
-    /// under its limit, the same as the drop itself.
-    private var showsFocusDropPlaceholder: Bool {
-        !assignedIssues.focusContains(focusIssueDrag.issueNumber ?? -1)
-            && assignedIssues.canAddToFocus
-    }
-
-    private func focusCard(_ issue: AssignedIssue) -> some View {
-        AssignedIssueCard(
-            issue: issue,
-            repository: issueRepositoryName,
-            onClosedChange: { closed in
-                userMovedIssue = issue.number
-                withAnimation(.easeOut(duration: 0.18)) {
-                    _ = assignedIssues.setClosed(
-                        issueNumber: issue.number,
-                        closed: closed
-                    )
-                }
-            },
-            onRename: { newTitle in
-                if assignedIssues.renameIssue(
-                    issueNumber: issue.number,
-                    newTitle: newTitle
-                ) {
-                    syncFocusBoard()
-                }
-            },
-            onRemoveFromFocus: {
-                assignedIssues.removeFromFocus(issueNumber: issue.number)
-            },
-            showsClosedDate: false
-        )
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: RunwayIssueCardFramePreferenceKey.self,
-                    value: [
-                        RunwayIssueCardKey(
-                            lane: .focus,
-                            issueNumber: issue.number
-                        ): proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                    ]
-                )
-            }
-        }
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-        } action: {
-            focusIssueDrag.updateLiveFrame($0, for: RunwayIssueCardKey(lane: .focus, issueNumber: issue.number))
-        }
-        .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
-        .animation(nil, value: focusIssueDrag.issueNumber)
-        .simultaneousGesture(issueDragGesture(for: issue, lane: .focus))
-        .frame(
-            height: focusIssueDrag.shouldReleaseFocusSlot(for: issue.number)
-                ? 0
-                : nil
-        )
-        .clipped()
-    }
-
-    /// Nothing at all is assigned in this repository. Runway only ever shows
-    /// issues assigned to you, so an empty board usually means "nothing is
-    /// assigned yet" rather than "nothing exists". Say so, and open GitHub's
-    /// new-issue form with the assignee already filled in.
-    private var newIssuePlaceholder: some View {
-        VStack(spacing: 11) {
-            Image(systemName: "tray")
-                .font(.system(size: 21, weight: .light))
-                .foregroundStyle(Color.white.opacity(0.3))
-
-            VStack(spacing: 5) {
-                Text("No issues assigned to you")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.72))
-                Text("Runway tracks the issues you are assigned to. Create one in \(issueRepositoryName) and assign it to yourself to see it here.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.white.opacity(0.42))
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 5) {
-                Text("New issue on GitHub")
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(Color.white.opacity(hoveringNewIssue ? 0.95 : 0.72))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .background(
-                Capsule().fill(Color.white.opacity(hoveringNewIssue ? 0.17 : 0.1))
-            )
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 22)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color(white: hoveringNewIssue ? 0.085 : 0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(
-                    Color.white.opacity(hoveringNewIssue ? 0.22 : 0.12),
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
-                )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 9))
-        .onHover { hoveringNewIssue = $0 }
-        .pointerCursor()
-        .onTapGesture { openNewIssuePage() }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    /// GitHub prefills assignees from the query string, so the issue lands in
-    /// Runway as soon as it is submitted, with no second trip to the sidebar.
-    private func openNewIssuePage() {
-        let repository = feed.repo
-        guard !repository.isEmpty,
-              var components = URLComponents(
-                  string: "https://github.com/\(repository)/issues/new"
-              ) else { return }
-        Task {
-            if let login = await GH.viewerLogin() {
-                components.queryItems = [URLQueryItem(name: "assignees", value: login)]
-            }
-            guard let url = components.url else { return }
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private var focusEmptyState: some View {
-        VStack(spacing: 7) {
-            Image(systemName: "rectangle.stack.badge.plus")
-                .font(.system(size: 18, weight: .light))
-            Text("Drag an issue here to open its terminal")
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-        }
-        .foregroundStyle(Color.white.opacity(0.25))
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-        .allowsHitTesting(false)
-    }
-
-    private func issueDragGesture(
-        for issue: AssignedIssue,
-        lane: AssignedIssueLane
-    ) -> some Gesture {
-        DragGesture(
-            minimumDistance: 4,
-            coordinateSpace: .named(FocusIssueDrag.coordinateSpaceName)
-        )
-        .onChanged { value in
-            if focusIssueDrag.isStuckLanding {
-                focusIssueDrag.reset()
-                ws.isFocusCardDragging = false
-                syncFocusBoard()
-            }
-            guard !focusIssueDrag.isLanding else { return }
-            if focusIssueDrag.issueNumber == nil {
-                let now = focusIssueDrag.pointer(for: value.location, window: windowPointer())
-                let start = CGPoint(x: now.x - value.translation.width, y: now.y - value.translation.height)
-                focusIssueDrag.begin(
-                    issueNumber: issue.number,
-                    lane: lane,
-                    frame: focusIssueDrag.grabFrame(for: issue.number, in: lane, at: start),
-                    pointer: start
-                )
-                ws.isFocusCardDragging = true
-            }
-            guard focusIssueDrag.issueNumber == issue.number else { return }
-            let pointer = focusIssueDrag.pointer(for: value.location, window: windowPointer())
-            focusIssueDrag.move(pointer: pointer)
-            autoScrollBacklog(pointer: pointer)
-
-            let hoveredLane = focusIssueDrag.lane(at: pointer)
-            if lane == .focus, focusIssueDrag.isCrossingIssueTabs {
-                let displayedLane: AssignedIssueLane = ws.runwayIssueTab == .open ? .open : .closed
-                let previewLane: AssignedIssueLane? = switch hoveredLane {
-                case .open, .closed: hoveredLane
-                case nil: displayedLane
-                case .focus: nil
-                }
-                focusIssueDrag.updateBacklogPreview(
-                    lane: previewLane,
-                    before: previewLane.map {
-                        focusIssueDrag.insertionTarget(
-                            at: pointer,
-                            in: $0,
-                            excluding: issue.number
-                        )
-                    } ?? nil
-                )
-            } else {
-                focusIssueDrag.clearBacklogPreview()
-            }
-
-            if lane != .focus, focusIssueDrag.isCrossingIssueTabs {
-                focusIssueDrag.updateFocusPreview(
-                    before: focusIssueDrag.insertionTarget(
-                        at: pointer,
-                        in: .focus,
-                        excluding: issue.number
-                    )
-                )
-            } else {
-                focusIssueDrag.clearFocusPreview()
-            }
-
-            guard hoveredLane == lane else {
-                focusIssueDrag.clearTarget()
-                return
-            }
-            guard let targetIssueNumber = focusIssueDrag.targetIssue(
-                at: pointer,
-                in: lane,
-                excluding: issue.number
-            ) else {
-                focusIssueDrag.clearTarget()
-                return
-            }
-            guard focusIssueDrag.shouldMove(to: targetIssueNumber) else { return }
-            _ = withAnimation(.easeInOut(duration: 0.16)) {
-                assignedIssues.move(
-                    issueNumber: issue.number,
-                    from: lane,
-                    to: lane,
-                    before: targetIssueNumber,
-                    savesOrder: false
-                )
-            }
-        }
-        .onEnded { value in
-            stopBacklogAutoScroll()
-            guard focusIssueDrag.issueNumber == issue.number,
-                  let sourceLane = focusIssueDrag.sourceLane else { return }
-            let pointer = focusIssueDrag.pointer(for: value.location, window: windowPointer())
-            let proposedLane = focusIssueDrag.proposedLane(
-                at: pointer,
-                fallback: sourceLane,
-                displayedBacklogLane: ws.runwayIssueTab == .open ? .open : .closed
-            )
-            let targetIssueNumber = sourceLane == proposedLane
-                ? focusIssueDrag.targetIssue(
-                    at: pointer,
-                    in: proposedLane,
-                    excluding: issue.number
-                )
-                : focusIssueDrag.insertionTarget(
-                    at: pointer,
-                    in: proposedLane,
-                    excluding: issue.number
-                )
-            if sourceLane != proposedLane {
-                userMovedIssue = issue.number
-                if sourceLane != .focus, issueScrollAnchor(for: sourceLane).isAtTop {
-                    lanesAtTopBeforeMove.insert(sourceLane)
-                }
-            }
-            let accepted = sourceLane == proposedLane || assignedIssues.move(
-                issueNumber: issue.number,
-                from: sourceLane,
-                to: proposedLane,
-                before: targetIssueNumber
-            )
-            assignedIssues.saveOrder()
-            let landingLane = accepted ? proposedLane : sourceLane
-            focusIssueDrag.prepareLanding()
-            DispatchQueue.main.async {
-                let destination = focusIssueDrag.landingFrame(for: landingLane)
-                withAnimation(
-                    .spring(response: 0.28, dampingFraction: 0.88),
-                    completionCriteria: .removed
-                ) {
-                    focusIssueDrag.land(at: destination.origin)
-                } completion: {
-                    focusIssueDrag.reset()
-                    ws.isFocusCardDragging = false
-                    syncFocusBoard()
-                }
-            }
-        }
-    }
-
-    /// The mouse in window coordinates, top-left origin like SwiftUI.
-    private func windowPointer() -> CGPoint? {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
-              let content = window.contentView else { return nil }
-        let local = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        return content.isFlipped ? local : CGPoint(x: local.x, y: content.bounds.height - local.y)
-    }
-
-    private var runwayIssueTabs: some View {
-        HStack(spacing: 0) {
-            ForEach(RunwayIssueTab.allCases, id: \.rawValue) { tab in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { ws.runwayIssueTab = tab }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(tab.rawValue)
-                        Text("\(assignedIssueCount(for: tab))")
-                            .foregroundStyle(Color.white.opacity(0.35))
-                    }
-                    .font(.system(size: 10.5, weight: ws.runwayIssueTab == tab ? .semibold : .medium))
-                    .foregroundStyle(ws.runwayIssueTab == tab ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(ws.runwayIssueTab == tab ? Color.white.opacity(0.1) : Color.clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: RunwayIssueTabsFramePreferenceKey.self,
-                    value: proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                )
-            }
-        }
-    }
-
-    private var issueSearchField: some View {
-        searchField(
-            placeholder: "Search issues",
-            text: $issueSearchQuery,
-            tab: .runway
-        )
-    }
-
     private func searchField(
         placeholder: String,
         text: Binding<String>,
@@ -1674,12 +1030,6 @@ struct LeftPane: View {
         var willShow = false
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
-            case .runway:
-                issueSearchVisible.toggle()
-                willShow = issueSearchVisible
-                if !willShow {
-                    issueSearchQuery = ""
-                }
             case .feeds:
                 feedSearchVisible.toggle()
                 willShow = feedSearchVisible
@@ -1702,9 +1052,6 @@ struct LeftPane: View {
 
     private func emptySearchIsOpen(for tab: FeedTab) -> Bool {
         switch tab {
-        case .runway:
-            return issueSearchVisible
-                && issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .feeds:
             return feedSearchVisible
                 && feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1733,9 +1080,6 @@ struct LeftPane: View {
     private func closeSearch(for tab: FeedTab) {
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
-            case .runway:
-                issueSearchVisible = false
-                issueSearchQuery = ""
             case .feeds:
                 feedSearchVisible = false
                 feedSearchQuery = ""
@@ -1788,265 +1132,9 @@ struct LeftPane: View {
         return "\(actor) \(detail)"
     }
 
-    private func runwayIssueList(
-        _ issues: [AssignedIssue],
-        lane: AssignedIssueLane
-    ) -> some View {
-        ZStack(alignment: .top) {
-            if issues.isEmpty, !focusIssueDrag.shouldAppendBacklogPlaceholder(in: lane) {
-                issueLaneEmptyState(lane)
-                    .transition(.opacity)
-            }
-
-            ScrollView {
-                // Cards carry their own gap rather than the stack's spacing, so a card
-                // dragged out collapses fully instead of leaving one gap behind.
-                LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(issues) { issue in
-                    if focusIssueDrag.shouldInsertBacklogPlaceholder(
-                        before: issue.number,
-                        in: lane
-                    ) {
-                        Color.clear
-                            .frame(height: focusIssueDrag.visualSize.height)
-                            .padding(.bottom, 8)
-                    }
-
-                    AssignedIssueCard(
-                        issue: issue,
-                        repository: issueRepositoryName,
-                        onClosedChange: { closed in
-                            userMovedIssue = issue.number
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                _ = assignedIssues.setClosed(
-                                    issueNumber: issue.number,
-                                    closed: closed
-                                )
-                            }
-                        },
-                        onRename: { newTitle in
-                            if assignedIssues.renameIssue(
-                                issueNumber: issue.number,
-                                newTitle: newTitle
-                            ) {
-                                syncFocusBoard()
-                            }
-                        },
-                        onAddToFocus: assignedIssues.canAddToFocus
-                            ? { addIssueToFocus(issue.number) }
-                            : nil
-                    )
-                    .transition(.opacity)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: RunwayIssueCardFramePreferenceKey.self,
-                                value: [
-                                    RunwayIssueCardKey(
-                                        lane: lane,
-                                        issueNumber: issue.number
-                                    ): proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                                ]
-                            )
-                        }
-                    }
-                    .onGeometryChange(for: CGRect.self) {
-                        $0.frame(in: .named(FocusIssueDrag.coordinateSpaceName))
-                    } action: {
-                        focusIssueDrag.updateLiveFrame($0, for: RunwayIssueCardKey(lane: lane, issueNumber: issue.number))
-                    }
-                    .opacity(focusIssueDrag.issueNumber == issue.number ? 0 : 1)
-                    .animation(nil, value: focusIssueDrag.issueNumber)
-                    .simultaneousGesture(issueDragGesture(for: issue, lane: lane))
-                    .frame(
-                        height: focusIssueDrag.shouldReleaseBacklogSlot(
-                            for: issue.number,
-                            in: lane
-                        ) ? 0 : nil
-                    )
-                    .clipped()
-                    .padding(
-                        .bottom,
-                        focusIssueDrag.shouldReleaseBacklogSlot(for: issue.number, in: lane) ? 0 : 8
-                    )
-                }
-
-                if focusIssueDrag.shouldAppendBacklogPlaceholder(in: lane) {
-                    Color.clear
-                        .frame(height: focusIssueDrag.visualSize.height)
-                }
-                }
-                .animation(.easeInOut(duration: 0.16), value: focusIssueDrag.backlogPreviewKey)
-                .animation(
-                    .easeInOut(duration: 0.16),
-                    value: focusIssueDrag.isCrossingIssueTabs
-                )
-                .animation(.easeOut(duration: 0.18), value: issues.map(\.number))
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .scrollAnchor(issueScrollAnchor(for: lane))
-            }
-            .contentMargins(.top, 0, for: .scrollContent)
-            .scrollIndicators(.hidden)
-            .id(RunwayIssueListIdentity(
-                repository: feed.repo,
-                lane: lane,
-                query: issueSearchVisible ? issueSearchQuery : "",
-                arrivals: issueListArrivals[lane, default: 0],
-                resetGeneration: issueListResetGeneration
-            ))
-        }
-        // Opening the board, collapsing it, or resizing the window all change
-        // the lane's height; a clip origin left past the new end shows blank.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
-            issueScrollAnchor(for: lane).settleIntoContent()
-        }
-        .onChange(of: issues.map(\.number)) { old, new in
-            if RunwayIssueListIdentity.hasArrivals(from: old, to: new, movedByUser: userMovedIssue) {
-                issueListArrivals[lane, default: 0] &+= 1
-            } else if new.count < old.count {
-                // A lane read from its top has no place to keep, and keeping
-                // its scroll view there let the next card slide up under the
-                // tabs when the first one left, leaving a gap. Rebuild it.
-                if lanesAtTopBeforeMove.contains(lane) || issueScrollAnchor(for: lane).isAtTop {
-                    issueListArrivals[lane, default: 0] &+= 1
-                } else {
-                    issueScrollAnchor(for: lane).settleIntoContent()
-                }
-            }
-            lanesAtTopBeforeMove.remove(lane)
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: RunwayIssueLaneFramePreferenceKey.self,
-                    value: [lane: proxy.frame(in: .named(FocusIssueDrag.coordinateSpaceName))]
-                )
-            }
-        }
-    }
-
-    private func issueLaneEmptyState(_ lane: AssignedIssueLane) -> some View {
-        let searching = issueSearchVisible
-            && !issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let isOpen = lane == .open
-        let title = searching
-            ? "No matching \(isOpen ? "open" : "closed") issues"
-            : "No \(isOpen ? "open" : "closed") issues"
-        let detail = searching
-            ? "Try another search."
-            : isOpen
-                ? "Assigned issues that are open will appear here."
-                : "Issues you close will appear here."
-
-        return VStack(spacing: 8) {
-            Image(systemName: searching ? "magnifyingglass" : isOpen ? "circle.dashed" : "checkmark.circle")
-                .font(.system(size: 19, weight: .light))
-                .foregroundStyle(Color.white.opacity(0.28))
-            Text(title)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.62))
-            Text(detail)
-                .font(.system(size: 11))
-                .foregroundStyle(Color.white.opacity(0.36))
-                .multilineTextAlignment(.center)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 44)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .allowsHitTesting(false)
-    }
-
-    private var runwayIssueTabIndex: Int {
-        ws.runwayIssueTab == .open ? 0 : 1
-    }
-
-    private func assignedIssueCount(for tab: RunwayIssueTab) -> Int {
-        tab == .open ? filteredOpenIssues.count : filteredClosedIssues.count
-    }
-
-    private var filteredOpenIssues: [AssignedIssue] {
-        filteredIssues(assignedIssues.open)
-    }
-
-    private var filteredClosedIssues: [AssignedIssue] {
-        filteredIssues(assignedIssues.closed)
-    }
-
-    private func filteredIssues(_ issues: [AssignedIssue]) -> [AssignedIssue] {
-        let query = issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard issueSearchVisible, !query.isEmpty else { return issues }
-        return issues.filter {
-            AssignedIssue.matchesSearchQuery(
-                query,
-                issue: $0,
-                repositoryName: issueRepositoryName
-            )
-        }
-    }
-
-    private func updateIssueSearchTab() {
-        guard issueSearchVisible else { return }
-
-        let currentCount = assignedIssueCount(for: ws.runwayIssueTab)
-        guard currentCount == 0 else { return }
-
-        let otherTab: RunwayIssueTab = ws.runwayIssueTab == .open ? .closed : .open
-        guard assignedIssueCount(for: otherTab) > 0 else { return }
-
-        withAnimation(.easeInOut(duration: 0.15)) {
-            ws.runwayIssueTab = otherTab
-        }
-    }
-
-    private var issueRepositoryName: String {
-        feed.repo.split(separator: "/").last.map(String.init) ?? feed.repo
-    }
-
-    /// Each clone of a repository has its own Focus board.
-    private var focusBoardKey: String {
-        FocusBoard.key(feed.repo, checkout: feed.focusCheckout(for: feed.repo))
-    }
-
-    private func syncFocusBoard() {
-        guard assignedIssues.hasSnapshot else { return }
-        ws.syncFocusBoard(
-            issues: assignedIssues.allFocused,
-            visibleIssueNumbers: assignedIssues.focusedIssueNumbers,
-            repository: feed.repo,
-            checkout: feed.focusCheckout(for: feed.repo)
-        )
-    }
-
-    private func revealRequestedFocusIssue() {
-        guard let request = ws.focusIssueRevealRequest,
-              request.repository.caseInsensitiveCompare(feed.repo) == .orderedSame,
-              assignedIssues.hasSnapshot,
-              assignedIssues.focusContains(request.issueNumber) else { return }
-        ws.focusIssueRevealRequest = nil
-        syncFocusBoard()
-    }
-
-    private func revalidateFocusBoard(minimumAge: TimeInterval = 15) {
-        Task {
-            await assignedIssues.revalidate(
-                repository: feed.repo,
-                minimumAge: minimumAge
-            )
-            syncFocusBoard()
-        }
-    }
-
-    // MARK: Sync
-
-    /// Refresh all three sources off one tick. Started together so the feed, the
-    /// board and the pull requests describe the same moment; each service still
-    /// throttles itself, so the tab in front leads and the others follow closely
-    /// instead of drifting minutes behind.
-    private func syncAllSources(tick: TimeInterval, forceIssuesFullRefresh: Bool = false) {
+    private func syncAllSources(tick: TimeInterval) {
         let ages = RepositorySyncCadence.ages(for: ws.selectedTab, tick: tick)
         Task { await feed.refresh(minimumAge: ages.feed) }
-        revalidateFocusBoard(minimumAge: forceIssuesFullRefresh ? 0 : ages.issues)
         Task {
             await pullRequests.revalidate(
                 repository: feed.repo,
@@ -2057,8 +1145,6 @@ struct LeftPane: View {
 
     private func refreshSource(for tab: FeedTab, minimumAge: TimeInterval) {
         switch tab {
-        case .runway:
-            revalidateFocusBoard(minimumAge: minimumAge)
         case .feeds:
             Task { await feed.refresh(minimumAge: minimumAge) }
         case .pullRequests:
@@ -2074,11 +1160,7 @@ struct LeftPane: View {
     /// Picking the tab already showing: back to the top of its list, and refetch
     /// straight away rather than waiting for the next tick.
     private func resetActiveTab() {
-        if ws.selectedTab == .runway {
-            issueListResetGeneration &+= 1
-        } else {
-            scrollAnchor(for: ws.selectedTab).scrollToTop()
-        }
+        scrollAnchor(for: ws.selectedTab).scrollToTop()
         refreshSource(for: ws.selectedTab, minimumAge: 0)
         // A refresh that turns up nothing new still has to look like one. The
         // tagline retypes on the tap itself rather than on an event arriving,
@@ -2088,40 +1170,9 @@ struct LeftPane: View {
 
     private func scrollAnchor(for tab: FeedTab) -> RunwayScrollAnchor {
         switch tab {
-        case .runway: issueScrollAnchor(for: ws.runwayIssueTab == .open ? .open : .closed)
         case .feeds: feedScrollAnchor
         case .pullRequests: pullScrollAnchor
         }
-    }
-
-    private func issueScrollAnchor(for lane: AssignedIssueLane) -> RunwayScrollAnchor {
-        lane == .closed ? closedIssueScrollAnchor : openIssueScrollAnchor
-    }
-
-    /// Dragging a card against the top or bottom of the backlog scrolls it, so an
-    /// issue can be moved past the edge of a list taller than the pane.
-    private func autoScrollBacklog(pointer: CGPoint) {
-        let displayed: AssignedIssueLane = ws.runwayIssueTab == .open ? .open : .closed
-        for lane in [AssignedIssueLane.open, .closed] {
-            let anchor = issueScrollAnchor(for: lane)
-            // A short overshoot band past each edge keeps scrolling while the
-            // card is dragged beyond the list, which is exactly when the last
-            // row is still out of reach.
-            guard lane == displayed,
-                  let frame = focusIssueDrag.laneFrames[lane],
-                  pointer.y > frame.minY - 64,
-                  pointer.y < frame.maxY + 64
-            else {
-                anchor.stopAutoScroll()
-                continue
-            }
-            anchor.autoScroll(pointerY: pointer.y, in: frame)
-        }
-    }
-
-    private func stopBacklogAutoScroll() {
-        issueScrollAnchor(for: .open).stopAutoScroll()
-        issueScrollAnchor(for: .closed).stopAutoScroll()
     }
 
     @ViewBuilder private func feedScrollView<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -2175,8 +1226,6 @@ struct LeftPane: View {
     // MARK: Empty tab placeholder
     @ViewBuilder private func emptyTabPlaceholder(for tab: FeedTab) -> some View {
         switch tab {
-        case .runway:
-            EmptyView()
         case .feeds:
             placeholderCard(icon: "tray", title: "No activity yet",
                             subtitle: "Events from your team will appear here as they happen.")
@@ -2428,8 +1477,17 @@ struct LeftPane: View {
 private struct BranchNameText: View {
     let name: String
 
+    /// A branch names its issue last: `feat/designer-images-page-16283` keeps
+    /// that number when the middle is truncated away.
+    static func splitBranch(_ name: String) -> (stem: String, number: String?) {
+        guard let dash = name.lastIndex(of: "-"), dash != name.startIndex else { return (name, nil) }
+        let suffix = name[name.index(after: dash)...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return (name, nil) }
+        return (String(name[..<dash]), String(name[dash...]))
+    }
+
     var body: some View {
-        let parts = BranchIssue.split(name)
+        let parts = Self.splitBranch(name)
         HStack(spacing: 0) {
             Text(parts.stem)
                 .truncationMode(.tail)
@@ -2498,348 +1556,4 @@ enum PRStackItem: Identifiable {
 private struct PRPageKey: Hashable {
     let login: String
     let section: String
-}
-
-private struct RunwayIssueCardKey: Hashable {
-    let lane: AssignedIssueLane
-    let issueNumber: Int
-}
-
-private struct RunwayIssueCardFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [RunwayIssueCardKey: CGRect] = [:]
-
-    static func reduce(
-        value: inout [RunwayIssueCardKey: CGRect],
-        nextValue: () -> [RunwayIssueCardKey: CGRect]
-    ) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-private struct RunwayIssueLaneFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [AssignedIssueLane: CGRect] = [:]
-
-    static func reduce(
-        value: inout [AssignedIssueLane: CGRect],
-        nextValue: () -> [AssignedIssueLane: CGRect]
-    ) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-private struct RunwayIssueTabsFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next != .zero { value = next }
-    }
-}
-
-/// The card under the pointer while an issue is dragged.
-private struct FocusDragCard: View {
-    let drag: FocusIssueDrag
-    let issue: AssignedIssue
-    let repository: String
-
-    var body: some View {
-        AssignedIssueCard(
-            issue: issue,
-            repository: repository,
-            showsClosedDate: drag.sourceLane != .focus
-        )
-            .frame(width: drag.visualSize.width, height: drag.visualSize.height)
-            .offset(x: drag.visualOrigin.x, y: drag.visualOrigin.y)
-            .shadow(color: .black.opacity(0.38), radius: 12, y: 5)
-            .allowsHitTesting(false)
-    }
-}
-
-@MainActor @Observable private final class FocusIssueDrag {
-    static let coordinateSpaceName = "RunwayFocusReorder"
-
-    private(set) var issueNumber: Int?
-    private(set) var visualOrigin: CGPoint = .zero
-    private(set) var visualSize: CGSize = .zero
-    private(set) var cardFrames: [RunwayIssueCardKey: CGRect] = [:]
-    private(set) var laneFrames: [AssignedIssueLane: CGRect] = [:]
-    private(set) var issueTabsFrame: CGRect = .zero
-    private(set) var sourceLane: AssignedIssueLane?
-    private(set) var isLanding = false
-    private var startingFrame: CGRect = .zero
-    private var crossingBoundaryY: CGFloat?
-    private var hasCrossedIssueTabs = false
-    private var backlogPreviewLane: AssignedIssueLane?
-    private var backlogPreviewTargetIssueNumber: Int?
-    private var focusPreviewTargetIssueNumber: Int?
-    private var isFocusPreviewActive = false
-    private var grabOffset: CGPoint = .zero
-    private var lastTargetIssueNumber: Int?
-    /// Where this coordinate space sits in the window.
-    @ObservationIgnored var spaceOriginInWindow: CGPoint?
-    /// Each card's frame straight from its own geometry. The preference copy
-    /// can lag a list that was just rebuilt or reordered, and starting a drag
-    /// from it put the floating card a few cards away from the one grabbed,
-    /// or refused the drag when the card had no entry yet.
-    @ObservationIgnored private var liveFrames: [RunwayIssueCardKey: CGRect] = [:]
-    @ObservationIgnored private var landingStartedAt: Date?
-
-    func updateLiveFrame(_ frame: CGRect, for key: RunwayIssueCardKey) {
-        liveFrames[key] = frame
-    }
-
-    /// The grabbed card's frame, checked against the pointer that grabbed it.
-    func grabFrame(for issueNumber: Int, in lane: AssignedIssueLane, at pointer: CGPoint) -> CGRect {
-        let key = RunwayIssueCardKey(lane: lane, issueNumber: issueNumber)
-        for candidate in [liveFrames[key], cardFrames[key]] {
-            if let candidate, candidate.contains(pointer) { return candidate }
-        }
-        let size = liveFrames[key]?.size ?? cardFrames[key]?.size ?? CGSize(width: 300, height: 80)
-        return CGRect(
-            x: (laneFrames[lane]?.minX).map { $0 + 16 } ?? pointer.x - size.width / 2,
-            y: pointer.y - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-    }
-
-    /// A landing whose completion never arrived would block every later drag.
-    var isStuckLanding: Bool {
-        guard isLanding, let landingStartedAt else { return false }
-        return Date().timeIntervalSince(landingStartedAt) > 1
-    }
-
-    /// The pointer in this coordinate space, read from the window's mouse.
-    /// A drag gesture reports its location through the dragged card's own
-    /// geometry, which goes stale when the card collapses, scrolls, or its
-    /// list was just rebuilt, and that threw the floating card a couple of
-    /// card heights off the pointer.
-    func pointer(for location: CGPoint, window: CGPoint?) -> CGPoint {
-        guard let window, let origin = spaceOriginInWindow else { return location }
-        return CGPoint(x: window.x - origin.x, y: window.y - origin.y)
-    }
-
-    func updateCardFrames(_ frames: [RunwayIssueCardKey: CGRect]) {
-        guard cardFrames != frames else { return }
-        cardFrames = frames
-    }
-
-    func updateLaneFrames(_ frames: [AssignedIssueLane: CGRect]) {
-        guard laneFrames != frames else { return }
-        laneFrames = frames
-    }
-
-    func updateIssueTabsFrame(_ frame: CGRect) {
-        guard issueTabsFrame != frame else { return }
-        issueTabsFrame = frame
-    }
-
-    func frame(for issueNumber: Int, in lane: AssignedIssueLane) -> CGRect? {
-        cardFrames[RunwayIssueCardKey(lane: lane, issueNumber: issueNumber)]
-    }
-
-    func begin(
-        issueNumber: Int,
-        lane: AssignedIssueLane,
-        frame: CGRect,
-        pointer: CGPoint
-    ) {
-        self.issueNumber = issueNumber
-        sourceLane = lane
-        startingFrame = frame
-        crossingBoundaryY = issueTabsFrame == .zero ? nil : issueTabsFrame.midY
-        visualOrigin = frame.origin
-        visualSize = frame.size
-        grabOffset = CGPoint(
-            x: pointer.x - frame.minX,
-            y: pointer.y - frame.minY
-        )
-        lastTargetIssueNumber = nil
-    }
-
-    func move(pointer: CGPoint) {
-        visualOrigin = CGPoint(
-            x: pointer.x - grabOffset.x,
-            y: pointer.y - grabOffset.y
-        )
-        guard let crossingBoundaryY else { return }
-        let visualFrame = CGRect(origin: visualOrigin, size: visualSize)
-        let crossed = sourceLane == .focus
-            ? visualFrame.maxY >= crossingBoundaryY
-            : visualFrame.minY <= crossingBoundaryY
-        if crossed != hasCrossedIssueTabs {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                hasCrossedIssueTabs = crossed
-            }
-        }
-    }
-
-    var focusPreviewKey: Int? {
-        guard isFocusPreviewActive else { return nil }
-        return focusPreviewTargetIssueNumber ?? -1
-    }
-
-    func updateFocusPreview(before targetIssueNumber: Int?) {
-        guard !isFocusPreviewActive
-                || focusPreviewTargetIssueNumber != targetIssueNumber else { return }
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isFocusPreviewActive = true
-            focusPreviewTargetIssueNumber = targetIssueNumber
-        }
-    }
-
-    func clearFocusPreview() {
-        guard isFocusPreviewActive else { return }
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isFocusPreviewActive = false
-            focusPreviewTargetIssueNumber = nil
-        }
-    }
-
-    func shouldInsertFocusPlaceholder(before issueNumber: Int) -> Bool {
-        isFocusPreviewActive && focusPreviewTargetIssueNumber == issueNumber
-    }
-
-    var shouldAppendFocusPlaceholder: Bool {
-        isFocusPreviewActive && focusPreviewTargetIssueNumber == nil
-    }
-
-    var isCrossingIssueTabs: Bool {
-        hasCrossedIssueTabs
-    }
-
-    func shouldReleaseFocusSlot(for issueNumber: Int) -> Bool {
-        self.issueNumber == issueNumber && sourceLane == .focus && hasCrossedIssueTabs
-    }
-
-    func shouldReleaseBacklogSlot(
-        for issueNumber: Int,
-        in lane: AssignedIssueLane
-    ) -> Bool {
-        self.issueNumber == issueNumber
-            && sourceLane == lane
-            && lane != .focus
-            && hasCrossedIssueTabs
-    }
-
-    var backlogPreviewKey: RunwayIssueCardKey? {
-        guard let backlogPreviewLane else { return nil }
-        return RunwayIssueCardKey(
-            lane: backlogPreviewLane,
-            issueNumber: backlogPreviewTargetIssueNumber ?? -1
-        )
-    }
-
-    func updateBacklogPreview(
-        lane: AssignedIssueLane?,
-        before targetIssueNumber: Int?
-    ) {
-        // Called on every pointer move. An observed write re-renders the
-        // lanes even when the value is unchanged, so only write on change.
-        guard backlogPreviewLane != lane
-                || backlogPreviewTargetIssueNumber != targetIssueNumber else { return }
-        backlogPreviewLane = lane
-        backlogPreviewTargetIssueNumber = targetIssueNumber
-    }
-
-    func clearBacklogPreview() {
-        guard backlogPreviewLane != nil || backlogPreviewTargetIssueNumber != nil else { return }
-        backlogPreviewLane = nil
-        backlogPreviewTargetIssueNumber = nil
-    }
-
-    func shouldInsertBacklogPlaceholder(
-        before issueNumber: Int,
-        in lane: AssignedIssueLane
-    ) -> Bool {
-        backlogPreviewLane == lane && backlogPreviewTargetIssueNumber == issueNumber
-    }
-
-    func shouldAppendBacklogPlaceholder(in lane: AssignedIssueLane) -> Bool {
-        backlogPreviewLane == lane && backlogPreviewTargetIssueNumber == nil
-    }
-
-    func lane(at point: CGPoint) -> AssignedIssueLane? {
-        laneFrames.first { _, frame in frame.contains(point) }?.key
-    }
-
-    func proposedLane(
-        at point: CGPoint,
-        fallback: AssignedIssueLane,
-        displayedBacklogLane: AssignedIssueLane
-    ) -> AssignedIssueLane {
-        if let lane = lane(at: point) { return lane }
-        guard hasCrossedIssueTabs else { return fallback }
-        return sourceLane == .focus ? displayedBacklogLane : .focus
-    }
-
-    func targetIssue(
-        at point: CGPoint,
-        in lane: AssignedIssueLane,
-        excluding issueNumber: Int
-    ) -> Int? {
-        cardFrames.first { key, frame in
-            key.lane == lane && key.issueNumber != issueNumber && frame.contains(point)
-        }?.key.issueNumber
-    }
-
-    func insertionTarget(
-        at point: CGPoint,
-        in lane: AssignedIssueLane,
-        excluding issueNumber: Int
-    ) -> Int? {
-        cardFrames
-            .filter { key, frame in
-                key.lane == lane && key.issueNumber != issueNumber && !frame.isEmpty
-            }
-            .sorted { $0.value.minY < $1.value.minY }
-            .first { _, frame in point.y < frame.midY }?
-            .key.issueNumber
-    }
-
-    func shouldMove(to issueNumber: Int) -> Bool {
-        guard lastTargetIssueNumber != issueNumber else { return false }
-        lastTargetIssueNumber = issueNumber
-        return true
-    }
-
-    func clearTarget() {
-        guard lastTargetIssueNumber != nil else { return }
-        lastTargetIssueNumber = nil
-    }
-
-    func prepareLanding() {
-        isLanding = true
-        landingStartedAt = Date()
-        clearBacklogPreview()
-        clearFocusPreview()
-    }
-
-    func land(at origin: CGPoint) {
-        visualOrigin = origin
-    }
-
-    func landingFrame(for lane: AssignedIssueLane) -> CGRect {
-        guard let destination = frame(for: issueNumber ?? -1, in: lane),
-              !destination.isEmpty else { return startingFrame }
-        return destination
-    }
-
-    func reset() {
-        issueNumber = nil
-        visualOrigin = .zero
-        visualSize = .zero
-        sourceLane = nil
-        startingFrame = .zero
-        crossingBoundaryY = nil
-        hasCrossedIssueTabs = false
-        backlogPreviewLane = nil
-        backlogPreviewTargetIssueNumber = nil
-        focusPreviewTargetIssueNumber = nil
-        isFocusPreviewActive = false
-        grabOffset = .zero
-        lastTargetIssueNumber = nil
-        landingStartedAt = nil
-        isLanding = false
-    }
 }

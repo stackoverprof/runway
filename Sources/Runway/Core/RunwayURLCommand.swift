@@ -34,7 +34,6 @@ enum RunwayURLCommand {
 
         switch tab {
         case nil, "", "all": return FeedTab.allCases
-        case "runway", "issues": return [.runway]
         case "feeds", "feed": return [.feeds]
         case "pulls", "prs", "pullrequests": return [.pullRequests]
         default: return nil

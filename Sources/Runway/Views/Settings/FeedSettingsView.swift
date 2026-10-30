@@ -97,7 +97,7 @@ struct FeedSettings: View {
     /// that is not a folder is worth a word.
     private var cloneRootWarning: String? {
         let trimmed = cloneSearchRoot.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, QuickTerminalDirectory.resolved(trimmed) == nil else {
+        guard !trimmed.isEmpty, FolderPath.resolved(trimmed) == nil else {
             return nil
         }
         return "\(trimmed) is not a folder on this Mac, so Runway searches your home folder."
@@ -110,7 +110,7 @@ struct FeedSettings: View {
         panel.allowsMultipleSelection = false
         panel.message = "Choose the folder Runway searches for cloned repositories"
         panel.prompt = "Choose Folder"
-        if let current = QuickTerminalDirectory.resolved(cloneSearchRoot) {
+        if let current = FolderPath.resolved(cloneSearchRoot) {
             panel.directoryURL = URL(fileURLWithPath: current)
         }
         guard panel.runModal() == .OK, let url = panel.url else { return }
