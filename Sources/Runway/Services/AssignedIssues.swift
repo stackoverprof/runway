@@ -70,7 +70,7 @@ extension Notification.Name {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var hasSnapshot = false
-    private(set) var focusReel = FocusReel(visibleCount: SettingsKey.configuredFocusVisibleCount())
+    private(set) var focusReel = FocusReel()
     private(set) var openIssueNumbers: [Int] = []
     private(set) var closedIssueNumbers: [Int] = []
 
@@ -105,17 +105,12 @@ extension Notification.Name {
             .filter { $0.isClosed && !focused.contains($0.number) }
     }
 
-    /// Issues in the window, the ones whose terminals are on screen.
-    var focusedIssueNumbers: [Int] { focusReel.visible }
+    /// Every Focus issue is on screen: one scrolling lane, no window.
+    var focusedIssueNumbers: [Int] { focusReel.issues }
     var allFocusedIssueNumbers: [Int] { focusReel.issues }
     var allFocused: [AssignedIssue] { orderedIssues(focusReel.issues) }
-    var hiddenAboveCount: Int { focusReel.hiddenAbove }
-    var hiddenBelowCount: Int { focusReel.hiddenBelow }
-    var firstHiddenBelowFocusIssue: Int? { focusReel.firstHiddenBelow }
 
-    var focused: [AssignedIssue] {
-        orderedIssues(focusedIssueNumbers)
-    }
+    var focused: [AssignedIssue] { allFocused }
 
     /// Whether Focus takes one more issue under the configured limit.
     var canAddToFocus: Bool {
@@ -126,44 +121,13 @@ extension Notification.Name {
         focusReel.contains(issueNumber)
     }
 
-    /// Slides the window. Never a Focus entry or exit, so nothing is logged.
-    @discardableResult
-    func shiftFocusWindow(by delta: Int) -> Bool {
-        guard let repository = loadedRepository, focusReel.shift(by: delta) else { return false }
-        saveFocus(for: repository)
-        return true
-    }
-
-    /// Slides the window while a Focus card is dragged, keeping that card in it.
-    @discardableResult
-    func shiftFocusWindow(by delta: Int, carrying issueNumber: Int) -> Bool {
-        guard let repository = loadedRepository,
-              focusReel.shift(by: delta, carrying: issueNumber) else { return false }
-        saveFocus(for: repository)
-        return true
-    }
-
-    @discardableResult
-    func revealInFocus(_ issueNumber: Int) -> Bool {
-        guard let repository = loadedRepository, focusReel.reveal(issueNumber) else { return false }
-        saveFocus(for: repository)
-        return true
-    }
-
-    func setFocusVisibleCount(_ count: Int) {
-        let previous = focusReel
-        focusReel.setVisibleCount(count)
-        guard focusReel != previous, let repository = loadedRepository else { return }
-        saveFocus(for: repository)
-    }
-
     /// `board` picks which clone's Focus board to show. Nil keeps the board
     /// already loaded for this repository, so a revalidation never swaps it.
     func restore(repository: String, board: String? = nil) {
         guard !repository.isEmpty else {
             loadTask?.cancel()
             issues = []
-            focusReel = FocusReel(visibleCount: SettingsKey.configuredFocusVisibleCount())
+            focusReel = FocusReel()
             openIssueNumbers = []
             closedIssueNumbers = []
             loadedRepository = nil
@@ -718,7 +682,6 @@ extension Notification.Name {
               !focusReel.contains(issueNumber),
               canAddToFocus else { return }
         focusReel.replace(with: focusReel.issues + [issueNumber])
-        focusReel.reveal(issueNumber)
         saveFocus(for: repository)
         if let issue = issues.first(where: { $0.number == issueNumber }) {
             FocusActivityLog.record(
@@ -867,7 +830,6 @@ extension Notification.Name {
             var order = focusReel.issues
             insert(issueNumber, before: targetNumber, in: &order)
             focusReel.replace(with: order)
-            focusReel.reveal(issueNumber)
             saveFocus(for: repository)
             FocusActivityLog.record(
                 action: .enteredFocus,
@@ -1166,19 +1128,10 @@ extension Notification.Name {
     /// The reel for a repository, migrating older formats on first read: the
     /// paginated boards flatten in board order, and the single list before them
     /// becomes the whole reel. Older keys stay untouched.
-    static func savedFocusReel(
-        for repository: String,
-        visibleCount: Int = SettingsKey.configuredFocusVisibleCount()
-    ) -> FocusReel {
-        var reel = savedFocusReels[repository]
+    static func savedFocusReel(for repository: String) -> FocusReel {
+        savedFocusReels[repository]
             ?? decodedFocus(forKey: legacyFocusBoardsKey)[repository]
             ?? FocusReel(issues: savedFocus[repository] ?? [])
-        reel.setVisibleCount(visibleCount)
-        return reel
-    }
-
-    static func savedVisibleFocusIssues(for repository: String) -> [Int] {
-        savedFocusReel(for: repository).visible
     }
 
     static func savedFocusIssues(for repository: String) -> [Int] {

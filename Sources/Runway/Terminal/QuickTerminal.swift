@@ -23,8 +23,7 @@ struct QuickTerminal: View {
 
     @State private var tabs = Self.makeInitialTabs()
     @State private var selectedRoot = QuickTerminalSession.selectedRoot()
-    /// The selected tab's conversation name from /rename, shown in the header.
-    @State private var sessionTitle: String?
+    @Bindable private var quickNames = QuickAgentNames.shared
     @State private var dragStartHeight: CGFloat?
     @State private var dragStartPaneWidth: CGFloat?
     @State private var isHovered = false
@@ -289,12 +288,11 @@ struct QuickTerminal: View {
                     // A /rename lands in the transcript whenever the user runs
                     // it, so look again every couple of seconds while shown.
                     .task(id: TitleWatch(root: selectedRoot, visible: ws.quickVisible)) {
-                        sessionTitle = await SessionTitle.shared.title(forQuickRoot: selectedRoot)
+                        _ = await quickNames.reload(root: selectedRoot)
                         guard ws.quickVisible else { return }
                         while !Task.isCancelled {
                             try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            let title = await SessionTitle.shared.title(forQuickRoot: selectedRoot)
-                            if title != sessionTitle { sessionTitle = title }
+                            _ = await quickNames.reload(root: selectedRoot)
                         }
                     }
                 ZStack(alignment: .topLeading) {
@@ -442,7 +440,7 @@ struct QuickTerminal: View {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 9))
                 .foregroundStyle(Color.white.opacity(0.5))
-            Text(sessionTitle ?? "quick")
+            Text(quickNames.name(for: selectedRoot) ?? "quick")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
                 .lineLimit(1)

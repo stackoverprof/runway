@@ -9,7 +9,6 @@ struct AgentSettings: View {
     @AppStorage(SettingsKey.soundEnabled) private var soundEnabled = true
     @AppStorage(SettingsKey.alertSound) private var alertSound = "Glass"
     @AppStorage(SettingsKey.bannerWhileActive) private var bannerWhileActive = false
-    @AppStorage(SettingsKey.focusVisibleCount) private var focusVisibleCount = FocusReel.defaultVisibleCount
     @AppStorage(SettingsKey.focusLimit) private var focusLimit = FocusReel.defaultLimit
     @State private var agentCommandChoice = "claude"
 
@@ -26,19 +25,13 @@ struct AgentSettings: View {
     var body: some View {
         Form {
             Section("Focus") {
-                Stepper(
-                    "Terminals on screen: \(focusVisibleCount)",
-                    value: $focusVisibleCount,
-                    in: FocusReel.visibleCountRange
-                )
-                .pointerCursor()
                 Picker("Most issues in Focus", selection: $focusLimit) {
                     ForEach(focusLimitOptions, id: \.self) { Text("\($0)").tag($0) }
                     Divider()
                     Text("Unlimited").tag(0)
                 }
                 .pointerCursor()
-                Text("Focus is one list seen through a window of this many cards. Cards outside the window keep their terminals running; scroll the list or use the arrows above and below it to bring them on screen. Lowering the limit never removes issues, it only stops new ones until Focus is under it.")
+                Text("Every issue in Focus keeps a terminal on screen; the lane scrolls when they outgrow it. Lowering the limit never removes issues, it only stops new ones until Focus is under it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
