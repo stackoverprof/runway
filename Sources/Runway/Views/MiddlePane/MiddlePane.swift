@@ -253,32 +253,17 @@ struct MiddlePane: View {
     private var issueSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("PROGRESS")
-            VStack(alignment: .leading, spacing: 7) {
-                ForEach(flight.legs) { leg in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: leg.done ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 10))
-                            .foregroundStyle(leg.done ? Runway.green : Color.white.opacity(0.25))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(leg.title)
-                                .font(.system(size: 12))
-                                .foregroundStyle(
-                                    Color.white.opacity(leg.done ? 0.45 : 0.85)
-                                )
-                                .strikethrough(leg.done, color: Color.white.opacity(0.3))
-                            if let waiting = leg.waitingOn {
-                                Text("waits on \(waiting)")
-                                    .font(.system(size: 9.5, design: .monospaced))
-                                    .foregroundStyle(Runway.amber.opacity(0.8))
-                            }
-                        }
-                        Spacer(minLength: 6)
-                        Text(verbatim: GitHubNumber.reference(leg.number))
-                            .font(.system(size: 9.5, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.28))
+            // The legs read as a strip you scroll along, in the order they fly.
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(flight.legs) { leg in
+                        legCard(leg)
                     }
                 }
+                .padding(.vertical, 1)
             }
+            .scrollIndicators(.hidden)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
 
             sectionLabel("NEEDS YOU")
             VStack(alignment: .leading, spacing: 6) {
@@ -316,6 +301,43 @@ struct MiddlePane: View {
             stateButton
                 .padding(.top, 4)
         }
+    }
+
+    private func legCard(_ leg: FlightPreview.Leg) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: leg.done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(leg.done ? Runway.green : Color.white.opacity(0.25))
+                Text(verbatim: GitHubNumber.reference(leg.number))
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.32))
+                Spacer(minLength: 0)
+            }
+
+            Text(leg.title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(leg.done ? 0.45 : 0.85))
+                .strikethrough(leg.done, color: Color.white.opacity(0.3))
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let waiting = leg.waitingOn {
+                Text("waits on \(waiting)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Runway.amber.opacity(0.8))
+                    .lineLimit(1)
+            }
+        }
+        .padding(9)
+        .frame(width: 150, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(leg.done ? 0.06 : 0.11), lineWidth: 1)
+        )
     }
 
     /// Close the flight's issue once it has landed, or put it back in the air.
