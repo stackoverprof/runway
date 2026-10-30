@@ -14,6 +14,7 @@ struct LeftPane: View {
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
     @State private var pullRequests = PullRequests.shared
+    @State private var runwayScrollAnchor = RunwayScrollAnchor()
     @State private var feedScrollAnchor = RunwayScrollAnchor()
     @State private var pullScrollAnchor = RunwayScrollAnchor()
     /// there is expected, so it does not rebuild that lane's scroll view.
@@ -395,6 +396,7 @@ struct LeftPane: View {
 
     private var subHeaderText: String {
         switch ws.selectedTab {
+        case .runway: "ON TODAY'S MISSIONS"
         case .feeds: displayedTagline
         case .pullRequests: "PULL REQUESTS BY DEV"
         }
@@ -402,14 +404,17 @@ struct LeftPane: View {
 
     private var selectedTabIndex: Int {
         switch ws.selectedTab {
-        case .feeds: 0
-        case .pullRequests: 1
+        case .runway: 0
+        case .feeds: 1
+        case .pullRequests: 2
         }
     }
 
     private var slidingTabContent: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
+                runwayTab
+                    .frame(width: geometry.size.width)
                 feedsTab
                     .frame(width: geometry.size.width)
                 pullRequestTab
@@ -422,6 +427,12 @@ struct LeftPane: View {
             )
         }
         .clipped()
+    }
+
+    /// Open space, waiting for whatever v3 puts here.
+    private var runwayTab: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var feedsTab: some View {
@@ -1030,6 +1041,8 @@ struct LeftPane: View {
         var willShow = false
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
+            case .runway:
+                return
             case .feeds:
                 feedSearchVisible.toggle()
                 willShow = feedSearchVisible
@@ -1052,6 +1065,8 @@ struct LeftPane: View {
 
     private func emptySearchIsOpen(for tab: FeedTab) -> Bool {
         switch tab {
+        case .runway:
+            return false
         case .feeds:
             return feedSearchVisible
                 && feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1080,6 +1095,8 @@ struct LeftPane: View {
     private func closeSearch(for tab: FeedTab) {
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
+            case .runway:
+                return
             case .feeds:
                 feedSearchVisible = false
                 feedSearchQuery = ""
@@ -1145,6 +1162,8 @@ struct LeftPane: View {
 
     private func refreshSource(for tab: FeedTab, minimumAge: TimeInterval) {
         switch tab {
+        case .runway:
+            return
         case .feeds:
             Task { await feed.refresh(minimumAge: minimumAge) }
         case .pullRequests:
@@ -1170,6 +1189,7 @@ struct LeftPane: View {
 
     private func scrollAnchor(for tab: FeedTab) -> RunwayScrollAnchor {
         switch tab {
+        case .runway: runwayScrollAnchor
         case .feeds: feedScrollAnchor
         case .pullRequests: pullScrollAnchor
         }
@@ -1226,6 +1246,8 @@ struct LeftPane: View {
     // MARK: Empty tab placeholder
     @ViewBuilder private func emptyTabPlaceholder(for tab: FeedTab) -> some View {
         switch tab {
+        case .runway:
+            EmptyView()
         case .feeds:
             placeholderCard(icon: "tray", title: "No activity yet",
                             subtitle: "Events from your team will appear here as they happen.")

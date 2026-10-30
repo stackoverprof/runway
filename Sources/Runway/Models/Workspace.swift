@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 enum FeedTab: String, CaseIterable, Codable {
+    case runway = "Runway"
     case feeds = "Feeds"
     case pullRequests = "Pulls"
 
@@ -76,6 +77,9 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 @MainActor @Observable final class Workspace {
     var selectedTab: FeedTab = .feeds
     var feedFilter: FeedFilter = .all
+    /// How wide the activity pane is; the rest of the window is the open space
+    /// beside it.
+    var leftWidth: CGFloat = 520
     var prTimeframe: PRTimeframe = .initial
     var isFullScreen = false
 
@@ -112,6 +116,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     /// Options the current tab offers below itself, in display order.
     var subtabLabels: [String] {
         switch selectedTab {
+        case .runway: []
         case .feeds: FeedFilter.allCases.map(\.rawValue)
         case .pullRequests: PRTimeframe.allCases.map(\.rawValue)
         }
@@ -119,6 +124,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     var selectedSubtabIndex: Int {
         switch selectedTab {
+        case .runway: 0
         case .feeds: FeedFilter.allCases.firstIndex(of: feedFilter) ?? 0
         case .pullRequests: PRTimeframe.allCases.firstIndex(of: prTimeframe) ?? 0
         }
@@ -126,6 +132,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     func selectSubtab(index: Int) {
         switch selectedTab {
+        case .runway:
+            return
         case .feeds:
             guard FeedFilter.allCases.indices.contains(index) else { return }
             feedFilter = FeedFilter.allCases[index]
@@ -159,6 +167,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     private struct Persisted: Codable {
         var selectedTab: FeedTab?
+        var leftWidth: CGFloat?
     }
 
     private static var stateFile: URL {
@@ -169,12 +178,13 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         guard let data = try? Data(contentsOf: Self.stateFile),
               let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
         selectedTab = saved.selectedTab ?? .feeds
+        leftWidth = saved.leftWidth ?? leftWidth
         lastSaved = data
     }
 
     /// Write the window's state if it changed. Cheap enough for the poll tick.
     func saveIfNeeded() {
-        let snapshot = Persisted(selectedTab: selectedTab)
+        let snapshot = Persisted(selectedTab: selectedTab, leftWidth: leftWidth)
         guard let data = try? JSONEncoder().encode(snapshot), data != lastSaved else { return }
         lastSaved = data
         try? data.write(to: Self.stateFile)
