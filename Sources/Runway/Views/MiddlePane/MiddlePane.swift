@@ -252,8 +252,6 @@ struct MiddlePane: View {
     /// The legs, what each waits on, and what only you can answer.
     private var issueSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            stateSwitch
-
             sectionLabel("PROGRESS")
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(flight.legs) { leg in
@@ -314,62 +312,38 @@ struct MiddlePane: View {
                     }
                 }
             }
+
+            stateButton
+                .padding(.top, 4)
         }
     }
 
-    /// Open or close the flight's own issue, from here.
-    private var stateSwitch: some View {
-        HStack(spacing: 0) {
-            stateButton(
-                title: "Open",
-                icon: "circle",
-                tint: Runway.green,
-                selected: !flightClosed
-            ) { flightClosed = false }
-
-            stateButton(
-                title: "Closed",
-                icon: "checkmark.circle",
-                tint: Runway.purple,
-                selected: flightClosed
-            ) { flightClosed = true }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
-    }
-
-    private func stateButton(
-        title: String,
-        icon: String,
-        tint: Color,
-        selected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
+    /// Close the flight's issue once it has landed, or put it back in the air.
+    private var stateButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) { action() }
+            withAnimation(.easeInOut(duration: 0.15)) { flightClosed.toggle() }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(selected ? tint : Color.white.opacity(0.3))
-                Text(title)
-                    .font(.system(size: 10.5, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.white.opacity(0.4))
+            HStack(spacing: 6) {
+                Image(systemName: flightClosed ? "arrow.counterclockwise.circle" : "checkmark.circle")
+                    .font(.system(size: 11, weight: .medium))
+                Text(flightClosed ? "Reopen issue" : "Close issue")
+                    .font(.system(size: 11, weight: .medium))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .foregroundStyle(flightClosed ? Runway.green : Runway.purple)
             .frame(maxWidth: .infinity)
+            .frame(height: 28)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(selected ? Color.white.opacity(0.1) : Color.clear)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill((flightClosed ? Runway.green : Runway.purple).opacity(0.1))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke((flightClosed ? Runway.green : Runway.purple).opacity(0.28), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .pointerCursor()
-        .help(title == "Open" ? "Reopen this issue" : "Close this issue")
     }
 
     /// Every PR of the flight, with what it is waiting for.
