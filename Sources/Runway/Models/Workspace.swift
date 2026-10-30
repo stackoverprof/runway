@@ -102,9 +102,10 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     var selectedTab: FeedTab = .feeds
     var runwayIssueTab: RunwayIssueTab = .open
     var feedFilter: FeedFilter = .all
-    /// How wide the activity pane is; the rest of the window is the open space
-    /// beside it.
+    /// How wide the activity pane is, and the pane beside it. The third pane
+    /// takes whatever is left.
     var leftWidth: CGFloat = 520
+    var middleWidth: CGFloat = 520
     var prTimeframe: PRTimeframe = .initial
     var isFullScreen = false
 
@@ -282,6 +283,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     private struct Persisted: Codable {
         var selectedTab: FeedTab?
         var leftWidth: CGFloat?
+        var middleWidth: CGFloat?
         var quickHeight: CGFloat?
         var quickPinned: Bool?
     }
@@ -295,6 +297,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
               let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
         selectedTab = saved.selectedTab ?? .feeds
         leftWidth = saved.leftWidth ?? leftWidth
+        middleWidth = saved.middleWidth ?? middleWidth
         quickHeight = saved.quickHeight ?? 0
         quickPinned = saved.quickPinned ?? false
         lastSaved = data
@@ -305,6 +308,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         let snapshot = Persisted(
             selectedTab: selectedTab,
             leftWidth: leftWidth,
+            middleWidth: middleWidth,
             quickHeight: quickHeight,
             quickPinned: quickPinned
         )
