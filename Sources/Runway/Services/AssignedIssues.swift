@@ -32,6 +32,44 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
     var isFlight: Bool { !legs.isEmpty }
     var landedLegs: Int { legs.filter(\.isClosed).count }
 
+    init(
+        number: Int,
+        title: String,
+        state: String,
+        closedAt: Date? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil,
+        url: URL,
+        parent: Int? = nil,
+        legs: [IssueLeg] = []
+    ) {
+        self.number = number
+        self.title = title
+        self.state = state
+        self.closedAt = closedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.url = url
+        self.parent = parent
+        self.legs = legs
+    }
+
+    /// GitHub's issue list knows nothing of crews, and a cache written before
+    /// they existed has none either, so both decode as a flight with no crews
+    /// rather than failing the whole list.
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        number = try fields.decode(Int.self, forKey: .number)
+        title = try fields.decode(String.self, forKey: .title)
+        state = try fields.decode(String.self, forKey: .state)
+        closedAt = try fields.decodeIfPresent(Date.self, forKey: .closedAt)
+        createdAt = try fields.decodeIfPresent(Date.self, forKey: .createdAt)
+        updatedAt = try fields.decodeIfPresent(Date.self, forKey: .updatedAt)
+        url = try fields.decode(URL.self, forKey: .url)
+        parent = try fields.decodeIfPresent(Int.self, forKey: .parent)
+        legs = try fields.decodeIfPresent([IssueLeg].self, forKey: .legs) ?? []
+    }
+
     static func matchesSearchQuery(
         _ query: String,
         issue: AssignedIssue,

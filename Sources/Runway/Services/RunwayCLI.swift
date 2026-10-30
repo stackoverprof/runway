@@ -159,8 +159,11 @@ extension AgentControl {
                 print("      part of #%s %s" % (flight["parent"]["number"], flight["parent"]["title"]))
 
 
-        def create_issue(repo, title, body):
-            url = gh(["issue", "create", "--repo", repo, "--title", title, "--body", body or ""]).strip()
+        def create_issue(repo, title, body, assignee="@me"):
+            args = ["issue", "create", "--repo", repo, "--title", title, "--body", body or ""]
+            if assignee:
+                args += ["--assignee", assignee]
+            url = gh(args).strip()
             number = url.rstrip("/").split("/")[-1]
             return int(number), url
 
