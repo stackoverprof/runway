@@ -335,28 +335,29 @@ struct MiddlePane: View {
     private var issueSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("PROGRESS")
-            // The legs read as a strip you scroll along, in the order they fly,
-            // opening on the one the flight is at rather than back at the gate.
-            ScrollViewReader { strip in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(flight?.legs ?? []) { leg in
-                            legCard(leg)
-                                .id(leg.number)
-                        }
-                    }
-                    .padding(.vertical, 1)
+            // The pilot's own checklist, kept in the issue body. The crews are
+            // the route above and the pane to the right; this is the steps.
+            let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
+            VStack(alignment: .leading, spacing: 6) {
+                if steps.isEmpty {
+                    Text("The pilot has not written a checklist for this flight yet.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Color.white.opacity(0.3))
                 }
-                .scrollIndicators(.hidden)
-                .contentMargins(.horizontal, 0, for: .scrollContent)
-                .onAppear {
-                    guard let current = currentLeg else { return }
-                    strip.scrollTo(current, anchor: .leading)
-                }
-                .onChange(of: currentLeg) { _, current in
-                    guard let current else { return }
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        strip.scrollTo(current, anchor: .leading)
+                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(step.done ? Runway.green : Color.white.opacity(0.25))
+                        Text(step.text)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.white.opacity(step.done ? 0.42 : 0.85))
+                            .strikethrough(step.done, color: Color.white.opacity(0.3))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 6)
+                        Text("\(index + 1)")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.22))
                     }
                 }
             }
@@ -386,50 +387,6 @@ struct MiddlePane: View {
             stateButton(closed: flight?.isClosed == true)
                 .padding(.top, 4)
         }
-    }
-
-    /// Where the flight is: the first leg still in the air, or the last one
-    /// when they have all landed.
-    private var currentLeg: Int? {
-        let legs = flight?.legs ?? []
-        return legs.first { !$0.isClosed }?.number ?? legs.last?.number
-    }
-
-    private func legCard(_ leg: IssueLeg) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: leg.isClosed ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(leg.isClosed ? Runway.green : Color.white.opacity(0.25))
-                Text(verbatim: GitHubNumber.reference(leg.number))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.32))
-                Spacer(minLength: 0)
-            }
-
-            Text(leg.title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(leg.isClosed ? 0.45 : 0.85))
-                .strikethrough(leg.isClosed, color: Color.white.opacity(0.3))
-                .multilineTextAlignment(.leading)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let elsewhere = leg.repository {
-                Text(elsewhere.split(separator: "/").last.map(String.init) ?? elsewhere)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
-                    .lineLimit(1)
-            }
-        }
-        .padding(9)
-        .frame(width: 150, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(leg.isClosed ? 0.06 : 0.11), lineWidth: 1)
-        )
     }
 
     /// Close the flight's issue once it has landed, or put it back in the air.

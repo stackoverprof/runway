@@ -118,11 +118,6 @@ extension AgentControl {
 
 
         def cmd_whoami(args):
-            card = os.environ.get("RUNWAY_ROLE_CARD", "")
-            if card and os.path.exists(card):
-                with open(card) as handle:
-                    sys.stdout.write(handle.read())
-                return
             rank = RANK or "unranked"
             print("You are %s in Runway." % rank)
             if FLIGHT:
@@ -164,11 +159,8 @@ extension AgentControl {
                 print("      part of #%s %s" % (flight["parent"]["number"], flight["parent"]["title"]))
 
 
-        def create_issue(repo, title, body, assignee="@me"):
-            args = ["issue", "create", "--repo", repo, "--title", title, "--body", body or ""]
-            if assignee:
-                args += ["--assignee", assignee]
-            url = gh(args).strip()
+        def create_issue(repo, title, body):
+            url = gh(["issue", "create", "--repo", repo, "--title", title, "--body", body or ""]).strip()
             number = url.rstrip("/").split("/")[-1]
             return int(number), url
 
@@ -236,6 +228,124 @@ extension AgentControl {
             nudge()
 
 
+        PROGRESS_HEADING = "## Progress"
+
+
+        def issue_body(repo, number):
+            return gh(["issue", "view", str(number), "--repo", repo, "--json", "body", "--jq", ".body"])
+
+
+        def write_body(repo, number, body):
+            import tempfile
+            with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
+                handle.write(body)
+                path = handle.name
+            gh(["issue", "edit", str(number), "--repo", repo, "--body-file", path])
+            os.unlink(path)
+
+
+        def split_progress(body):
+            \"\"\"The lines of the Progress section, and the body either side of it.\"\"\"
+            lines = body.split("\\n")
+            start = None
+            for index, line in enumerate(lines):
+                if line.strip().lower().startswith(PROGRESS_HEADING.lower()):
+                    start = index
+                    break
+            if start is None:
+                return lines, [], []
+            end = len(lines)
+            for index in range(start + 1, len(lines)):
+                if lines[index].strip().startswith("#"):
+                    end = index
+                    break
+            return lines[:start + 1], lines[start + 1:end], lines[end:]
+
+
+        def steps_of(section):
+            steps = []
+            for line in section:
+                text = line.strip()
+                if text.startswith("- [x]") or text.startswith("- [X]"):
+                    steps.append((True, text[5:].strip()))
+                elif text.startswith("- [ ]"):
+                    steps.append((False, text[5:].strip()))
+            return steps
+
+
+        def rendered(steps):
+            return ["- [%s] %s" % ("x" if done else " ", text) for done, text in steps]
+
+
+        def save_steps(repo, number, steps):
+            body = issue_body(repo, number)
+            head, section, tail = split_progress(body)
+            if not head or not head[-1].strip().lower().startswith(PROGRESS_HEADING.lower()):
+                # No Progress section yet: give the issue one at the end.
+                head = body.rstrip("\\n").split("\\n") + ["", PROGRESS_HEADING]
+                tail = []
+            kept = [line for line in section if line.strip() and not line.strip().startswith("- [")]
+            write_body(repo, number, "\\n".join(head + [""] + kept + rendered(steps) + [""] + tail).strip() + "\\n")
+            nudge()
+
+
+        def flight_of(args):
+            number = getattr(args, "flight", "") or FLIGHT or CREW
+            if not number:
+                sys.exit("runway: which issue? Pass --flight <number>.")
+            return number
+
+
+        def cmd_progress(args):
+            repo = repo_of(args)
+            number = flight_of(args)
+            steps = steps_of(split_progress(issue_body(repo, number))[1])
+            if not steps:
+                print("No checklist on #%s yet. Add one with: runway progress add \\"first step\\"" % number)
+                return
+            for index, (done, text) in enumerate(steps, start=1):
+                print("%2d. [%s] %s" % (index, "x" if done else " ", text))
+
+
+        def cmd_progress_add(args):
+            repo = repo_of(args)
+            number = flight_of(args)
+            steps = steps_of(split_progress(issue_body(repo, number))[1])
+            steps.append((False, args.step))
+            save_steps(repo, number, steps)
+            print("#%s step %d: %s" % (number, len(steps), args.step))
+
+
+        def cmd_progress_mark(args, done):
+            repo = repo_of(args)
+            number = flight_of(args)
+            steps = steps_of(split_progress(issue_body(repo, number))[1])
+            index = args.step - 1
+            if index < 0 or index >= len(steps):
+                sys.exit("runway: #%s has no step %d" % (number, args.step))
+            steps[index] = (done, steps[index][1])
+            save_steps(repo, number, steps)
+            print("#%s step %d %s" % (number, args.step, "ticked" if done else "unticked"))
+
+
+        def cmd_progress_set(args):
+            repo = repo_of(args)
+            number = flight_of(args)
+            lines = [line.strip() for line in sys.stdin.read().split("\\n") if line.strip()]
+            steps = []
+            for line in lines:
+                if line.startswith("- [x]") or line.startswith("- [X]"):
+                    steps.append((True, line[5:].strip()))
+                elif line.startswith("- [ ]"):
+                    steps.append((False, line[5:].strip()))
+                elif line.startswith("- "):
+                    steps.append((False, line[2:].strip()))
+                else:
+                    steps.append((False, line))
+            save_steps(repo, number, steps)
+            print("#%s checklist rewritten, %d steps" % (number, len(steps)))
+
+
         def cmd_close(args):
             repo = repo_of(args)
             gh(["issue", "close", str(args.number), "--repo", repo])
@@ -295,6 +405,26 @@ extension AgentControl {
             crew_release.add_argument("issue")
             crew_release.add_argument("--flight", default="")
             crew_release.set_defaults(run=cmd_crew_release)
+
+            progress = verbs.add_parser("progress", help="the checklist you keep on the issue")
+            progress.add_argument("--flight", default="", help="defaults to your own flight or crew")
+            progress_verbs = progress.add_subparsers(dest="action")
+            progress.set_defaults(run=cmd_progress)
+            progress_add = progress_verbs.add_parser("add", help="add a step")
+            progress_add.add_argument("step")
+            progress_add.add_argument("--flight", default="")
+            progress_add.set_defaults(run=cmd_progress_add)
+            progress_tick = progress_verbs.add_parser("tick", help="tick a step by its number")
+            progress_tick.add_argument("step", type=int)
+            progress_tick.add_argument("--flight", default="")
+            progress_tick.set_defaults(run=lambda args: cmd_progress_mark(args, True))
+            progress_untick = progress_verbs.add_parser("untick", help="untick a step")
+            progress_untick.add_argument("step", type=int)
+            progress_untick.add_argument("--flight", default="")
+            progress_untick.set_defaults(run=lambda args: cmd_progress_mark(args, False))
+            progress_set = progress_verbs.add_parser("set", help="rewrite the whole checklist from stdin")
+            progress_set.add_argument("--flight", default="")
+            progress_set.set_defaults(run=cmd_progress_set)
 
             close = verbs.add_parser("close", help="close a flight or a crew")
             close.add_argument("number")
