@@ -253,17 +253,31 @@ struct MiddlePane: View {
     private var issueSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("PROGRESS")
-            // The legs read as a strip you scroll along, in the order they fly.
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(flight.legs) { leg in
-                        legCard(leg)
+            // The legs read as a strip you scroll along, in the order they fly,
+            // opening on the one the flight is at rather than back at the gate.
+            ScrollViewReader { strip in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(flight.legs) { leg in
+                            legCard(leg)
+                                .id(leg.number)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .scrollIndicators(.hidden)
+                .contentMargins(.horizontal, 0, for: .scrollContent)
+                .onAppear {
+                    guard let current = currentLeg else { return }
+                    strip.scrollTo(current, anchor: .leading)
+                }
+                .onChange(of: currentLeg) { _, current in
+                    guard let current else { return }
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        strip.scrollTo(current, anchor: .leading)
                     }
                 }
-                .padding(.vertical, 1)
             }
-            .scrollIndicators(.hidden)
-            .contentMargins(.horizontal, 0, for: .scrollContent)
 
             sectionLabel("ACCEPTANCE")
             VStack(alignment: .leading, spacing: 5) {
@@ -282,6 +296,12 @@ struct MiddlePane: View {
             stateButton
                 .padding(.top, 4)
         }
+    }
+
+    /// Where the flight is: the first leg still in the air, or the last one
+    /// when they have all landed.
+    private var currentLeg: Int? {
+        flight.legs.first { !$0.done }?.number ?? flight.legs.last?.number
     }
 
     private func legCard(_ leg: FlightPreview.Leg) -> some View {
