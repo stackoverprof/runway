@@ -4,18 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="/Applications/Runway.app"
+# Same flavor switch as build-app.sh: RUNWAY_FLAVOR=3 builds, installs and
+# relaunches "Runway 3.app" and leaves the Runway you work in alone.
+FLAVOR="${RUNWAY_FLAVOR:-}"
+APP_NAME="Runway${FLAVOR:+ $FLAVOR}"
+EXEC_NAME="Runway${FLAVOR}"
+APP="/Applications/$APP_NAME.app"
 
 # pgrep and pkill do not see a Runway that was launched outside this shell's
 # session: pkill then leaves the old app running, `open` just activates it
 # instead of starting the new build, and pgrep reports a launch failure on a
 # perfectly good build. ps does see it, so every check here goes through ps.
 running() {
-  ps -Ao pid=,comm= | awk '/Runway\.app\/Contents\/MacOS\/Runway/ { print $1 }'
+  ps -Ao pid=,comm= | awk -v needle="$APP_NAME.app/Contents/MacOS/$EXEC_NAME" \
+    'index($0, needle) { print $1 }'
 }
 
 echo "▸ building…"
-if ! ./build-app.sh debug 2>&1 | tail -5; then
+if ! RUNWAY_FLAVOR="$FLAVOR" ./build-app.sh debug 2>&1 | tail -5; then
   echo "✗ build failed"
   exit 1
 fi
@@ -28,14 +34,14 @@ done
 for pid in $(running); do kill -9 "$pid" 2>/dev/null || true; done
 sleep 0.5
 
-ditto dist/Runway.app "$APP"
+ditto "dist/$APP_NAME.app" "$APP"
 open "$APP"
 sleep 2
 
 if [ -n "$(running)" ]; then
-  echo "▸ relaunched Runway ($(date +%H:%M:%S))"
-  osascript -e 'tell application "System Events" to tell (first process whose name is "Runway") to set frontmost to true' 2>/dev/null || true
+  echo "▸ relaunched $APP_NAME ($(date +%H:%M:%S))"
+  osascript -e "tell application \"System Events\" to tell (first process whose name is \"$EXEC_NAME\") to set frontmost to true" 2>/dev/null || true
 else
-  echo "✗ Runway failed to start"
+  echo "✗ $APP_NAME failed to start"
   exit 1
 fi
