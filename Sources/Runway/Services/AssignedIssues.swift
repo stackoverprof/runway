@@ -111,13 +111,15 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         return issues.first { $0.number == number }
     }
 
-    /// Newest first, which is how GitHub hands them over.
+    /// The flights, newest first. A crew belongs to its flight's pane, not
+    /// to this list, so an issue with a parent is left out of both.
     var open: [AssignedIssue] {
-        issues.filter { !$0.isClosed }.sorted { $0.number > $1.number }
+        issues.filter { !$0.isClosed && $0.parent == nil }
+            .sorted { $0.number > $1.number }
     }
 
     var closed: [AssignedIssue] {
-        issues.filter(\.isClosed)
+        issues.filter { $0.isClosed && $0.parent == nil }
             .sorted { ($0.closedAt ?? .distantPast) > ($1.closedAt ?? .distantPast) }
     }
 

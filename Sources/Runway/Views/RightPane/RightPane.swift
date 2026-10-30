@@ -193,7 +193,8 @@ struct RightPane: View {
         return FlightCrewSessions.sessionName(
             rank: .pilot,
             repository: repository,
-            issue: flight
+            issue: flight,
+            title: issues.issue(flight)?.title ?? ""
         )
     }
 

@@ -15,14 +15,38 @@ enum FlightCrewSessions {
     }
 
     /// What the session calls itself, and what other sessions address it by.
-    static func sessionName(rank: AgentRank, repository: String, issue: Int) -> String {
+    ///
+    /// A pilot takes the flight's own name, the part of its title before the
+    /// colon, because that is what the work is called: `dependency`, not
+    /// `monorepo-17345-pilot`. A crew keeps `<clone>-<issue>`, since an issue
+    /// is what it answers for.
+    static func sessionName(
+        rank: AgentRank,
+        repository: String,
+        issue: Int,
+        title: String = ""
+    ) -> String {
         let clone = repository.split(separator: "/").last.map(String.init) ?? repository
         switch rank {
         case .atc: return "atc"
-        case .pilot: return "\(clone)-\(issue)-pilot"
-        case .copilot: return "\(clone)-\(issue)-copilot"
+        case .pilot: return flightName(title) ?? "\(clone)-\(issue)"
+        case .copilot: return (flightName(title) ?? "\(clone)-\(issue)") + "-copilot"
         case .crew: return "\(clone)-\(issue)"
         }
+    }
+
+    /// `Dependency: Keep the stack current` is flown by `dependency`.
+    static func flightName(_ title: String) -> String? {
+        let head = title.split(separator: ":", maxSplits: 1).first.map(String.init) ?? title
+        let slug = head
+            .lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "-" }
+            .reduce(into: "") { slug, character in
+                if character == "-", slug.last == "-" { return }
+                slug.append(character)
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return slug.isEmpty ? nil : slug
     }
 
     /// The folder an agent starts in: the repository's main checkout. A crew
@@ -56,7 +80,10 @@ enum FlightCrewSessions {
             focusCheckoutPath: workingDirectory(for: repository),
             issueAgentSessionsEnabled: true
         )
-        env["RUNWAY_SESSION_NAME"] = sessionName(rank: rank, repository: repository, issue: issue)
+        let name = sessionName(rank: rank, repository: repository, issue: issue, title: title)
+        env["RUNWAY_SESSION_NAME"] = name
+        // What the session renames itself to, so a pilot reads as its flight.
+        env["RUNWAY_AGENT_NAME"] = name
         if let flight { env["RUNWAY_FLIGHT"] = String(flight) }
         if rank == .crew { env["RUNWAY_CREW"] = String(issue) }
         if let reportsTo { env["RUNWAY_REPORTS_TO"] = reportsTo }
