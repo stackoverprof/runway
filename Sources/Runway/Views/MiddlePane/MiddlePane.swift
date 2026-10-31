@@ -224,6 +224,9 @@ struct MiddlePane: View {
         .padding(.bottom, 20)
         // A patch of black around the buttons, not a band across the top: it
         // fades away downwards and leftwards into whatever the agent printed.
+        // It takes no clicks and no drops of its own: it covers a wide strip
+        // of the terminal, and a file dropped onto that strip has to reach
+        // the terminal underneath.
         .background(
             LinearGradient(
                 colors: [Color.black, Color.black, Color.black.opacity(0)],
@@ -242,6 +245,10 @@ struct MiddlePane: View {
                     endPoint: .trailing
                 )
             )
+            // The fade takes no clicks and no drops of its own: it covers a
+            // wide strip of the terminal, and a file dropped on that strip
+            // has to reach the terminal underneath.
+            .allowsHitTesting(false)
         )
     }
 

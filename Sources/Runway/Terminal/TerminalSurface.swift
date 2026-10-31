@@ -135,6 +135,11 @@ struct TerminalSurfaceView: View {
             // GhosttyKit's embedded view doesn't accept file drops; replicate
             // Ghostty's behavior by typing the dropped file's path (shell-escaped)
             // into the terminal — Claude Code then picks it up as an image.
+            // The whole box takes a drop, including the padding around the
+            // glyphs. Without a shape the drop only lands where SwiftUI
+            // thinks content is, which is why a drop near an edge did
+            // nothing.
+            .contentShape(Rectangle())
             .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
                 handleDropProviders(providers, session: session) {
                     Task { @MainActor in
