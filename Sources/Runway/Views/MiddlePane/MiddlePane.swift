@@ -15,7 +15,6 @@ struct MiddlePane: View {
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
-    @State private var draft = ""
 
     /// The issue being flown, if one is picked and still ours.
     private var flight: AssignedIssue? { issues.issue(ws.flightNumber) }
@@ -329,6 +328,49 @@ struct MiddlePane: View {
         }
         .contentMargins(.vertical, 0, for: .scrollContent)
         .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom, spacing: 0) { flightBar }
+    }
+
+    /// The two moves that are always available, whichever tab you are on:
+    /// read the issue where it lives, and close it when it has landed.
+    @ViewBuilder
+    private var flightBar: some View {
+        if let flight {
+            HStack(spacing: 8) {
+                Button {
+                    NSWorkspace.shared.open(flight.url)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Open on GitHub")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Color.white.opacity(0.6))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 28)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.05)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("Open this issue on GitHub")
+
+                stateButton(closed: flight.isClosed)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.07))
+                    .frame(height: 1)
+            }
+        }
     }
 
     /// The legs, what each waits on, and what only you can answer.
@@ -386,8 +428,6 @@ struct MiddlePane: View {
                 }
             }
 
-            stateButton(closed: flight?.isClosed == true)
-                .padding(.top, 4)
         }
     }
 
@@ -476,54 +516,19 @@ struct MiddlePane: View {
         .pointerCursor()
     }
 
-    /// Every PR of the flight, with what it is waiting for.
+    /// Every PR of the flight, drawn the way the Pulls tab draws them.
     private var pullsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("PULL REQUESTS")
+        VStack(alignment: .leading, spacing: 10) {
             if flightPulls.isEmpty {
+                sectionLabel("PULL REQUESTS")
                 Text("No pull request names this flight or its crews yet.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Color.white.opacity(0.3))
-            }
-            ForEach(flightPulls) { pull in
-                Button {
-                    NSWorkspace.shared.open(pull.url)
-                } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            Text(verbatim: GitHubNumber.reference(pull.number))
-                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(stateColour(pull).opacity(0.85))
-                            Text(pull.title)
-                                .font(.system(size: 11))
-                                .foregroundStyle(Color.white.opacity(0.75))
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Text(stateLabel(pull))
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .foregroundStyle(stateColour(pull))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(stateColour(pull).opacity(0.12)))
-                        }
-                        HStack(spacing: 5) {
-                            Text(pull.headRefName)
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 7, weight: .semibold))
-                            Text(pull.baseRefName)
-                        }
-                        .font(.system(size: 8.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.27))
-                        .lineLimit(1)
-                    }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.03)))
-                    .contentShape(RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
+            } else {
+                PullRequestList(
+                    pullRequests: flightPulls,
+                    scope: "flight-\(flight?.number ?? 0)"
+                )
             }
         }
     }
@@ -702,86 +707,7 @@ struct MiddlePane: View {
                 }
             }
 
-            draftComposer
         }
-    }
-
-    /// What a pilot drafted, in your voice, waiting for you to send or bin it.
-    private var draftComposer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                sectionLabel("DRAFT")
-                Circle()
-                    .fill(Runway.amber)
-                    .frame(width: 4, height: 4)
-                Text("unsent")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Runway.amber.opacity(0.8))
-            }
-
-            TextEditor(text: $draft)
-                .font(.system(size: 11.5))
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(minHeight: 72)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 1)
-                )
-                .overlay(alignment: .topLeading) {
-                    if draft.isEmpty {
-                        Text("Nothing drafted for this flight yet.")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Color.white.opacity(0.25))
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 16)
-                            .allowsHitTesting(false)
-                    }
-                }
-
-            HStack(spacing: 8) {
-                Button {
-                    draft = ""
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Color.white.opacity(0.45))
-                        .frame(width: 26, height: 22)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
-                        .contentShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("Bin this draft")
-                .disabled(draft.isEmpty)
-
-                Spacer(minLength: 0)
-
-                Button {
-                    // Sending is yours; the pilot only ever drafts.
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 9.5))
-                        Text("Send")
-                            .font(.system(size: 10.5, weight: .semibold))
-                    }
-                    .foregroundStyle(draft.isEmpty ? Color.white.opacity(0.3) : Color.black.opacity(0.85))
-                    .padding(.horizontal, 12)
-                    .frame(height: 22)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(draft.isEmpty ? Color.white.opacity(0.05) : Runway.teal)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .disabled(draft.isEmpty)
-            }
-        }
-        .padding(.top, 4)
     }
 
     private func sectionLabel(_ text: String) -> some View {
