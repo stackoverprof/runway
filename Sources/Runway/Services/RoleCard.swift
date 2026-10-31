@@ -106,6 +106,8 @@ enum RoleCard {
             lines.append("`runway progress` is the flight's checklist, and `runway tick <n>` marks a step done.")
         }
         lines.append("")
+        lines.append(conventions)
+        lines.append("")
         lines.append("House rules")
         lines.append(HouseRules.current)
         return lines.joined(separator: "\n") + "\n"
@@ -125,6 +127,78 @@ enum RoleCard {
             reportsTo: "you"
         )
     }
+
+
+    /// How Erbin files, closes and tracks work. Every seat gets this, because
+    /// any of them may be asked to file a ticket or say where an issue stands,
+    /// and the conventions are his, not GitHub's.
+    static let conventions = """
+    Filing an issue
+
+    A title is `Cluster: Short title`, 40 characters at most including the
+    prefix, and the first letter after the colon is always a capital. The
+    prefix is the cluster, which is the flight it belongs under; a flight's
+    own title is just the cluster name, nothing after it. Name the brand or
+    the app right after the prefix when one is the subject (`OneSignal Exit:
+    Te&Kaffi`, `Bookings: POS+dashboard service colors`); several join with
+    `+`. Say the effect, not the mechanism, in words a teammate understands
+    on first read: Erbin reads these titles aloud in the weekly meeting. No
+    internal jargon, no field or function names, and never a GitHub label.
+
+    The body, in this order:
+
+      ## Idea            (or Problem, or Goal, whichever it is)
+      ## Sketch          optional: the approach, file paths, the small change
+      ## Open questions  only what the request genuinely leaves open
+      ## Acceptance      verifiable done-criteria
+      ## Progress        the rough ordered path, last line `- [ ] /close`
+      ## Situation Development   the conversation this issue lives in
+      ## References      optional
+
+    Acceptance is the section that matters most: it is what lets someone else
+    finish the work unattended. A one-line idea may be `## Idea` and one line;
+    never pad a small ticket into a fake spec. Something proposed by someone
+    else says so: "Proposed by <name> (<where>, <date>)".
+
+    Work that belongs under an existing flight is a crew of it, not a new
+    flight: `runway crew add --title "..." --body "..." --flight <issue>`.
+    Only its own cluster gets `runway flight create`. The repository is
+    monorepo unless the subject says otherwise (upsell-hr, pizzan-app,
+    upsell-website). Both verbs assign the issue to Erbin for you.
+
+    Closing an issue
+
+    Closing is a judgment, not a button. Read the Acceptance line by line and
+    the Progress list, and look for what is still open: a PR not merged, a
+    merge not deployed, a rollout still pending (a flag, a config, a
+    migration, an OTA, an app build), a question in Situation Development
+    nobody answered, a Sentry report still firing.
+
+    Nothing left: close it, with a comment saying what shipped and the PRs
+    that carried it. Something left: say exactly what, in a line each, and let
+    Erbin decide. He says close anyway, close it. A Sentry report behind the
+    issue is settled in the same breath: resolved, archived, or archived until
+    it escalates.
+
+    A crew never closes its own issue. It reports, and the pilot or Erbin
+    closes it.
+
+    Saying where an issue stands
+
+    Do not guess it: read it. The issue body, its pull requests
+    (`gh pr list --search "<n> in:body" --state all`), its Situation
+    Development, and what this session already knows, which is often ahead of
+    GitHub. Then answer in a few plain lines: where it is, the steps left, and
+    anything only Erbin can unblock.
+
+    Write the same answer back into `## Progress`, which is a living checklist
+    edited in place, not a log. Tick what landed, add what you found, reword
+    what changed. Never delete a ticked line: it is how the issue got here. A
+    step no longer needed becomes `- [x] ~~<line>~~ (dropped: <reason>)`.
+    Steps are actions in the order they happen, named concretely, with the PR
+    as an explicit link `[#n](<url>)`. Stamp the `_Updated <Day, D Mon HH:MM>
+    WIB_` line, and keep `- [ ] /close` last.
+    """
 
     @discardableResult
     static func write(
