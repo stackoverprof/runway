@@ -187,10 +187,10 @@ struct MiddlePane: View {
                 .pointerCursor()
             }
         }
-        .padding(.leading, 90)
+        .padding(.leading, 190)
         .padding(.trailing, 10)
         .padding(.top, 8)
-        .padding(.bottom, 34)
+        .padding(.bottom, 56)
         // A patch of black around the buttons, not a band across the top: it
         // fades away downwards and leftwards into whatever the agent printed.
         .background(
@@ -201,7 +201,12 @@ struct MiddlePane: View {
             )
             .mask(
                 LinearGradient(
-                    colors: [Color.black.opacity(0), Color.black, Color.black],
+                    colors: [
+                        Color.black.opacity(0),
+                        Color.black.opacity(0.55),
+                        Color.black,
+                        Color.black,
+                    ],
                     startPoint: .leading,
                     endPoint: .trailing
                 )
