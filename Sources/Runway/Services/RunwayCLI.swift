@@ -140,6 +140,15 @@ extension AgentControl {
             query = "repo:%s assignee:@me is:issue state:%s sort:updated-desc" % (repo, args.state)
             found = graphql(SEARCH_QUERY, q=query)["search"]["nodes"]
             flights = [issue for issue in found if issue and not issue.get("parent")]
+            # Board order, so a report lists clusters the way Erbin arranged
+            # them rather than by when GitHub last touched them.
+            entry = read_board().get(repo, {})
+            order = entry.get("order", [])
+            priority = entry.get("priority", {})
+            place = {number: index for index, number in enumerate(order)}
+            flights.sort(key=lambda f: (place.get(f["number"], -1), -f["number"]))
+            for flight in flights:
+                flight["priority"] = priority.get(str(flight["number"]))
             if args.json:
                 print(json.dumps(flights, indent=2))
                 return
