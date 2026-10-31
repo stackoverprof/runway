@@ -16,6 +16,9 @@ struct MiddlePane: View {
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
 
+    /// The card every part of this pane sits on.
+    static let card = Color(white: 0.082)
+
     /// The issue being flown, if one is picked and still ours.
     private var flight: AssignedIssue? { issues.issue(ws.flightNumber) }
 
@@ -39,7 +42,7 @@ struct MiddlePane: View {
                 sectionBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .background(Color(white: 0.082))
+            .background(Self.card)
             .clipShape(RoundedRectangle(cornerRadius: 13))
             .overlay(
                 RoundedRectangle(cornerRadius: 13)
@@ -364,13 +367,22 @@ struct MiddlePane: View {
                 stateButton(closed: flight.isClosed)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.07))
-                    .frame(height: 1)
-            }
+            .padding(.top, 28)
+            .padding(.bottom, 10)
+            // No bar, no line: the buttons float, and what scrolls under them
+            // fades into the card rather than being cut off by an edge.
+            .background(
+                LinearGradient(
+                    colors: [
+                        Self.card.opacity(0),
+                        Self.card.opacity(0.75),
+                        Self.card,
+                        Self.card,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
         }
     }
 
