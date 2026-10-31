@@ -669,12 +669,14 @@ struct MiddlePane: View {
             // its row: what the step is comes first, what it waits on last.
             if let needs = step.needs, !step.done {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 8.5))
                     MarkdownText(text: needs, tint: AgentState.needsAction.color)
                         .font(.system(size: 10))
                         .multilineTextAlignment(.trailing)
                         .fixedSize(horizontal: false, vertical: true)
+                    // The mark sits at the very end of the row, so the eye
+                    // runs off the edge rather than stopping at a glyph.
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 8.5))
                 }
                 .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
             }
