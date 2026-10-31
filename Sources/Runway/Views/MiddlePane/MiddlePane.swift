@@ -255,11 +255,20 @@ struct MiddlePane: View {
     /// zero opacity, exactly as the copilot seat always has.
     private static let flightsKeptMounted = 5
 
+    /// The flight on screen plus the ones left mounted behind it. Computed
+    /// rather than read from state, so the flight you are on is mounted on
+    /// the very first pass, before any `onAppear` has run.
+    private var mounted: [Int] {
+        var list = visited
+        if let number = ws.flightNumber, !list.contains(number) { list.append(number) }
+        return list
+    }
+
     private var terminalArea: some View {
         Group {
-        if let repository = issues.repository, !visited.isEmpty {
+        if let repository = issues.repository, !mounted.isEmpty {
             ZStack {
-                ForEach(visited, id: \.self) { number in
+                ForEach(mounted, id: \.self) { number in
                     if let seen = issues.issue(number) {
                         let showing = number == ws.flightNumber
                         ForEach(PilotSeat.allCases) { seat in
