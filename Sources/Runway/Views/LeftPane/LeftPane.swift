@@ -134,7 +134,9 @@ struct LeftPane: View {
             await closeSearchAfterIdle(for: .pullRequests)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(white: 0.035))
+        // Black, like the other two panes: the cards are the only surface,
+        // so no seam shows where one pane meets the next.
+        .background(Color.black)
     }
 
     /// Only the floating card reads the pointer position. Reading it here

@@ -18,12 +18,25 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Color.white.opacity(0.52))
                     .lineLimit(1)
 
+                Spacer(minLength: 6)
+
                 if let closedAt = issue.closedAt {
-                    Spacer(minLength: 6)
                     Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.white.opacity(0.24))
                         .lineLimit(1)
+                        .fixedSize()
+                }
+
+                // How the flight is doing, as a badge, so the card stays two
+                // lines whether or not it carries crews.
+                if issue.isFlight {
+                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Runway.teal.opacity(0.85))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
                         .fixedSize()
                 }
             }
@@ -34,11 +47,7 @@ struct AssignedIssueCard: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
 
-            if issue.isFlight {
-                Text("\(issue.landedLegs)/\(issue.legs.count) crews landed")
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Runway.teal.opacity(0.7))
-            } else if let parent = issue.parent {
+            if let parent = issue.parent {
                 Text("crew of \(GitHubNumber.reference(parent))")
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.3))
@@ -46,16 +55,16 @@ struct AssignedIssueCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
+        // The flight on screen is the brighter card. No coloured ring: the
+        // lift is enough, and it keeps every card the same shape.
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(Color(white: hovering ? 0.09 : 0.075))
+                .fill(Color(white: isFlying ? 0.17 : (hovering ? 0.09 : 0.075)))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9)
                 .stroke(
-                    isFlying
-                        ? Runway.teal.opacity(0.55)
-                        : Color.white.opacity(hovering ? 0.24 : 0.14),
+                    Color.white.opacity(isFlying ? 0.20 : (hovering ? 0.24 : 0.14)),
                     lineWidth: 1
                 )
         )
