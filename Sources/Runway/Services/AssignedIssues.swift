@@ -265,12 +265,34 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
             parents[number] = owner
         }
         guard !parents.isEmpty else { return issues }
-        return issues.map { issue in
+        var carried = issues.map { issue -> AssignedIssue in
             guard issue.parent == nil, let owner = parents[issue.number] else { return issue }
-            var carried = issue
-            carried.parent = owner
-            return carried
+            var marked = issue
+            marked.parent = owner
+            return marked
         }
+
+        // A closed flight keeps its crews. They come from the sub-issue call,
+        // which only asks about open issues, so a flight that landed came
+        // back with none and its route read "no crews yet".
+        var byNumber: [Int: Int] = [:]
+        for (index, issue) in carried.enumerated() { byNumber[issue.number] = index }
+        for issue in carried {
+            guard let owner = issue.parent,
+                  let index = byNumber[owner],
+                  !carried[index].legs.contains(where: { $0.number == issue.number })
+            else { continue }
+            carried[index].legs.append(
+                IssueLeg(
+                    number: issue.number,
+                    title: issue.title,
+                    state: issue.state,
+                    url: issue.url,
+                    repository: nil
+                )
+            )
+        }
+        return carried
     }
 
     /// Hangs the crews off the issues they belong to. A leg in another
