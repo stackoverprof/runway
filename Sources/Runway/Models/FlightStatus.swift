@@ -29,12 +29,16 @@ enum FlightStatus: String {
     /// same amber that means "an agent wants you" everywhere else. Purple is
     /// closed, as it is on every other card. Teal is not used here: it names
     /// a flight elsewhere, and a colour should mean one thing.
+    /// One scale that heats up as the flight gets closer to the ground:
+    /// slate, yellow, orange, red, then purple once it is down. Green and
+    /// teal are deliberately not in it, because they already mean "an agent
+    /// is running" and "this is a flight" everywhere else.
     var color: Color {
         switch self {
         case .onTheStand: Color(red: 0.49, green: 0.54, blue: 0.59)
-        case .enRoute: Color(red: 0.38, green: 0.60, blue: 0.93)
-        case .holding: Runway.amber
-        case .onApproach: Color(red: 0.25, green: 0.80, blue: 0.60)
+        case .enRoute: Color(red: 0.90, green: 0.78, blue: 0.30)
+        case .holding: Color(red: 0.94, green: 0.55, blue: 0.24)
+        case .onApproach: Color(red: 0.91, green: 0.33, blue: 0.33)
         case .landed: Runway.purple
         }
     }

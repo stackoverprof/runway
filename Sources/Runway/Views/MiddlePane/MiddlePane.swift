@@ -98,6 +98,15 @@ struct MiddlePane: View {
 
     // MARK: Header
 
+    /// Where this flight stands, read once and used by everything that
+    /// shows it.
+    private var flightStatus: FlightStatus {
+        FlightStatus.of(
+            closed: flight?.isClosed == true,
+            steps: IssueBody.steps("Progress", in: flight?.body ?? "")
+        )
+    }
+
     private var flightHeader: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
@@ -109,12 +118,7 @@ struct MiddlePane: View {
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Runway.teal.opacity(0.9))
                 Spacer(minLength: 8)
-                statusChip(
-                    FlightStatus.of(
-                        closed: flight?.isClosed == true,
-                        steps: IssueBody.steps("Progress", in: flight?.body ?? "")
-                    )
-                )
+                statusChip(flightStatus)
             }
 
             Text(flight?.title ?? "")
@@ -128,14 +132,14 @@ struct MiddlePane: View {
         .padding(.top, 14)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // A landed flight wears it: the card's head washes purple and fades
-        // back into the grey, so a closed flight is obvious from across the
-        // room rather than only from its chip.
+        // The card's head wears the flight's own state and fades back into
+        // the grey, so where a flight stands reads from across the room and
+        // not only from its chip.
         .background(
             LinearGradient(
                 colors: [
-                    Runway.purple.opacity(flight?.isClosed == true ? 0.22 : 0),
-                    Runway.purple.opacity(flight?.isClosed == true ? 0.09 : 0),
+                    flightStatus.color.opacity(0.20),
+                    flightStatus.color.opacity(0.07),
                     Color.clear,
                 ],
                 startPoint: .top,
