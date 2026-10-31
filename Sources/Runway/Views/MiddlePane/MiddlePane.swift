@@ -49,7 +49,7 @@ struct MiddlePane: View {
             )
             // The same room the crew cards get in the right pane, so the
             // three panes breathe alike.
-            .padding(14)
+            .padding(7)
             }
         }
         .background(Color.black)
@@ -471,9 +471,10 @@ struct MiddlePane: View {
                             .foregroundStyle(
                                 line.done ? Runway.green.opacity(0.8) : Color.white.opacity(0.22)
                             )
-                        Text(line.text)
+                        MarkdownText(text: line.text)
                             .font(.system(size: 12))
                             .foregroundStyle(Color.white.opacity(line.done ? 0.45 : 0.72))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -499,7 +500,7 @@ struct MiddlePane: View {
                 Spacer(minLength: 0)
             }
 
-            Text(step.label)
+            MarkdownText(text: step.label)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Color.white.opacity(step.done ? 0.45 : 0.85))
                 .strikethrough(step.done, color: Color.white.opacity(0.3))
@@ -512,7 +513,7 @@ struct MiddlePane: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 8.5))
-                    Text(needs)
+                    MarkdownText(text: needs, tint: AgentState.needsAction.color)
                         .font(.system(size: 10))
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)

@@ -54,7 +54,7 @@ struct RightPane: View {
                 }
             }
         }
-        .padding(14)
+        .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
         .contentShape(Rectangle())

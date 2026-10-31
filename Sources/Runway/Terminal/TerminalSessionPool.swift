@@ -50,7 +50,9 @@ final class TerminalSessionPool {
             .map { $0.makeSession(configuration: launch) }
             ?? GhosttyTerminalSession(configuration: launch)
         seats[boxID] = Parked(session: session, mounted: false, leftAt: Date())
-        sweep()
+        // No sweep here: this runs inside a SwiftUI body pass, and letting a
+        // session go there tears an NSView down mid-layout, which is what
+        // hung the app when you switched flights. The timer sweeps instead.
         return session
     }
 
@@ -67,9 +69,14 @@ final class TerminalSessionPool {
 
     /// Let a seat go now, whatever the buffer says. Used when its flight or
     /// crew is gone for good, not when you merely look elsewhere.
+    ///
+    /// The drop happens on the next turn of the run loop, never inside the
+    /// caller, so a session is not deallocated while SwiftUI is laying out
+    /// the view that was showing it.
     func release(_ boxID: UUID) {
-        guard seats.removeValue(forKey: boxID) != nil else { return }
+        guard let parked = seats.removeValue(forKey: boxID) else { return }
         TerminalRegistry.shared.unregister(id: boxID)
+        Task { @MainActor in _ = parked }
     }
 
     var liveCount: Int { seats.count }

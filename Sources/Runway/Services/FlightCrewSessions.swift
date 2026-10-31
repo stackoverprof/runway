@@ -98,6 +98,14 @@ enum FlightCrewSessions {
         return env
     }
 
+    /// Built once per seat and kept.
+    ///
+    /// SwiftUI asks for a seat's config on every pass over the pane, and
+    /// building one writes a role card and reads several files. Doing that
+    /// at the rate the panes redraw made switching flights stutter, so the
+    /// answer is remembered until something about the seat changes.
+    private static var configs: [String: TerminalConfig] = [:]
+
     static func config(
         rank: AgentRank,
         repository: String,
@@ -106,7 +114,9 @@ enum FlightCrewSessions {
         flight: Int?,
         reportsTo: String?
     ) -> TerminalConfig {
-        TerminalConfig(
+        let key = "\(rank.rawValue):\(repository):\(issue):\(title)"
+        if let kept = configs[key] { return kept }
+        let built = TerminalConfig(
             workingDirectory: workingDirectory(for: repository),
             environment: environment(
                 rank: rank,
@@ -117,5 +127,7 @@ enum FlightCrewSessions {
                 reportsTo: reportsTo
             )
         )
+        configs[key] = built
+        return built
     }
 }

@@ -355,7 +355,7 @@ struct LeftPane: View {
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.5))
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 7)
             .padding(.vertical, 10)
         }
         .padding(.horizontal, 16)
