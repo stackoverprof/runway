@@ -28,12 +28,14 @@ enum RoleCard {
         case .pilot, .copilot:
             lines.append("You fly \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
+            lines.append("Read it: gh issue view \(issue) --repo \(repository)")
             lines.append("Its crews are that issue's sub-issues. You own the order they fly in,")
             lines.append("what each waits on, and when one is done. You do not write the code:")
             lines.append("that is the crew's work.")
         case .crew:
             lines.append("You answer for \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
+            lines.append("Read it: gh issue view \(issue) --repo \(repository)")
             if let flight {
                 lines.append("You are a crew of flight \(GitHubNumber.reference(flight)).")
             }

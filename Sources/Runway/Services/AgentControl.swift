@@ -529,6 +529,10 @@ enum AgentControl {
     static let issueContextHookScript = #"""
     #!/bin/zsh -f
     [ -t 0 ] || /bin/cat > /dev/null
+    # A seat with a role card is already briefed as a system prompt, and the
+    # card knows whether it is a pilot or a crew. Saying it twice, in the older
+    # one-agent-one-issue wording, would only contradict it.
+    [ -n "${RUNWAY_ROLE_CARD:-}" ] && [ -f "$RUNWAY_ROLE_CARD" ] && exit 0
     [ -n "${RUNWAY_ISSUE:-}" ] || exit 0
     repository="${RUNWAY_ISSUE%#*}"
     number="${RUNWAY_ISSUE##*#}"
