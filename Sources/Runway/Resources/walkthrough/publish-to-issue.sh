@@ -3,7 +3,7 @@
 #
 #   publish-to-issue.sh <issue> [repo]        repo defaults to VISKA-IO/monorepo
 #
-# 1. Commits ~/Developer/walkthrough/<issue>/*.png|gif onto the orphan branch
+# 1. Commits the issue's slides onto the orphan branch
 #    `walkthrough-assets` of the repo, under <issue>/, with git plumbing only: no checkout,
 #    no worktree, nothing staged in the main checkout. Re-running replaces that issue's files.
 # 2. Splices a `## Walkthrough` section into the issue body, right before `## References`
@@ -17,9 +17,14 @@ set -euo pipefail
 issue="${1:?usage: publish-to-issue.sh <issue> [repo]}"
 repo="${2:-VISKA-IO/monorepo}"
 branch="walkthrough-assets"
-src="$HOME/Developer/walkthrough/$issue"
-checkout="$HOME/Developer/${repo#*/}/main"
-[ -d "$checkout/.git" ] || [ -f "$checkout/.git" ] || checkout="$HOME/Developer/${repo#*/}"
+# Runway passes both of these, so no folder layout is assumed. The old
+# paths stay as a fallback for a shell started outside Runway.
+src="${RUNWAY_WALKTHROUGH_OUT:-$HOME/Developer/walkthrough}/$issue"
+checkout="${RUNWAY_CHECKOUT:-}"
+if [ -z "$checkout" ] || { [ ! -d "$checkout/.git" ] && [ ! -f "$checkout/.git" ]; }; then
+  checkout="$HOME/Developer/${repo#*/}/main"
+  [ -d "$checkout/.git" ] || [ -f "$checkout/.git" ] || checkout="$HOME/Developer/${repo#*/}"
+fi
 
 shopt -s nullglob
 files=("$src"/*.png "$src"/*.gif)

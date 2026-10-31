@@ -318,6 +318,9 @@ enum AgentControl {
             let clone = CloneName.name(ofCheckout: checkoutPath)
             identity["RUNWAY_CLONE"] = clone
             identity["RUNWAY_AGENT_NAME"] = CloneName.agentName(clone: clone, issueNumber: issueNumber)
+            // Where this repository actually lives, so a helper never has to
+            // guess at a folder layout.
+            identity["RUNWAY_CHECKOUT"] = checkoutPath
         }
         return identity
     }

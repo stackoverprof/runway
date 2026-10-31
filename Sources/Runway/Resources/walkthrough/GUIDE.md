@@ -1,6 +1,6 @@
 ---
 name: walkthrough
-description: "Turn what Erbin just verified into square slide images (2184x2184 PNGs, a 1092 layout rendered at 2x, under ~/Developer/walkthrough/<issue>/) that he can attach to Slack: one slide per case, each carrying the screenshot, the findings, and a provenance footer. Use whenever he asks for slides, a deck, evidence, proof, screenshots-with-captions, or a walkthrough of a check that was just run. Three slides is the default, not a hard cap: when an issue is too big to fit three, it asks Erbin before going longer. It is an evidence exporter, not a report generator, and it never re-runs the verification itself. Images by default; a slide becomes an animated GIF only when Erbin names the step, e.g. '(gif the payment step)'."
+description: "Turn what Erbin just verified into square slide images (2184x2184 PNGs, a 1092 layout rendered at 2x, under $RUNWAY_WALKTHROUGH_OUT/<issue>/) that he can attach to Slack: one slide per case, each carrying the screenshot, the findings, and a provenance footer. Use whenever he asks for slides, a deck, evidence, proof, screenshots-with-captions, or a walkthrough of a check that was just run. Three slides is the default, not a hard cap: when an issue is too big to fit three, it asks Erbin before going longer. It is an evidence exporter, not a report generator, and it never re-runs the verification itself. Images by default; a slide becomes an animated GIF only when Erbin names the step, e.g. '(gif the payment step)'."
 argument-hint: "[n slides, default 3] [--deck to also publish an Artifact]"
 allowed-tools: Bash, Read, Write, Edit, Skill, Artifact, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__tabs_close_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__javascript_tool, mcp__claude-in-chrome__find
 ---
@@ -13,7 +13,7 @@ Take the screenshots and findings **already gathered in this session** and lay t
 
 ## Start from the capture log
 
-Before asking what was verified, read `~/Developer/walkthrough/.work/captures/<date>/manifest.md`. Any session that verified something today should have written rows there while the work happened, and those rows are the candidate slides. Pick from them.
+Before asking what was verified, read `$RUNWAY_WALKTHROUGH_OUT/.work/captures/<date>/manifest.md`. Any session that verified something today should have written rows there while the work happened, and those rows are the candidate slides. Pick from them.
 
 The log is the source because **a before state is usually gone by the time anyone asks for a deck.** On 13271 the empty extras group was deleted the same night it was found, so the dead Add to Cart button could never be photographed again without rebuilding the bug. A shot taken at the moment of diagnosis costs nothing; the same shot a day later costs an afternoon or is simply impossible.
 
@@ -50,7 +50,7 @@ A GIF slide is the same layout (eyebrow, headline, findings, footer) with the sh
 The recording has to exist already: this skill never re-runs the flow (see CAPTURE.md, "Recording a step"). If the step was asked for as a GIF but nobody recorded it, say so and ship the PNG instead.
 
 1. **Render the background:** the slide's HTML as usual, but with a solid `#FF00FF` PNG in place of the shot, sized to the crop's aspect ratio. Render it at `--force-device-scale-factor=1`, `--window-size=1092,1092`.
-2. **Compose:** `~/.claude/skills/walkthrough/gif/compose.py <bg.png> <frames.json> <out.gif> --crop X Y W H [--start N]`. It finds the magenta area, crops each frame to the evidence (frame pixels are device pixels, so 2x the viewport), pastes it in, keeps the recorded timing, holds the first and last frames, and uses one palette for the whole loop. Pillow goes in a scratchpad venv, never a system install.
+2. **Compose:** `$RUNWAY_WALKTHROUGH/gif/compose.py <bg.png> <frames.json> <out.gif> --crop X Y W H [--start N]`. It finds the magenta area, crops each frame to the evidence (frame pixels are device pixels, so 2x the viewport), pastes it in, keeps the recorded timing, holds the first and last frames, and uses one palette for the whole loop. Pillow goes in a scratchpad venv, never a system install.
 3. **Check it:** pull 3 or 4 frames out (start, the change, the end) into a contact sheet and look at them. Aim for under ~2 MB and under ~10 s; trim with `--start`/`--end` rather than speeding it up.
 
 ## Examples
@@ -111,14 +111,14 @@ The footer states where the screenshot came from, and it must be true:
 1. **Collect the cases.** For each: the screenshot path, a headline, two or three findings in plain sentences, and the provenance line. Findings state what the reader can see in the image, not what the code does.
 2. **Crop each screenshot** to the evidence first, ending on a clean row boundary: `sips` for a simple cut (see Traps for its offset bug). Take the evidence screenshots themselves at `scale: 1` (the default); a scaled-down source stays soft however the slide is rendered.
 3. **Write the spec** (JSON, in the session scratchpad): issue, slug, and per slide the case, theme, brand colors, layout (`shot | split | phone | pair | duo`), headline, shots (with `marks`, `caption`, `after`), findings, provenance, where. The full format is in the header of `render.py`.
-4. **Render:** `python3 -I ~/.claude/skills/walkthrough/render.py <spec.json>`. It embeds the shots, writes `.work/<issue>/one-N.html`, renders each slide in headless Chrome at 2x, and fails loudly if a slide overflows its square, is not 2184x2184, or two slides are identical. Never upscale a smaller file to hit the size: that is what shipped blurry. Add `--dry` to check without copying.
+4. **Render:** `python3 -I $RUNWAY_WALKTHROUGH/render.py <spec.json>`. It embeds the shots, writes `.work/<issue>/one-N.html`, renders each slide in headless Chrome at 2x, and fails loudly if a slide overflows its square, is not 2184x2184, or two slides are identical. Never upscale a smaller file to hit the size: that is what shipped blurry. Add `--dry` to check without copying.
 5. **Read the thumbnail sheet** it prints (`.work/<issue>/thumbs/sheet.png`): every slide at 360px, the size a Slack preview shows. If a headline or the evidence cannot be made out there, crop tighter or add a mark, and render again. Then open one full slide with `Read` and look at the small text.
-6. **Copy** happens in step 4 (to `~/Developer/walkthrough/<issue>/`). Add the folder's row to `.work/INDEX.md` if it is new.
+6. **Copy** happens in step 4 (to `$RUNWAY_WALKTHROUGH_OUT/<issue>/`). Add the folder's row to `.work/INDEX.md` if it is new.
 7. **List the paths in the reply.** When the run adds slides to a set that was already sent, say which ones are new ("slide 4 is new"), so the `/draft` that carries them marks only those: `[attach walkthrough #<issue> (slide 4 only)]`.
    A layout the script does not cover yet: write the page from `template.html` by hand, the same way the script does (`:root{--side:1092px !important}`, one slide per file, `--force-device-scale-factor=2 --window-size=1092,1092`), and run the same checks.
 8. **Publish them into the issue body**, every time there is an issue to point at (not `unfiled/`):
    ```bash
-   ~/.claude/skills/walkthrough/publish-to-issue.sh <issue> [repo]   # repo defaults to VISKA-IO/monorepo
+   $RUNWAY_WALKTHROUGH/publish-to-issue.sh <issue> [repo]   # repo defaults to VISKA-IO/monorepo
    ```
    It commits the issue's slides to the `walkthrough-assets` orphan branch of that repo (git plumbing
    only: no checkout, no worktree, no CI runs on non-`main` pushes) and splices a `## Walkthrough`

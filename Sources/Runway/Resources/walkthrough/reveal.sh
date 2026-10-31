@@ -1,5 +1,6 @@
 #!/bin/bash
-# Open ~/Developer/walkthrough/<issue> in Finder with slides selected, ready to drag into Slack.
+# Open the issue's slide folder in Finder with the slides selected, ready to
+# drag into Slack. Runway says where that folder is.
 #   reveal.sh <issue>            every slide in the folder
 #   reveal.sh <issue> 4          only slide 4
 #   reveal.sh <issue> 3 4        slides 3 and 4
@@ -12,7 +13,7 @@ set -euo pipefail
 
 issue="${1:?usage: reveal.sh <issue> [slide ...]}"
 shift
-dir="$HOME/Developer/walkthrough/$issue"
+dir="${RUNWAY_WALKTHROUGH_OUT:-$HOME/Developer/walkthrough}/$issue"
 [ -d "$dir" ] || { echo "no folder: $dir" >&2; exit 1; }
 
 files=()

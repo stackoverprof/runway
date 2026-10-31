@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render a walkthrough deck from one JSON spec, checks included.
 
-    render.py <spec.json>            renders, checks, copies to ~/Developer/walkthrough/<issue>/
+    render.py <spec.json>            renders, checks, copies to $RUNWAY_WALKTHROUGH_OUT/<issue>/
     render.py <spec.json> --dry      renders and checks only, copies nothing
 
 Replaces the hand steps (base64 the shots, one HTML per slide, the Chrome
@@ -34,7 +34,11 @@ marks on a slide they are numbered in order; with one, no number.
 import base64, hashlib, html, json, os, re, shutil, subprocess, sys, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.expanduser("~/Developer/walkthrough")
+# Where Runway keeps the slides. It passes this in, so the toolkit does
+# not care how anyone lays out their folders.
+ROOT = os.environ.get("RUNWAY_WALKTHROUGH_OUT") or os.path.expanduser(
+    "~/Developer/walkthrough"
+)
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
 
