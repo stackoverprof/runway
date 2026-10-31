@@ -11,6 +11,8 @@ struct MiddlePane: View {
     @State private var pullRequests = PullRequests.shared
     @State private var closing = false
     @State private var askingToCloseWithoutEvidence = false
+    /// The step copied a moment ago, so its card can flash.
+    @State private var copiedStep: String?
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
@@ -654,11 +656,40 @@ struct MiddlePane: View {
         .padding(9)
         .frame(width: 150, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white.opacity(copiedStep == step.text ? 0.09 : 0.04))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.white.opacity(step.done ? 0.06 : 0.11), lineWidth: 1)
         )
+        // One step, not the whole checklist. A card is the smallest thing
+        // worth quoting into Slack or a message to a crew.
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture { copyStep(step) }
+        .pointerCursor()
+        .help("Copy this step")
+        .contextMenu {
+            Button("Copy step") { copyStep(step) }
+            if step.needs != nil {
+                Button("Copy what it waits on") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(step.needs ?? "", forType: .string)
+                }
+            }
+        }
+    }
+
+    /// Copy one step's own words, and flash the card so the copy is visible.
+    private func copyStep(_ step: IssueBody.Step) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(step.label, forType: .string)
+        copiedStep = step.text
+        Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            if copiedStep == step.text { copiedStep = nil }
+        }
     }
 
     /// Close the flight's issue once it has landed, or put it back in the air.
