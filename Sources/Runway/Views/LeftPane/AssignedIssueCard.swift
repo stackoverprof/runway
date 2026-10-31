@@ -50,10 +50,8 @@ struct AssignedIssueCard: View {
 
                 Spacer(minLength: 6)
 
-                priorityBadge
-
-                // How the flight is doing, in the card's top corner, clear of
-                // the name however long the name runs.
+                // How the flight is doing, then what it is worth, at the
+                // card's far corner.
                 if issue.isFlight {
                     Text("\(issue.landedLegs)/\(issue.legs.count) landed")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -63,6 +61,8 @@ struct AssignedIssueCard: View {
                         .background(Capsule().fill(Runway.teal.opacity(0.12)))
                         .fixedSize()
                 }
+
+                priorityBadge
 
                 if let closedAt = issue.closedAt {
                     Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
@@ -140,16 +140,16 @@ struct AssignedIssueCard: View {
             Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
         } label: {
             Text(level.map(FlightPriority.label) ?? "P–")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(
-                    level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.28)
+                    level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.3)
                 )
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(
                     Capsule().fill(
                         (level.map { FlightPriority.color($0) } ?? Color.white)
-                            .opacity(level == nil ? 0.05 : 0.14)
+                            .opacity(level == nil ? 0.06 : 0.14)
                     )
                 )
                 .fixedSize()
