@@ -60,7 +60,7 @@ enum RunwayTerminal {
         selection-foreground = ffffff
         background-opacity = 1
         window-padding-x = 10
-        window-padding-y = 2
+        window-padding-y = 8
         window-padding-balance = true
         cursor-style = block
         palette = 0=#15151a
