@@ -518,6 +518,7 @@ struct LeftPane: View {
         AssignedIssueCard(
             issue: issue,
             repository: issueRepositoryName,
+            boardKey: assignedIssues.repository ?? "",
             isFlying: ws.flightNumber == issue.number,
             onSetClosed: { closed in
                 Task { await assignedIssues.setClosed(closed, issue: issue.number) }
@@ -551,7 +552,8 @@ struct LeftPane: View {
                     FlightDragCard(
                         drag: flightDrag,
                         issue: issue,
-                        repository: issueRepositoryName
+                        repository: issueRepositoryName,
+                        boardKey: assignedIssues.repository ?? ""
                     )
                 }
             }

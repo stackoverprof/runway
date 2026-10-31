@@ -4,7 +4,12 @@ import SwiftUI
 /// One issue in the Runway tab.
 struct AssignedIssueCard: View {
     let issue: AssignedIssue
+    /// What the card prints: the clone's own name, `monorepo`.
     let repository: String
+    /// What the board is keyed by: `owner/name`. The two are different
+    /// strings, and using the short one here is why a priority set from an
+    /// agent never showed on the card.
+    var boardKey: String = ""
     /// True when this is the issue the other two panes are answering for.
     var isFlying = false
     /// Open or close the issue from the card. Absent means no state menu.
@@ -113,26 +118,26 @@ struct AssignedIssueCard: View {
             Menu("Priority") {
                 ForEach(FlightPriority.all, id: \.self) { level in
                     Button(FlightPriority.label(level)) {
-                        board.setPriority(level, for: issue.number, in: repository)
+                        board.setPriority(level, for: issue.number, in: boardKey)
                     }
                 }
                 Divider()
-                Button("None") { board.setPriority(nil, for: issue.number, in: repository) }
+                Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
             }
         }
     }
 
     /// P1 to P5, red through blue, set from the badge itself.
     private var priorityBadge: some View {
-        let level = board.priority(issue.number, in: repository)
+        let level = board.priority(issue.number, in: boardKey)
         return Menu {
             ForEach(FlightPriority.all, id: \.self) { choice in
                 Button(FlightPriority.label(choice)) {
-                    board.setPriority(choice, for: issue.number, in: repository)
+                    board.setPriority(choice, for: issue.number, in: boardKey)
                 }
             }
             Divider()
-            Button("None") { board.setPriority(nil, for: issue.number, in: repository) }
+            Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
         } label: {
             Text(level.map(FlightPriority.label) ?? "P–")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))

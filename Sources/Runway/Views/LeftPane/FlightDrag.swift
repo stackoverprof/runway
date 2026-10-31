@@ -80,9 +80,10 @@ struct FlightDragCard: View {
     let drag: FlightDrag
     let issue: AssignedIssue
     let repository: String
+    var boardKey: String = ""
 
     var body: some View {
-        AssignedIssueCard(issue: issue, repository: repository)
+        AssignedIssueCard(issue: issue, repository: repository, boardKey: boardKey)
             .frame(width: drag.size.width, height: drag.size.height)
             .offset(x: drag.origin.x, y: drag.origin.y)
             .shadow(color: .black.opacity(0.38), radius: 12, y: 5)
