@@ -20,24 +20,8 @@ struct AssignedIssueCard: View {
 
                 Spacer(minLength: 6)
 
-                if let closedAt = issue.closedAt {
-                    Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.white.opacity(0.24))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-
-            }
-
-            // The name and how the flight is doing, read together.
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text(issue.title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.94))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(3)
-
+                // How the flight is doing, in the card's top corner, clear of
+                // the name however long the name runs.
                 if issue.isFlight {
                     Text("\(issue.landedLegs)/\(issue.legs.count) landed")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -48,8 +32,21 @@ struct AssignedIssueCard: View {
                         .fixedSize()
                 }
 
-                Spacer(minLength: 0)
+                if let closedAt = issue.closedAt {
+                    Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.white.opacity(0.24))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+
             }
+
+            Text(issue.title)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.94))
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
 
             if let parent = issue.parent {
                 Text("crew of \(GitHubNumber.reference(parent))")
