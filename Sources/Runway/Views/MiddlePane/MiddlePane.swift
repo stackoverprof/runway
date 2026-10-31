@@ -155,6 +155,7 @@ struct MiddlePane: View {
 
     private var seatStrip: some View {
         HStack(spacing: 4) {
+            Spacer(minLength: 8)
             ForEach(PilotSeat.allCases) { seat in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { crewTab = seat }
@@ -184,7 +185,6 @@ struct MiddlePane: View {
                 .buttonStyle(.plain)
                 .pointerCursor()
             }
-            Spacer(minLength: 8)
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
@@ -231,7 +231,7 @@ struct MiddlePane: View {
                 }
             }
             .background(Color.black)
-            .overlay(alignment: .topLeading) { seatStrip }
+            .overlay(alignment: .topTrailing) { seatStrip }
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .padding(.horizontal, 12)
         } else {
