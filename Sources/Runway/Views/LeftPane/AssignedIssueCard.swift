@@ -18,18 +18,6 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Color.white.opacity(0.52))
                     .lineLimit(1)
 
-                // How the flight is doing, on the line that already says
-                // which issue it is.
-                if issue.isFlight {
-                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Runway.teal.opacity(0.85))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
-                        .fixedSize()
-                }
-
                 Spacer(minLength: 6)
 
                 if let closedAt = issue.closedAt {
@@ -42,11 +30,26 @@ struct AssignedIssueCard: View {
 
             }
 
-            Text(issue.title)
-                .font(.system(size: 13.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.94))
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
+            // The name and how the flight is doing, read together.
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(issue.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+
+                if issue.isFlight {
+                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Runway.teal.opacity(0.85))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
+                        .fixedSize()
+                }
+
+                Spacer(minLength: 0)
+            }
 
             if let parent = issue.parent {
                 Text("crew of \(GitHubNumber.reference(parent))")
