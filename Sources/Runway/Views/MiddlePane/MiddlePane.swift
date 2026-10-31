@@ -49,7 +49,11 @@ struct MiddlePane: View {
             )
             // The same room the crew cards get in the right pane, so the
             // three panes breathe alike.
-            .padding(7)
+            .padding(.horizontal, 7)
+            .padding(.bottom, 7)
+            // Clear of the window's top edge, where the left pane's own
+            // heading already gives it room.
+            .padding(.top, 16)
             }
         }
         .background(Color.black)
