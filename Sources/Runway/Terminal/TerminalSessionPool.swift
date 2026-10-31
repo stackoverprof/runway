@@ -17,10 +17,17 @@ import GhosttyKit
 final class TerminalSessionPool {
     static let shared = TerminalSessionPool()
 
-    /// How long a seat keeps running after you leave it.
-    static let buffer: TimeInterval = 15 * 60
+    /// How long a seat keeps running after you leave it, from Settings.
+    static var buffer: TimeInterval {
+        let minutes = UserDefaults.standard.integer(forKey: SettingsKey.seatIdleMinutes)
+        return TimeInterval(max(1, minutes == 0 ? 15 : minutes) * 60)
+    }
+
     /// How many parked seats to hold at once, oldest let go first.
-    static let capacity = 12
+    static var capacity: Int {
+        let kept = UserDefaults.standard.integer(forKey: SettingsKey.seatsKeptAlive)
+        return max(2, kept == 0 ? 12 : kept)
+    }
 
     private struct Parked {
         let session: GhosttyTerminalSession

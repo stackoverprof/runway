@@ -141,7 +141,12 @@ enum RoleCard {
     /// How Erbin files, closes and tracks work. Every seat gets this, because
     /// any of them may be asked to file a ticket or say where an issue stands,
     /// and the conventions are his, not GitHub's.
-    static let conventions = """
+    static var slideCount: Int {
+        let set = UserDefaults.standard.integer(forKey: SettingsKey.walkthroughSlides)
+        return set == 0 ? 3 : set
+    }
+
+    static var conventions: String { """
     These are the procedures themselves, not a summary of some skill. There
     is no `/ticket`, `/close`, `/progress` or `/walkthrough` to invoke: they
     were retired once Runway carried them, and this card is what replaced
@@ -220,7 +225,7 @@ enum RoleCard {
       python3 -I $RUNWAY_WALKTHROUGH/render.py <spec.json>
       $RUNWAY_WALKTHROUGH/publish-to-issue.sh <issue> [repo]
 
-    Three slides, always, unless Erbin says a number. A crew makes a
+    \(slideCount) slides, always, unless Erbin says a number. A crew makes a
     walkthrough for its own issue when the work is verified. A pilot makes
     one for the whole flight when it lands: the big statement, three slides
     across the crews, not a repeat of theirs. Later findings may add a
@@ -271,7 +276,7 @@ enum RoleCard {
     Steps are actions in the order they happen, named concretely, with the PR
     as an explicit link `[#n](<url>)`. Stamp the `_Updated <Day, D Mon HH:MM>
     WIB_` line, and keep `- [ ] /close` last.
-    """
+    """ }
 
     @discardableResult
     static func write(

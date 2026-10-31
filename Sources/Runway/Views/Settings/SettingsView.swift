@@ -26,6 +26,16 @@ enum SettingsKey {
     static let pullsTimeframe = "runway.pullsTimeframe"
     static let taglineEnabled = "runway.taglineEnabled"
 
+    // What v3 added. Each of these was a number buried in the code until it
+    // turned out to matter: how long a flight you left keeps running, where
+    // evidence is written, whether landing without it is questioned.
+    static let walkthroughRoot = WalkthroughSlides.key
+    static let walkthroughSlides = "runway.walkthroughSlides"
+    static let askBeforeLandingWithoutEvidence = "runway.askBeforeLandingWithoutEvidence"
+    static let seatIdleMinutes = "runway.seatIdleMinutes"
+    static let seatsKeptAlive = "runway.seatsKeptAlive"
+    static let pilotTerminalPadding = "runway.pilotTerminalPadding"
+
     /// The command every agent starts with. Runway flies Claude, so that is
     /// the default; turning it off leaves a plain shell.
     static var configuredAgentCommand: String {
@@ -100,6 +110,12 @@ enum SettingsKey {
             cloneSearchDepth: 6,
             pullsTimeframe: PRTimeframe.monthToDate.rawValue,
             taglineEnabled: true,
+            walkthroughRoot: "",
+            walkthroughSlides: 3,
+            askBeforeLandingWithoutEvidence: true,
+            seatIdleMinutes: 15,
+            seatsKeptAlive: 12,
+            pilotTerminalPadding: 9,
         ])
 
     }
@@ -119,6 +135,8 @@ struct SettingsView: View {
                 .tabItem { Label("Feed", systemImage: "dot.radiowaves.up.forward") }
             TerminalSettings()
                 .tabItem { Label("Terminal", systemImage: "terminal") }
+            FlightSettings()
+                .tabItem { Label("Flights", systemImage: "airplane") }
             HouseRulesSettings()
                 .tabItem { Label("House rules", systemImage: "list.bullet.clipboard") }
             AppearanceSettings()

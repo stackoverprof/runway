@@ -13,6 +13,8 @@ struct MiddlePane: View {
     @State private var askingToCloseWithoutEvidence = false
     /// The step copied a moment ago, so its card can flash.
     @State private var copiedStep: String?
+    @AppStorage(SettingsKey.pilotTerminalPadding) private var pilotPadding = 9
+    @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence) private var askBeforeLanding = true
     /// Whether the pointer is on the close button, which is the only time it
     /// shows its colour.
     @State private var hoveringState = false
@@ -347,8 +349,8 @@ struct MiddlePane: View {
                                 // read most. Here rather than in the shared
                                 // terminal theme, so a crew box and the ATC
                                 // panel keep their tight fit.
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 7)
+                                .padding(.horizontal, CGFloat(pilotPadding))
+                                .padding(.vertical, CGFloat(max(0, pilotPadding - 2)))
                                 .opacity(showing && crewTab == seat ? 1 : 0)
                                 .allowsHitTesting(showing && crewTab == seat)
                         }
@@ -725,7 +727,7 @@ struct MiddlePane: View {
             guard let number = flight?.number, !closing else { return }
             // A flight lands with its evidence. Closing one that never made
             // a walkthrough is allowed, but not by accident.
-            if !flightClosed, slideSets.isEmpty {
+            if !flightClosed, askBeforeLanding, slideSets.isEmpty {
                 askingToCloseWithoutEvidence = true
                 return
             }
