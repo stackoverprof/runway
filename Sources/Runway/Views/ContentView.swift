@@ -80,11 +80,17 @@ struct ContentView: View {
     }
 
     private func divider(onDrag: @escaping (CGFloat) -> Void) -> some View {
-        // No line: the middle card's own edge and the black around it already
-        // say where one pane ends. The band is still here to drag.
-        Color.clear
-            .frame(width: gutter)
-            .contentShape(Rectangle())
+        // The gutter takes a point of the window's width that no pane paints,
+        // so it has to paint itself, in black, or the window's own background
+        // shows through as a line. The rest of the band is clear and only
+        // takes the drag.
+        ZStack {
+            Rectangle()
+                .fill(Color.black)
+                .frame(width: hairline)
+        }
+        .frame(width: gutter)
+        .contentShape(Rectangle())
         // Keep only the hairline in layout. The transparent part overlaps the
         // panes instead of becoming a visible gutter.
         .padding(.horizontal, -(gutter - hairline) / 2)
