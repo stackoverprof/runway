@@ -19,6 +19,8 @@ struct RightPane: View {
     @State private var reading: Int?
     /// What was copied a moment ago, so the label can flash.
     @State private var copied: String?
+    /// The landed crew under the pointer, whose tick becomes a play.
+    @State private var hoveringLanded: Int?
     /// The pane's own view, so a click anywhere else in the window can be
     /// told apart from a click on a crew.
     @State private var paneView = PaneViewBox()
@@ -45,7 +47,7 @@ struct RightPane: View {
         // the crews that are up divide every point that is left.
         CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
             ForEach(crews) { crew in
-                if crew.isClosed {
+                if crew.isClosed, !isUp(crew) {
                     landedCard(crew)
                         .layoutValue(key: CrewShareKey.self, value: 0)
                 } else if isUp(crew) {
@@ -114,10 +116,32 @@ struct RightPane: View {
         HStack(spacing: 8) {
             // Purple is closed everywhere else in Runway: the left pane's
             // card, the Close button, a merged PR. A landed crew matches.
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 9))
-                .foregroundStyle(Runway.purple.opacity(0.75))
-                .frame(width: 15)
+            // Hovering turns the tick into a play, because a closed issue
+            // still has a session worth asking something.
+            Button {
+                bringUp(crew)
+            } label: {
+                Image(systemName: hoveringLanded == crew.number ? "play.fill" : "checkmark.circle.fill")
+                    .font(.system(size: hoveringLanded == crew.number ? 7 : 9))
+                    .foregroundStyle(
+                        hoveringLanded == crew.number
+                            ? Runway.green
+                            : Runway.purple.opacity(0.75)
+                    )
+                    .frame(width: 15, height: 15)
+                    .background(
+                        Circle().fill(
+                            hoveringLanded == crew.number
+                                ? Runway.green.opacity(0.12)
+                                : Color.clear
+                        )
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help("Bring this landed crew back up")
+            .onHover { hoveringLanded = $0 ? crew.number : nil }
 
             copyButton(
                 "\(crew.title) \(GitHubNumber.reference(crew.number))",
@@ -288,6 +312,15 @@ struct RightPane: View {
                 }
 
                 Spacer(minLength: 8)
+
+                if crew.isClosed {
+                    Text("LANDED")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Runway.purple.opacity(0.85))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Runway.purple.opacity(0.14)))
+                }
 
                 copyButton(GitHubNumber.reference(crew.number), help: "Copy issue number") {
                     Text(verbatim: GitHubNumber.reference(crew.number))
