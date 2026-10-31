@@ -10,6 +10,7 @@ struct MiddlePane: View {
     @Bindable var issues: AssignedIssues
     @State private var pullRequests = PullRequests.shared
     @State private var closing = false
+    @State private var askingToCloseWithoutEvidence = false
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
@@ -62,6 +63,13 @@ struct MiddlePane: View {
         .onAppear {
             keepMounted(ws.flightNumber)
             noteOpened(ws.flightNumber)
+        }
+        // The PRs tab was empty until the left pane's Pulls tab happened to
+        // have been opened, because that is the only place that loaded them.
+        .task(id: issues.repository) {
+            guard let repository = issues.repository else { return }
+            pullRequests.restore(repository: repository)
+            await pullRequests.revalidate(repository: repository, minimumAge: 60)
         }
         .onChange(of: ws.flightNumber) { previous, number in
             keepMounted(number)
@@ -495,6 +503,25 @@ struct MiddlePane: View {
 
                 stateButton(closed: flight.isClosed)
             }
+            .alert(
+                "This flight has no walkthrough",
+                isPresented: $askingToCloseWithoutEvidence
+            ) {
+                Button("Close anyway") {
+                    closing = true
+                    Task {
+                        await issues.setClosed(true, issue: flight.number)
+                        closing = false
+                    }
+                }
+                Button("Not yet", role: .cancel) {}
+            } message: {
+                Text(
+                    "Nothing was saved under this issue's folder, so there is "
+                    + "no evidence of what shipped. Ask the pilot for a "
+                    + "walkthrough first, or close it anyway."
+                )
+            }
             .padding(.horizontal, 14)
             .padding(.top, 28)
             .padding(.bottom, 10)
@@ -628,6 +655,12 @@ struct MiddlePane: View {
     private func stateButton(closed flightClosed: Bool) -> some View {
         Button {
             guard let number = flight?.number, !closing else { return }
+            // A flight lands with its evidence. Closing one that never made
+            // a walkthrough is allowed, but not by accident.
+            if !flightClosed, WalkthroughSlides.forIssue(number).isEmpty {
+                askingToCloseWithoutEvidence = true
+                return
+            }
             closing = true
             Task {
                 await issues.setClosed(!flightClosed, issue: number)
@@ -680,16 +713,48 @@ struct MiddlePane: View {
         }
     }
 
-    /// Every PR whose branch ends in this flight's number or one of its
-    /// crews', which is what the branch convention makes possible.
+    /// The pull requests of this flight, found two ways.
+    ///
+    /// The branch convention names the issue, so a branch ending in the
+    /// flight's number or a crew's is ours. That only works for branches we
+    /// wrote: a teammate's PR under review carries no number of ours. So a
+    /// number the flight's own text points at counts too, which is how
+    /// Sindri's #17337 and #17338 belong to Tap to Pay.
     private var flightPulls: [RepositoryPullRequest] {
         guard let flight else { return [] }
-        let numbers = Set([flight.number] + flight.legs.map(\.number))
+        let issues = Set([flight.number] + flight.legs.map(\.number))
+        let mentioned = Self.referenced(in: flight.body)
         return pullRequests.pullRequests
             .filter { pull in
-                BranchIssue.number(in: pull.headRefName).map(numbers.contains) ?? false
+                if let owner = BranchIssue.number(in: pull.headRefName), issues.contains(owner) {
+                    return true
+                }
+                return mentioned.contains(pull.number)
             }
             .sorted { $0.number > $1.number }
+    }
+
+    /// Every `#1234` an issue's text points at.
+    static func referenced(in body: String) -> Set<Int> {
+        var found: Set<Int> = []
+        var digits = ""
+        var afterHash = false
+        for character in body {
+            if character == "#" {
+                afterHash = true
+                digits = ""
+                continue
+            }
+            if afterHash, character.isNumber {
+                digits.append(character)
+                continue
+            }
+            if afterHash, let number = Int(digits), number > 0 { found.insert(number) }
+            afterHash = false
+            digits = ""
+        }
+        if afterHash, let number = Int(digits), number > 0 { found.insert(number) }
+        return found
     }
 
     private func stateLabel(_ pull: RepositoryPullRequest) -> String {
