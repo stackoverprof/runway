@@ -34,7 +34,6 @@ struct MiddlePane: View {
             // as a hole cut in the card rather than another panel.
             VStack(spacing: 0) {
                 flightHeader
-                seatStrip
                 terminalArea
                     .frame(height: terminalHeight)
                 sectionDivider(in: geo.size.height)
@@ -187,8 +186,18 @@ struct MiddlePane: View {
             }
             Spacer(minLength: 8)
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 20)
+        // Floating in the terminal, over a fade to its black, the way the
+        // flight buttons float over the card.
+        .background(
+            LinearGradient(
+                colors: [Color.black, Color.black, Color.black.opacity(0.75), Color.black.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     @ViewBuilder
@@ -222,6 +231,7 @@ struct MiddlePane: View {
                 }
             }
             .background(Color.black)
+            .overlay(alignment: .topLeading) { seatStrip }
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .padding(.horizontal, 12)
         } else {
