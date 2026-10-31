@@ -20,14 +20,21 @@ enum FlightStatus: String {
 
     var label: String { rawValue.uppercased() }
 
+    /// One scale, cool to warm, so the chips read as a journey rather than
+    /// five unrelated colours.
+    ///
+    /// The three progress states climb slate, blue, mint: nothing has moved,
+    /// it is moving, it is nearly down. Amber is kept for the one state that
+    /// is not progress at all, a flight waiting on somebody, and it is the
+    /// same amber that means "an agent wants you" everywhere else. Purple is
+    /// closed, as it is on every other card. Teal is not used here: it names
+    /// a flight elsewhere, and a colour should mean one thing.
     var color: Color {
         switch self {
-        case .onTheStand: Color.white.opacity(0.42)
-        case .enRoute: Runway.teal
+        case .onTheStand: Color(red: 0.49, green: 0.54, blue: 0.59)
+        case .enRoute: Color(red: 0.38, green: 0.60, blue: 0.93)
         case .holding: Runway.amber
-        case .onApproach: Runway.green
-        // Purple is closed everywhere in Runway, and a landed flight is
-        // closed. Green here read as "still going well".
+        case .onApproach: Color(red: 0.25, green: 0.80, blue: 0.60)
         case .landed: Runway.purple
         }
     }
