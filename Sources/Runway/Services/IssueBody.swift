@@ -123,6 +123,39 @@ enum IssueBody {
         conversation(name, in: body).first?.link
     }
 
+    /// One place the conversation lives: a name, and a link when it has one.
+    struct Channel: Identifiable, Equatable {
+        let name: String
+        let link: URL?
+        var id: String { name + (link?.absoluteString ?? "") }
+    }
+
+    /// Every channel the log names, in the order written. A flight gathered
+    /// from several crews often has more than one, and a single button
+    /// cannot say that without becoming a paragraph.
+    static func channels(_ name: String, in body: String) -> [Channel] {
+        guard let said = homeChannel(name, in: body) else { return [] }
+        var found: [Channel] = []
+        var rest = Substring(said)
+        while let open = rest.firstIndex(of: "["),
+              let close = rest[open...].firstIndex(of: "]"),
+              rest.index(after: close) < rest.endIndex,
+              rest[rest.index(after: close)] == "(",
+              let end = rest[close...].firstIndex(of: ")") {
+            let label = String(rest[rest.index(after: open)..<close])
+            let url = String(rest[rest.index(close, offsetBy: 2)..<end])
+            found.append(Channel(name: label, link: URL(string: url)))
+            rest = rest[rest.index(after: end)...]
+        }
+        if found.isEmpty {
+            for part in said.split(separator: ",") {
+                let text = part.trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty { found.append(Channel(name: text, link: nil)) }
+            }
+        }
+        return found
+    }
+
     /// Where the conversation lives, as the log names it on its first line:
     /// `**Channel:** #upsell-dashboard`, or a DM.
     static func homeChannel(_ name: String, in body: String) -> String? {

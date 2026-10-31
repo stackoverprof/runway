@@ -110,3 +110,30 @@ struct ConversationShapeTests {
         #expect(IssueBody.homeChannel("Situation Development", in: bare) == nil)
     }
 }
+
+@Suite("A flight can name several channels")
+struct ChannelListTests {
+    @Test("Each linked channel becomes its own entry")
+    func several() {
+        let body = """
+        ## Situation Development
+
+        **Channel:** [#upsell-dashboard](https://slack/a), [#customers-discrepancy](https://slack/b)
+        """
+        let found = IssueBody.channels("Situation Development", in: body)
+        #expect(found.map(\.name) == ["#upsell-dashboard", "#customers-discrepancy"])
+        #expect(found[1].link?.absoluteString == "https://slack/b")
+    }
+
+    @Test("A plain channel with no link still shows")
+    func plain() {
+        let body = "## Situation Development\n\n**Channel:** #upsell-frontend-team"
+        #expect(IssueBody.channels("Situation Development", in: body).map(\.name)
+            == ["#upsell-frontend-team"])
+    }
+
+    @Test("No channel line, no chips")
+    func none() {
+        #expect(IssueBody.channels("Situation Development", in: "## Situation Development").isEmpty)
+    }
+}

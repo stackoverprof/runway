@@ -451,7 +451,7 @@ struct QuickTerminal: View {
                 .font(.system(size: 9))
                 .foregroundStyle(Color.white.opacity(0.5))
             Text(quickNames.name(for: selectedRoot) ?? "Air Traffic Controller")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.8))
                 .lineLimit(1)
                 .truncationMode(.middle)

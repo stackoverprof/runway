@@ -154,11 +154,14 @@ struct MiddlePane: View {
     /// The flight as a route: the legs behind it flown in green, the aircraft
     /// where it is now, the legs ahead in grey.
     private var legsBar: some View {
-        let legs = flight?.legs ?? []
+        // The route is the checklist, not the crew count. Progress is what
+        // the pilot actually keeps: it covers work that is nobody's crew,
+        // like a merge or a word to a teammate, and it changes as the work
+        // changes. Counting crews measured only how the work was filed.
+        let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
+            .filter { $0.text.lowercased() != "/close" }
         let landed = flight?.isClosed == true
-        // A landed flight has arrived, whatever its crews say: the run is
-        // flown end to end, and drawn in the colour of closed.
-        let flown = landed ? legs.count : legs.filter(\.isClosed).count
+        let flown = landed ? steps.count : steps.filter(\.done).count
         let trail = landed ? Runway.purple : Runway.green
         return HStack(spacing: 4) {
             Circle()
@@ -169,7 +172,7 @@ struct MiddlePane: View {
             // then what is ahead. Colouring each segment by its own crew put
             // a landed crew wherever it happened to sit in the list, so the
             // bar showed green behind grey. Position says it, not identity.
-            ForEach(0..<legs.count, id: \.self) { index in
+            ForEach(0..<steps.count, id: \.self) { index in
                 if index == flown {
                     Image(systemName: "airplane")
                         .font(.system(size: 9, weight: .semibold))
@@ -178,13 +181,13 @@ struct MiddlePane: View {
                 legSegment(done: index < flown, colour: trail)
             }
 
-            if legs.isEmpty {
+            if steps.isEmpty {
                 Capsule()
                     .fill(landed ? trail : Color.white.opacity(0.14))
                     .frame(height: 3)
             }
 
-            if landed || (!legs.isEmpty && flown == legs.count) {
+            if landed || (!steps.isEmpty && flown == steps.count) {
                 Image(systemName: "airplane.arrival")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(trail)
@@ -200,7 +203,7 @@ struct MiddlePane: View {
                 )
                 .frame(width: 5, height: 5)
 
-            Text(legs.isEmpty ? "no crews yet" : "\(flown)/\(legs.count) crews")
+            Text(steps.isEmpty ? "no checklist yet" : "\(flown)/\(steps.count) steps")
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.32))
                 .fixedSize()
@@ -982,31 +985,21 @@ struct MiddlePane: View {
     private var threadSection: some View {
         let entries = IssueBody.conversation("Situation Development", in: flight?.body ?? "")
         let home = IssueBody.homeThread("Situation Development", in: flight?.body ?? "")
+        let channels = IssueBody.channels("Situation Development", in: flight?.body ?? "")
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                sectionLabel("SITUATION")
-                Spacer(minLength: 8)
-                if let home {
-                    Button {
-                        NSWorkspace.shared.open(home)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.forward.app")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text(threadButtonTitle)
-                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        }
-                        .foregroundStyle(Runway.teal.opacity(0.85))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Runway.teal.opacity(0.1)))
-                        .contentShape(Capsule())
+            // A flight gathered from several crews speaks in several places.
+            // One chip each, rather than a paragraph crammed into a button.
+            if !channels.isEmpty {
+                sectionLabel("CHANNELS")
+                FlowRow(spacing: 6) {
+                    ForEach(channels) { channel in
+                        channelChip(channel, fallback: home)
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .help("Open this flight's thread where it lives")
                 }
+                .padding(.bottom, 4)
             }
+
+            sectionLabel("SITUATION")
 
             if entries.isEmpty {
                 Text("This issue keeps no conversation log yet.")
@@ -1080,12 +1073,29 @@ struct MiddlePane: View {
         }
     }
 
-    /// What the button says: where this flight's conversation lives.
-    private var threadButtonTitle: String {
-        let channel = IssueBody.homeChannel("Situation Development", in: flight?.body ?? "")
-        guard let channel, !channel.isEmpty else { return "Open thread" }
-        return "Open thread in \(channel)"
+    /// One channel, as a chip that opens it.
+    private func channelChip(_ channel: IssueBody.Channel, fallback: URL?) -> some View {
+        Button {
+            if let link = channel.link ?? fallback { NSWorkspace.shared.open(link) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 8.5, weight: .semibold))
+                Text(channel.name)
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Runway.teal.opacity(0.85))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Runway.teal.opacity(0.1)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help("Open \(channel.name)")
     }
+
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
