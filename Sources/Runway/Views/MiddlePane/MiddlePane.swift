@@ -219,12 +219,12 @@ struct MiddlePane: View {
         .padding(.leading, 190)
         .padding(.trailing, 10)
         .padding(.top, 8)
-        .padding(.bottom, 56)
+        .padding(.bottom, 20)
         // A patch of black around the buttons, not a band across the top: it
         // fades away downwards and leftwards into whatever the agent printed.
         .background(
             LinearGradient(
-                colors: [Color.black, Color.black, Color.black, Color.black.opacity(0.7), Color.black.opacity(0)],
+                colors: [Color.black, Color.black, Color.black.opacity(0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
