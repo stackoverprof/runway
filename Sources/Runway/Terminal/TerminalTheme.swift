@@ -11,14 +11,14 @@ import SwiftUI
 /// (see `RunwayTerminalHost`). The user's `~/.config/ghostty` is never modified.
 enum RunwayTerminal {
 
-    /// Body / terminal background (#0E1012) — must match `background` below so the
+    /// Body / terminal background: pure black, so a terminal reads as a hole
+    /// cut in the grey card around it. Must match `background` below so the
     /// inset around the terminal is seamless.
-    static let body = Color(red: 0x0E / 255, green: 0x10 / 255, blue: 0x12 / 255)
+    static let body = Color.black
     /// Header bar background (#191B1C) — a touch lighter than the body.
     static let headerBar = Color(red: 0x19 / 255, green: 0x1B / 255, blue: 0x1C / 255)
     /// `body` as an AppKit color, for the layers GhosttyKit paints itself.
-    static let bodyNSColor = NSColor(
-        srgbRed: 0x0E / 255, green: 0x10 / 255, blue: 0x12 / 255, alpha: 1)
+    static let bodyNSColor = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
 
     /// Path to Runway's private Ghostty theme file.
     static let themeFilePath: String = {
@@ -52,10 +52,10 @@ enum RunwayTerminal {
         font-family = \(family)
         # Tame trackpad scroll in TUIs (claude, etc.); Ghostty's default (3) jumps.
         mouse-scroll-multiplier = 1
-        background = 0e1012
+        background = 000000
         foreground = e6e6e6
         cursor-color = e6e6e6
-        cursor-text = 0e1012
+        cursor-text = 000000
         selection-background = 2b2b33
         selection-foreground = ffffff
         background-opacity = 1

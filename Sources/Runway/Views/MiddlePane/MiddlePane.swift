@@ -26,6 +26,9 @@ struct MiddlePane: View {
             if flight == nil {
                 nothingFlying
             } else {
+            // One card holds the whole flight. The chrome is a slight grey,
+            // and every terminal in it is pure black, so a running agent reads
+            // as a hole cut in the card rather than another panel.
             VStack(spacing: 0) {
                 flightHeader
                 seatStrip
@@ -36,9 +39,16 @@ struct MiddlePane: View {
                 sectionBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .background(Color(white: 0.082))
+            .clipShape(RoundedRectangle(cornerRadius: 13))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13)
+                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
+            )
+            .padding(8)
             }
         }
-        .background(Color(white: 0.035))
+        .background(Color.black)
     }
 
     private var nothingFlying: some View {
@@ -208,20 +218,13 @@ struct MiddlePane: View {
                         .allowsHitTesting(crewTab == seat)
                 }
             }
+            .background(Color.black)
             .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
             .padding(.horizontal, 12)
         } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(Color(white: 0.055))
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            }
-            .padding(.horizontal, 12)
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.black)
+                .padding(.horizontal, 12)
         }
         }
     }
@@ -254,13 +257,11 @@ struct MiddlePane: View {
 
     /// Drag to give the terminal more of the pane, or less.
     private func sectionDivider(in height: CGFloat) -> some View {
-        ZStack {
-            Rectangle()
-                .fill(Color.white.opacity(0.07))
-                .frame(height: 1)
-        }
-        .frame(height: 14)
-        .contentShape(Rectangle())
+        // No line: the black of the terminal already ends where the card
+        // resumes. The band is still here to drag.
+        Color.clear
+            .frame(height: 14)
+            .contentShape(Rectangle())
         .onHover { hovering in
             if hovering { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
         }
