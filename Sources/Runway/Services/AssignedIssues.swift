@@ -174,7 +174,15 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
                 "-f", "query=\(Self.crewQuery)",
                 "-f", "q=repo:\(repository) assignee:@me is:issue is:open",
             ], cacheFor: 30)
-            let (data, crews) = await (listData, crewData)
+            // A closed issue has a parent too, and the closed lane lists
+            // flights, not crews. Without this pass every landed crew looked
+            // like a flight of its own down there.
+            async let landedData = GH.query([
+                "api", "graphql",
+                "-f", "query=\(Self.parentQuery)",
+                "-f", "q=repo:\(repository) assignee:@me is:issue is:closed sort:updated-desc",
+            ], cacheFor: 30)
+            let (data, crews, landed) = await (listData, crewData, landedData)
             guard !Task.isCancelled, loadedRepository == repository else { return }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
@@ -189,6 +197,7 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
                 return
             }
             issues = Self.withCrews(fetched, from: crews, repository: repository)
+            issues = Self.withParents(issues, from: landed)
             hasSnapshot = true
             error = nil
             snapshots[repository] = Snapshot(issues: issues, fetchedAt: Date())
@@ -214,6 +223,15 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
     // MARK: Crews
 
     /// Sub-issues, and the flight each issue belongs to, for the open issues.
+    /// Who each closed issue belongs to, and nothing else.
+    private static let parentQuery = """
+    query($q: String!) {
+      search(query: $q, type: ISSUE, first: 100) {
+        nodes { ... on Issue { number parent { number } } }
+      }
+    }
+    """
+
     private static let crewQuery = """
     query($q: String!) {
       search(query: $q, type: ISSUE, first: 100) {
@@ -229,6 +247,31 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
       }
     }
     """
+
+    /// Marks a landed crew as somebody's crew, so the closed lane can leave
+    /// it out the same way the open one does.
+    static func withParents(_ issues: [AssignedIssue], from data: Data?) -> [AssignedIssue] {
+        guard let data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = json["data"] as? [String: Any],
+              let search = payload["search"] as? [String: Any],
+              let nodes = search["nodes"] as? [[String: Any]]
+        else { return issues }
+        var parents: [Int: Int] = [:]
+        for node in nodes {
+            guard let number = node["number"] as? Int,
+                  let parent = node["parent"] as? [String: Any],
+                  let owner = parent["number"] as? Int else { continue }
+            parents[number] = owner
+        }
+        guard !parents.isEmpty else { return issues }
+        return issues.map { issue in
+            guard issue.parent == nil, let owner = parents[issue.number] else { return issue }
+            var carried = issue
+            carried.parent = owner
+            return carried
+        }
+    }
 
     /// Hangs the crews off the issues they belong to. A leg in another
     /// repository keeps that repository's name; one at home does not.

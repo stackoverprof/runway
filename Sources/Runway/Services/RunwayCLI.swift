@@ -43,9 +43,16 @@ extension AgentControl {
 
 
         def repo_of(args):
+            # Always owner/name. A bare "monorepo" is the same repository as
+            # "VISKA-IO/monorepo", and writing the board under both names is
+            # how a priority set from one terminal went missing in the pane.
             repo = getattr(args, "repo", "") or os.environ.get("RUNWAY_REPOSITORY", "")
             if not repo:
                 sys.exit("runway: no repository. Pass --repo owner/name.")
+            if "/" not in repo:
+                owner = os.environ.get("RUNWAY_REPOSITORY", "")
+                owner = owner.split("/")[0] if "/" in owner else "VISKA-IO"
+                repo = "%s/%s" % (owner, repo)
             return repo
 
 
