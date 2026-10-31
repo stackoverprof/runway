@@ -637,6 +637,9 @@ enum AgentControl {
                 "Bash(runway:*)",
                 "Bash(gh issue:*)",
                 "Bash(gh pr review:*)",
+                // The same act through the REST endpoint, which is what an
+                // agent reaches for when the review body comes from a file.
+                "Bash(gh api repos/*/pulls/*/reviews:*)",
                 "Bash(gh pr comment:*)",
                 "Bash(gh pr checks:*)",
                 "Bash(gh api graphql:*)",
