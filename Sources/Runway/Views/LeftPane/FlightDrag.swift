@@ -107,7 +107,10 @@ struct DraggableFlight: ViewModifier {
                 drag.report(issue, frame: frame)
             }
             .onDisappear { drag.forget(issue) }
-            .gesture(enabled ? reorder : nil)
+            // Simultaneous, as v2 has it: the card already has a tap that
+            // picks the flight, and a plain `.gesture` loses to it, so the
+            // drag never started.
+            .simultaneousGesture(enabled ? reorder : nil)
     }
 
     /// A short minimum distance so a click still selects the flight, and the

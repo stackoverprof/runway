@@ -22,15 +22,25 @@ struct AssignedIssueCard: View {
             HStack(spacing: 6) {
                 if let onSetClosed {
                     Menu {
+                        // The menu wears the same green and purple the dots
+                        // do, so the choice looks like what it sets.
                         Button {
                             onSetClosed(false)
                         } label: {
-                            Label("Open", systemImage: "circle")
+                            Label {
+                                Text("Open")
+                            } icon: {
+                                colouredIcon("circle", Self.openNSColor)
+                            }
                         }
                         Button {
                             onSetClosed(true)
                         } label: {
-                            Label("Closed", systemImage: "checkmark.circle")
+                            Label {
+                                Text("Closed")
+                            } icon: {
+                                colouredIcon("checkmark.circle", Self.closedNSColor)
+                            }
                         }
                     } label: {
                         statusIcon.contentShape(Circle())
@@ -165,6 +175,19 @@ struct AssignedIssueCard: View {
     private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    /// A menu icon keeps its colour only when it is a real image rather than
+    /// a template symbol, which AppKit repaints to match the menu.
+    private func colouredIcon(_ name: String, _ colour: NSColor) -> Image {
+        let size = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        let palette = NSImage.SymbolConfiguration(paletteColors: [colour])
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(size.applying(palette)) else {
+            return Image(systemName: name).renderingMode(.original)
+        }
+        symbol.isTemplate = false
+        return Image(nsImage: symbol).renderingMode(.original)
     }
 
     private var statusIcon: some View {
