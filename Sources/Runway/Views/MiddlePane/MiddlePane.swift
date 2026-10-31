@@ -894,10 +894,15 @@ struct MiddlePane: View {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     HStack(alignment: .top, spacing: 9) {
                         VStack(spacing: 0) {
+                            // The 5 points above a dot are rail too, for
+                            // every entry but the first. Leaving them blank
+                            // is what broke the line under each name.
+                            Rectangle()
+                                .fill(Color.white.opacity(index > 0 ? 0.08 : 0))
+                                .frame(width: 1, height: 5)
                             Circle()
                                 .fill(Color.white.opacity(0.28))
                                 .frame(width: 5, height: 5)
-                                .padding(.top, 5)
                             if index < entries.count - 1 {
                                 Rectangle()
                                     .fill(Color.white.opacity(0.08))
