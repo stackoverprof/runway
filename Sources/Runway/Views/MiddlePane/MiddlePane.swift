@@ -409,13 +409,27 @@ struct MiddlePane: View {
                 Spacer(minLength: 0)
             }
 
-            Text(step.text)
+            Text(step.label)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Color.white.opacity(step.done ? 0.45 : 0.85))
                 .strikethrough(step.done, color: Color.white.opacity(0.3))
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            // The blocker belongs to the step, not to a list of its own.
+            if let needs = step.needs, !step.done {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 8.5))
+                    Text(needs)
+                        .font(.system(size: 10))
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+                }
+                .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(9)
         .frame(width: 150, alignment: .topLeading)

@@ -104,16 +104,21 @@ struct TerminalSurfaceView: View {
             environment: config.environment,
             colorScheme: .dark
         )
-        if let host = RunwayTerminalHost.shared {
-            _session = State(initialValue: host.makeSession(configuration: launch))
-        } else {
-            _session = State(initialValue: GhosttyTerminalSession(configuration: launch))
-        }
+        // The pool owns the session, not this view, so leaving a flight parks
+        // the agent instead of killing it.
+        _session = State(
+            initialValue: TerminalSessionPool.shared.session(for: boxID, launch: launch)
+        )
     }
 
     var body: some View {
         GhosttyTerminalRepresentable(session: session, configuration: .default)
-            .onAppear { applyRunwayTheme(to: session); registerForFocus() }
+            .onAppear {
+                TerminalSessionPool.shared.mounted(boxID)
+                applyRunwayTheme(to: session)
+                registerForFocus()
+            }
+            .onDisappear { TerminalSessionPool.shared.parked(boxID) }
             // GhosttyKit's embedded view doesn't accept file drops; replicate
             // Ghostty's behavior by typing the dropped file's path (shell-escaped)
             // into the terminal — Claude Code then picks it up as an image.

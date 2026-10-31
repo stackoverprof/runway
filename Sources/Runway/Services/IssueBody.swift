@@ -7,9 +7,30 @@ import Foundation
 /// without them is not wrong, it simply has none to show.
 enum IssueBody {
     struct Step: Identifiable, Equatable {
+        /// The whole line as the issue holds it, blocker and all.
         let text: String
         let done: Bool
         var id: String { text }
+
+        /// What this step is waiting on, written in the line itself as a
+        /// trailing `(needs: ...)`. A step carries its own blocker, so there
+        /// is no separate list to keep in step with the checklist.
+        var needs: String? {
+            guard let open = text.range(of: "(needs:", options: [.caseInsensitive, .backwards]),
+                  text.hasSuffix(")") else { return nil }
+            let inner = text[open.upperBound..<text.index(before: text.endIndex)]
+            let said = inner.trimmingCharacters(in: .whitespaces)
+            return said.isEmpty ? nil : said
+        }
+
+        /// The step without its blocker, which is what a card shows.
+        var label: String {
+            guard needs != nil,
+                  let open = text.range(of: "(needs:", options: [.caseInsensitive, .backwards])
+            else { return text }
+            return text[text.startIndex..<open.lowerBound]
+                .trimmingCharacters(in: .whitespaces)
+        }
     }
 
     struct Entry: Identifiable, Equatable {

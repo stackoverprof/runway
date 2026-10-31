@@ -339,6 +339,25 @@ extension AgentControl {
             print("#%s step %d %s" % (number, args.step, "ticked" if done else "unticked"))
 
 
+        def cmd_progress_needs(args):
+            # A blocker rides in its own step, written as a trailing
+            # "(needs: ...)", so the checklist is the only list to keep.
+            repo = repo_of(args)
+            number = flight_of(args)
+            steps = steps_of(split_progress(issue_body(repo, number))[1])
+            index = args.step - 1
+            if index < 0 or index >= len(steps):
+                sys.exit("runway: #%s has no step %d" % (number, args.step))
+            done, text = steps[index]
+            bare = text
+            if bare.endswith(")") and "(needs:" in bare.lower():
+                bare = bare[:bare.lower().rindex("(needs:")].strip()
+            said = (args.said or "").strip()
+            steps[index] = (done, bare if not said else "%s (needs: %s)" % (bare, said))
+            save_steps(repo, number, steps)
+            print("#%s step %d: %s" % (number, args.step, steps[index][1]))
+
+
         def cmd_progress_set(args):
             repo = repo_of(args)
             number = flight_of(args)
@@ -434,6 +453,16 @@ extension AgentControl {
             progress_untick.add_argument("step", type=int)
             progress_untick.add_argument("--flight", default="")
             progress_untick.set_defaults(run=lambda args: cmd_progress_mark(args, False))
+            progress_needs = progress_verbs.add_parser(
+                "needs", help="say what a step is waiting on, or clear it"
+            )
+            progress_needs.add_argument("step", type=int)
+            progress_needs.add_argument(
+                "said", nargs="?", default="", help="leave empty to clear the blocker"
+            )
+            progress_needs.add_argument("--flight", default="")
+            progress_needs.set_defaults(run=cmd_progress_needs)
+
             progress_set = progress_verbs.add_parser("set", help="rewrite the whole checklist from stdin")
             progress_set.add_argument("--flight", default="")
             progress_set.set_defaults(run=cmd_progress_set)
