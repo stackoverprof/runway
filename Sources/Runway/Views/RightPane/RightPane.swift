@@ -112,9 +112,11 @@ struct RightPane: View {
     /// A crew that landed: one line, no control, out of the way.
     private func landedCard(_ crew: IssueLeg) -> some View {
         HStack(spacing: 8) {
+            // Purple is closed everywhere else in Runway: the left pane's
+            // card, the Close button, a merged PR. A landed crew matches.
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 9))
-                .foregroundStyle(Runway.green.opacity(0.7))
+                .foregroundStyle(Runway.purple.opacity(0.75))
                 .frame(width: 15)
 
             copyButton(
