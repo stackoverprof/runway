@@ -558,6 +558,13 @@ struct LeftPane: View {
                 }
             }
             .coordinateSpace(name: FlightDrag.space)
+            // Where the list sits in the window, so the drag can read the
+            // real mouse position in the list's own terms.
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                flightDrag.reportSpace(frame)
+            }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
             .scrollAnchor(lane == .open ? openIssueScrollAnchor : closedIssueScrollAnchor)
