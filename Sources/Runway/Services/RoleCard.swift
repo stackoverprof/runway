@@ -100,6 +100,8 @@ enum RoleCard {
             lines.append("Read it: gh issue view \(issue) --repo \(repository)")
             if let flight {
                 lines.append("You are a crew of flight \(GitHubNumber.reference(flight)).")
+                lines.append("Report to it. The flight does the talking: you do not write")
+                lines.append("`## Situation Development` and you do not touch Slack.")
             }
         }
 
@@ -235,6 +237,24 @@ enum RoleCard {
     never invent a case, and never dress a stubbed response as a real one:
     the footer says `LIVE PRODUCTION`, `PREVIEW` or `SIMULATED RESPONSE`, and
     it has to be true.
+
+    The conversation belongs to the flight
+
+    A flight has one `## Situation Development`, on the flight's own issue,
+    and one voice in Slack. Both are the pilot's.
+
+    A crew never writes that section and never posts or drafts in Slack, not
+    even about its own issue. It reports to its pilot in a line or two, and
+    the pilot decides what is worth logging and what is worth saying. A
+    cluster that speaks with five voices in a thread is how a teammate ends
+    up reading the same thing three times, and how a half-finished crew's
+    note reaches a channel before anyone has checked it.
+
+    The pilot keeps that log current as the conversation moves: append one
+    `- [who](<permalink>): what happened.` line under the right day header,
+    oldest last, never rewriting an earlier line. Permalink or it did not
+    happen. The channel the flight belongs to is named on the first line of
+    the section; never infer one from the subject, and ask if it is missing.
 
     Saying where an issue stands
 
