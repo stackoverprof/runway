@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 /// The left pane's header identity: custom text, or an image of your own.
 struct AppearanceSettings: View {
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
-    @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
+    @AppStorage(SettingsKey.brandTitle) private var brandTitle = Self.defaultBrandTitle
+
+    static let defaultBrandTitle = LeftPane.defaultBrandTitle
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
     @State private var brandingError: String?
 
@@ -45,11 +47,11 @@ struct AppearanceSettings: View {
                     brandingPreview
                 }
 
-                if brandHeaderStyle != "text" || brandTitle != "Activity" || !brandLogoFilename.isEmpty {
+                if brandHeaderStyle != "text" || brandTitle != Self.defaultBrandTitle || !brandLogoFilename.isEmpty {
                     Button("Restore Default", role: .destructive) {
                         BrandingManager.removeLogo(named: brandLogoFilename)
                         brandLogoFilename = ""
-                        brandTitle = "Activity"
+                        brandTitle = Self.defaultBrandTitle
                         brandHeaderStyle = "text"
                         brandingError = nil
                     }
@@ -87,7 +89,7 @@ struct AppearanceSettings: View {
 
     private var resolvedBrandTitle: String {
         let title = brandTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "Activity" : title
+        return title.isEmpty ? Self.defaultBrandTitle : title
     }
 
     private func chooseLogo() {

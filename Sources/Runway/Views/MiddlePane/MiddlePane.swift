@@ -887,35 +887,43 @@ struct MiddlePane: View {
                     .foregroundStyle(Color.white.opacity(0.3))
             }
 
-            ForEach(entries) { entry in
-                HStack(alignment: .top, spacing: 9) {
-                    VStack(spacing: 0) {
-                        Circle()
-                            .fill(Color.white.opacity(0.28))
-                            .frame(width: 5, height: 5)
-                        Rectangle()
-                            .fill(Color.white.opacity(0.08))
-                            .frame(width: 1)
-                            .frame(maxHeight: .infinity)
-                    }
-                    .padding(.top, 5)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Button {
-                            if let link = entry.link { NSWorkspace.shared.open(link) }
-                        } label: {
-                            Text(entry.who)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Runway.teal.opacity(0.85))
+            // One rail down the whole log, not a segment per entry. The
+            // segments left a gap at every row boundary, which read as a
+            // broken line rather than a thread.
+            VStack(spacing: 0) {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    HStack(alignment: .top, spacing: 9) {
+                        VStack(spacing: 0) {
+                            Circle()
+                                .fill(Color.white.opacity(0.28))
+                                .frame(width: 5, height: 5)
+                                .padding(.top, 5)
+                            if index < entries.count - 1 {
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.08))
+                                    .frame(width: 1)
+                                    .frame(maxHeight: .infinity)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                        Text(entry.said)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Color.white.opacity(0.78))
-                            .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 5)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Button {
+                                if let link = entry.link { NSWorkspace.shared.open(link) }
+                            } label: {
+                                Text(entry.who)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Runway.teal.opacity(0.85))
+                            }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
+                            MarkdownText(text: entry.said)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Color.white.opacity(0.78))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.bottom, index < entries.count - 1 ? 10 : 0)
                     }
-                    .padding(.bottom, 8)
                 }
             }
 

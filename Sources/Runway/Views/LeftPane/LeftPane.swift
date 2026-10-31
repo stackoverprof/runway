@@ -31,7 +31,11 @@ struct LeftPane: View {
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
     @AppStorage(SettingsKey.brandHeaderStyle) private var brandHeaderStyle = "text"
-    @AppStorage(SettingsKey.brandTitle) private var brandTitle = "Activity"
+    @AppStorage(SettingsKey.brandTitle) private var brandTitle = Self.defaultBrandTitle
+
+    /// What the left pane calls itself before anyone renames it in Settings.
+    static let defaultBrandTitle = "Runway V3"
+
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
 
     private static let taglines = [
@@ -202,7 +206,7 @@ struct LeftPane: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: min(180, height * aspectRatio), height: height)
-                .accessibilityLabel("Activity")
+                .accessibilityLabel(Self.defaultBrandTitle)
         } else {
             Text(resolvedBrandTitle)
                 .font(.system(size: 27, weight: .bold))
@@ -213,7 +217,7 @@ struct LeftPane: View {
 
     private var resolvedBrandTitle: String {
         let title = brandTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "Activity" : title
+        return title.isEmpty ? Self.defaultBrandTitle : title
     }
 
     /// The clone's folder name, which is also its Focus agents' name prefix.
