@@ -108,9 +108,9 @@ struct RightPane: View {
     /// Nothing running, nothing on screen but the issue it answers for.
     private func standingCard(_ crew: IssueLeg) -> some View {
         HStack(spacing: 10) {
-            Circle()
-                .strokeBorder(crewColour(crew).opacity(0.8), lineWidth: 1.2)
-                .frame(width: 11, height: 11)
+            // No dot: the button already says whether this crew is up, and
+            // two indicators for one state read as two states.
+            activateButton(crew, up: false)
 
             VStack(alignment: .leading, spacing: 3) {
                 copyButton(crewSubtitle(crew), help: "Copy issue number") {
@@ -130,8 +130,6 @@ struct RightPane: View {
             }
 
             Spacer(minLength: 8)
-
-            activateButton(crew, up: false)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.055)))
