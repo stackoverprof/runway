@@ -46,6 +46,13 @@ enum RoleCard {
             lines.append("  runway progress needs <n> \"<what it waits on>\"")
             lines.append("A crew that is up is a Claude session named after its issue, such as")
             lines.append("`monorepo-16790`. Brief it and read its answer by messaging that name.")
+            lines.append("")
+            lines.append("Keep the checklist true as you go. It is how the flight reads from")
+            lines.append("outside, and it is yours to maintain, not something to rebuild when")
+            lines.append("asked. Tick a step the moment it lands. Set what a step waits on as")
+            lines.append("soon as you know, and clear it the moment it is unblocked. Add a step")
+            lines.append("you discover. Keep every line short, a few words, the way you would")
+            lines.append("say it out loud: the detail belongs in the issue, not in the step.")
         case .crew:
             lines.append("You answer for \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")

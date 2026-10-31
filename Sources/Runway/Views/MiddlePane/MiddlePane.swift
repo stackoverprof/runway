@@ -425,7 +425,7 @@ struct MiddlePane: View {
                     Text(needs)
                         .font(.system(size: 10))
                         .multilineTextAlignment(.leading)
-                        .lineLimit(3)
+                        .lineLimit(2)
                 }
                 .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .leading)
