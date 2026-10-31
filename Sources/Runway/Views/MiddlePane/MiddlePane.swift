@@ -573,9 +573,9 @@ struct MiddlePane: View {
                 Button("Not yet", role: .cancel) {}
             } message: {
                 Text(
-                    "Nothing was saved under this issue's folder, so there is "
-                    + "no evidence of what shipped. Ask the pilot for a "
-                    + "walkthrough first, or close it anyway."
+                    "Neither this flight nor its crews saved any slides, so "
+                    + "there is no evidence of what shipped. Ask the pilot "
+                    + "for a walkthrough first, or close it anyway."
                 )
             }
             .padding(.horizontal, 14)
@@ -742,7 +742,7 @@ struct MiddlePane: View {
             guard let number = flight?.number, !closing else { return }
             // A flight lands with its evidence. Closing one that never made
             // a walkthrough is allowed, but not by accident.
-            if !flightClosed, WalkthroughSlides.forIssue(number).isEmpty {
+            if !flightClosed, slideSets.isEmpty {
                 askingToCloseWithoutEvidence = true
                 return
             }
@@ -884,50 +884,88 @@ struct MiddlePane: View {
 
     /// The evidence this flight has produced: whatever a walkthrough left in
     /// this issue's folder.
-    private var slidesSection: some View {
-        let slides = WalkthroughSlides.forIssue(flight?.number)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                sectionLabel("WALKTHROUGH")
-                Spacer(minLength: 8)
-                if !slides.isEmpty {
-                    Button {
-                        NSWorkspace.shared.open(slides[0].deletingLastPathComponent())
-                    } label: {
-                        Text("Open folder")
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Runway.teal.opacity(0.85))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(Runway.teal.opacity(0.1)))
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                }
-            }
+    /// A flight's evidence is its own and its crews'. A crew photographs
+    /// what it verified; the pilot's set is the whole flight's statement.
+    /// Showing only the flight's own folder hid every crew's work.
+    private struct SlideSet: Identifiable {
+        let issue: Int
+        let title: String
+        let slides: [URL]
+        var id: Int { issue }
+    }
 
-            if slides.isEmpty {
-                Text("No walkthrough slides for this flight yet.")
+    private var slideSets: [SlideSet] {
+        guard let flight else { return [] }
+        var sets: [SlideSet] = []
+        let own = WalkthroughSlides.forIssue(flight.number)
+        if !own.isEmpty {
+            sets.append(SlideSet(issue: flight.number, title: "This flight", slides: own))
+        }
+        for crew in flight.legs {
+            let slides = WalkthroughSlides.forIssue(crew.number)
+            guard !slides.isEmpty else { continue }
+            sets.append(SlideSet(issue: crew.number, title: crew.title, slides: slides))
+        }
+        return sets
+    }
+
+    private var slidesSection: some View {
+        let sets = slideSets
+        return VStack(alignment: .leading, spacing: 14) {
+            sectionLabel("WALKTHROUGH")
+
+            if sets.isEmpty {
+                Text("No walkthrough slides for this flight or its crews yet.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Color.white.opacity(0.3))
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
-                ForEach(slides, id: \.self) { slide in
-                    Button {
-                        NSWorkspace.shared.open(slide)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            slideThumbnail(slide)
-                            Text(slide.deletingPathExtension().lastPathComponent)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.4))
-                                .lineLimit(1)
+            ForEach(sets) { set in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Text(set.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.68))
+                            .lineLimit(1)
+                        Text(verbatim: GitHubNumber.reference(set.issue))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.white.opacity(0.3))
+                        Spacer(minLength: 8)
+                        Button {
+                            NSWorkspace.shared.open(set.slides[0].deletingLastPathComponent())
+                        } label: {
+                            Text("Open folder")
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Runway.teal.opacity(0.85))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Runway.teal.opacity(0.1)))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .pointerCursor()
+                    }
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 104), spacing: 8)],
+                        spacing: 8
+                    ) {
+                        ForEach(set.slides, id: \.self) { slide in
+                            Button {
+                                NSWorkspace.shared.open(slide)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    slideThumbnail(slide)
+                                    Text(slide.deletingPathExtension().lastPathComponent)
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundStyle(Color.white.opacity(0.4))
+                                        .lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
                         }
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
                 }
             }
         }
