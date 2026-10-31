@@ -17,6 +17,8 @@ struct RightPane: View {
     /// up as well as you can. Which one you are reading is yours alone.
     private let deck = CrewDeck.shared
     @State private var reading: Int?
+    /// What was copied a moment ago, so the label can flash.
+    @State private var copied: String?
     /// The pane's own view, so a click anywhere else in the window can be
     /// told apart from a click on a crew.
     @State private var paneView = PaneViewBox()
@@ -109,13 +111,20 @@ struct RightPane: View {
                 .frame(width: 11, height: 11)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: crewSubtitle(crew))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.white.opacity(0.42))
-                Text(crew.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.72))
-                    .lineLimit(1)
+                copyButton(crewSubtitle(crew), help: "Copy issue number") {
+                    Text(verbatim: crewSubtitle(crew))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.white.opacity(0.42))
+                }
+                copyButton(
+                    "\(crew.title) \(GitHubNumber.reference(crew.number))",
+                    help: "Copy issue title and number"
+                ) {
+                    Text(crew.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 8)
@@ -131,6 +140,65 @@ struct RightPane: View {
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onTapGesture { bringUp(crew) }
         .pointerCursor()
+        .contextMenu { crewMenu(crew) }
+    }
+
+    /// A label that copies what it says. The flash is the whole feedback: a
+    /// copy that needs explaining is a copy you cannot trust.
+    private func copyButton(
+        _ value: String,
+        help: String,
+        @ViewBuilder label: () -> some View
+    ) -> some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+            copied = value
+            Task {
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                if copied == value { copied = nil }
+            }
+        } label: {
+            label()
+                .opacity(copied == value ? 0.45 : 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(help)
+    }
+
+    /// Right-click hands over the crew's conversation, so the same session can
+    /// be reopened or addressed from anywhere else.
+    @ViewBuilder
+    private func crewMenu(_ crew: IssueLeg) -> some View {
+        let repository = crewRepositoryName(crew)
+        let session = AgentSessionLocator.resolve(
+            boxID: FlightCrewSessions.boxID(
+                rank: .crew,
+                repository: repository,
+                issue: crew.number
+            ),
+            workingDirectory: FlightCrewSessions.workingDirectory(for: repository),
+            focusRepository: repository,
+            focusIssueNumber: crew.number,
+            issueSessionsEnabled: true
+        )
+        if let session {
+            if let peer = AgentSessionLocator.peerName(for: session.sessionID) {
+                Button("Copy agent name") { copy(peer) }
+            }
+            Button("Copy resume command") { copy(session.resumeCommand) }
+            Button("Copy session ID") { copy(session.sessionID) }
+            Divider()
+        }
+        Button("Copy issue link") { copy(crew.url.absoluteString) }
+        Button("Open on GitHub") { NSWorkspace.shared.open(crew.url) }
+    }
+
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     /// The repository a crew works in, named only as far as it is useful.
@@ -165,22 +233,30 @@ struct RightPane: View {
                     .frame(width: 7, height: 7)
                     .shadow(color: crewColour(crew).opacity(0.7), radius: 4)
 
-                Text(crew.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.9))
-                    .lineLimit(1)
+                copyButton(
+                    "\(crew.title) \(GitHubNumber.reference(crew.number))",
+                    help: "Copy issue title and number"
+                ) {
+                    Text(crew.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 8)
 
-                Text(verbatim: GitHubNumber.reference(crew.number))
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.4))
+                copyButton(GitHubNumber.reference(crew.number), help: "Copy issue number") {
+                    Text(verbatim: GitHubNumber.reference(crew.number))
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                }
 
                 activateButton(crew, up: true)
             }
             .padding(.horizontal, 11)
             .frame(height: 28)
             .background(RunwayTerminal.headerBar)
+            .contextMenu { crewMenu(crew) }
 
             crewTerminal(crew)
         }
