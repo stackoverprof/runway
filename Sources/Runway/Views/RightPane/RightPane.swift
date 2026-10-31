@@ -24,8 +24,11 @@ struct RightPane: View {
     @State private var paneView = PaneViewBox()
     @State private var clickWatch: Any?
 
+    /// Every crew of the flight, landed ones included. A crew that closes
+    /// has not stopped being part of the flight, and a pane that forgets it
+    /// loses the shape of what was done.
     private var crews: [IssueLeg] {
-        (issues.issue(ws.flightNumber)?.legs ?? []).filter { !$0.isClosed }
+        issues.issue(ws.flightNumber)?.legs ?? []
     }
 
     /// Where a crew's issue lives, which is how the deck names its seat.
@@ -42,7 +45,10 @@ struct RightPane: View {
         // the crews that are up divide every point that is left.
         CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
             ForEach(crews) { crew in
-                if isUp(crew) {
+                if crew.isClosed {
+                    landedCard(crew)
+                        .layoutValue(key: CrewShareKey.self, value: 0)
+                } else if isUp(crew) {
                     activeBox(crew)
                         .layoutValue(
                             key: CrewShareKey.self,
@@ -101,6 +107,44 @@ struct RightPane: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Color.white.opacity(0.28))
         }
+    }
+
+    /// A crew that landed: one line, no control, out of the way.
+    private func landedCard(_ crew: IssueLeg) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(Runway.green.opacity(0.7))
+                .frame(width: 15)
+
+            copyButton(
+                "\(crew.title) \(GitHubNumber.reference(crew.number))",
+                help: "Copy issue title and number"
+            ) {
+                Text(crew.title)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.4))
+                    .strikethrough(color: Color.white.opacity(0.22))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            copyButton(GitHubNumber.reference(crew.number), help: "Copy issue number") {
+                Text(verbatim: GitHubNumber.reference(crew.number))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.26))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 7))
+        .contextMenu { crewMenu(crew) }
     }
 
     // MARK: Stood down
