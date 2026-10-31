@@ -136,13 +136,17 @@ struct MiddlePane: View {
                 .fill(Runway.green.opacity(0.9))
                 .frame(width: 5, height: 5)
 
-            ForEach(Array(legs.enumerated()), id: \.element.id) { index, leg in
-                if index == flown, flown < legs.count {
+            // A route reads left to right: what is flown, then the aircraft,
+            // then what is ahead. Colouring each segment by its own crew put
+            // a landed crew wherever it happened to sit in the list, so the
+            // bar showed green behind grey. Position says it, not identity.
+            ForEach(0..<legs.count, id: \.self) { index in
+                if index == flown {
                     Image(systemName: "airplane")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Runway.teal)
                 }
-                legSegment(done: leg.isClosed)
+                legSegment(done: index < flown)
             }
 
             if legs.isEmpty {
