@@ -381,6 +381,30 @@ extension AgentControl {
             nudge()
 
 
+        def cmd_crew_order(args):
+            # The order crews sit in under their flight is the order they
+            # fly in. GitHub keeps it, and this is how a pilot sets it.
+            repo = repo_of(args)
+            flight = args.flight or FLIGHT
+            if not flight:
+                sys.exit("runway: which flight? Pass --flight <number>.")
+            parent = node_id(repo, flight)
+            mutation = \"\"\"
+            mutation($parent: ID!, $child: ID!, $after: ID) {
+              reprioritizeSubIssue(input: {issueId: $parent, subIssueId: $child, afterId: $after}) {
+                issue { number }
+              }
+            }
+            \"\"\"
+            after = None
+            for issue in args.issues:
+                child = node_id(repo, int(str(issue).lstrip("#")))
+                graphql(mutation, parent=parent, child=child, after=after)
+                after = child
+            print("Flight #%s crews reordered, %d named" % (flight, len(args.issues)))
+            nudge()
+
+
         def cmd_crew_release(args):
             repo = repo_of(args)
             flight = args.flight or FLIGHT
@@ -771,6 +795,13 @@ extension AgentControl {
             crew_down = crew_verbs.add_parser("down", help="stand a crew down to its card")
             crew_down.add_argument("issue")
             crew_down.set_defaults(run=cmd_crew_down)
+
+            crew_order = crew_verbs.add_parser(
+                "order", help="the order crews fly in, first named first"
+            )
+            crew_order.add_argument("issues", nargs="+")
+            crew_order.add_argument("--flight", default="")
+            crew_order.set_defaults(run=cmd_crew_order)
 
             crew_release = crew_verbs.add_parser("release", help="let a crew go, without closing it")
             crew_release.add_argument("issue")

@@ -41,6 +41,7 @@ enum RoleCard {
             lines.append("  runway crew add --title \"<title>\" --flight <issue>")
             lines.append("  runway crew adopt <issue> --flight <issue>")
             lines.append("  runway crew up|down <issue>      open or close a crew's terminal")
+            lines.append("  runway crew order <issue> ...    the order the crews fly in")
             lines.append("")
             lines.append("The board is yours to arrange, and the user will ask you to. The")
             lines.append("order flights sit in, and what each is worth, are Runway's own, not")

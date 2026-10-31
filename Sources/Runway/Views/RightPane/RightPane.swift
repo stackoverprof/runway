@@ -29,8 +29,14 @@ struct RightPane: View {
     /// Every crew of the flight, landed ones included. A crew that closes
     /// has not stopped being part of the flight, and a pane that forgets it
     /// loses the shape of what was done.
+    ///
+    /// The order is the flight's own, the order its crews were put under it,
+    /// which the pilot sets with `runway crew order`. Landed crews collect at
+    /// the bottom: they are one line each and nothing is waiting on them, so
+    /// leaving one between two live crews only breaks the reading.
     private var crews: [IssueLeg] {
-        issues.issue(ws.flightNumber)?.legs ?? []
+        let legs = issues.issue(ws.flightNumber)?.legs ?? []
+        return legs.filter { !$0.isClosed } + legs.filter(\.isClosed)
     }
 
     /// Where a crew's issue lives, which is how the deck names its seat.
