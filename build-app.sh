@@ -33,6 +33,13 @@ if [ -n "$FLAVOR" ]; then
 fi
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# SwiftPM's resource bundle goes in Resources, where Bundle.module looks and
+# where codesign accepts a nested bundle.
+if [ -d "$BIN_DIR/Runway_Runway.bundle" ]; then
+  rm -rf "$APP/Contents/Resources/Runway_Runway.bundle"
+  cp -R "$BIN_DIR/Runway_Runway.bundle" "$APP/Contents/Resources/"
+fi
+
 # Bundle the libghostty GPU framework so the .app is self-contained (otherwise
 # it only runs while .build exists). Add an rpath so the binary finds it.
 if [ -d "$BIN_DIR/CGhosttyKitBinary.framework" ]; then

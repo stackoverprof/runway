@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { Self.configureCloseWindowMenuItem() }
         AgentControl.install()
+        Walkthrough.install()
         AgentControl.resetStates()
         installShortcutMonitor()
         installTerminalScrollMonitor()

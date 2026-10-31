@@ -116,6 +116,8 @@ enum FlightCrewSessions {
         if let flight { env["RUNWAY_FLIGHT"] = String(flight) }
         if rank == .crew { env["RUNWAY_CREW"] = String(issue) }
         if let reportsTo { env["RUNWAY_REPORTS_TO"] = reportsTo }
+        env["RUNWAY_WALKTHROUGH"] = Walkthrough.toolkit.path
+        env["RUNWAY_WALKTHROUGH_OUT"] = Walkthrough.output.path
         env["RUNWAY_ROLE_CARD"] = RoleCard.write(
             rank: rank,
             repository: repository,

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Walkthrough Templates</title>
+<style>
+  :root{--w:/Users/angkasa/Developer/walkthrough}
+  body{margin:0;background:#f4f3f0;color:#141210;font:15px/1.5 -apple-system,'Helvetica Neue',sans-serif}
+  main{max-width:1500px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px}
+  h2{font-size:20px;margin:48px 0 4px;border-top:1px solid #d8d2c8;padding-top:20px}
+  p.lead{color:#5e574f;margin:0 0 16px;max-width:900px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:20px}
+  figure{margin:0;background:#fff;border:1px solid #e4dcd2;border-radius:8px;overflow:hidden}
+  figure img{display:block;width:100%;aspect-ratio:1;object-fit:cover;cursor:zoom-in}
+  figcaption{padding:10px 12px 12px}
+  figcaption b{display:block;font-size:15px}
+  figcaption code{font:12px ui-monospace,Menlo,monospace;background:#f0ebe4;padding:1px 4px;border-radius:3px}
+  figcaption small{display:block;color:#8a8178;font:11px ui-monospace,Menlo,monospace;margin-top:6px;word-break:break-all}
+  table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e4dcd2}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #eee;vertical-align:top}
+  th{background:#f0ebe4;font-size:13px}
+  td code{font:12px ui-monospace,Menlo,monospace;background:#f0ebe4;padding:1px 4px;border-radius:3px}
+  .new{color:#b4541e;font-weight:600;font-size:12px}
+</style></head><body><main>
+<h1>/walkthrough: templates, use cases, scenarios</h1>
+<p class="lead">Every slide is a 2184x2184 PNG: eyebrow, headline, evidence, 2 or 3 findings, provenance footer. Pick one <b>layout</b> for the evidence and one <b>theme</b> for the surface. Every example below is a real exported slide; click to open full size. Kept in the skill as <code>examples.html</code>; open it when choosing a layout.</p>
+
+<h2>1. Layouts: how the evidence sits on the square</h2>
+<p class="lead">Chosen by the shape of the screenshot.</p>
+<div class="grid">
+  <figure><a href="examples/hamraborg-megatilbod-1-hero-desktop.png"><img src="examples/hamraborg-megatilbod-1-hero-desktop.png"></a><figcaption><b>Default: wide shot</b>Headline, <code>.shot</code> full width, findings under. For desktop pages, dashboards, wide crops.<small>13976 · Hamraborg hero</small></figcaption></figure>
+  <figure><a href="examples/teo-apple-pay-1-credit-card.png"><img src="examples/teo-apple-pay-1-credit-card.png"></a><figcaption><b>Split: tall crop</b><code>.split</code>: findings left, tall image right. For a portrait crop that would waste the width.<small>10435 · Te&amp;Kaffi Apple Pay</small></figcaption></figure>
+  <figure><a href="examples/zocalo-restyle-1-menu-cards.png"><img src="examples/zocalo-restyle-1-menu-cards.png"></a><figcaption><b>Pair: before / after (web)</b><code>.pair</code>: two shots side by side, BEFORE and AFTER captions, findings under. Same page, same data.<small>14755 · Zocalo restyle</small></figcaption></figure>
+  <figure><a href="examples/new-android.png"><img src="examples/new-android.png"></a><figcaption><b>Phone: full screen</b> <span class="new">NEW: frameless</span><br><code>.phone</code> + <code>.screen</code>: phone left, findings right. iOS Simulator, Android emulator, or a phone-width web capture.<small>15441 re-rendered · Flatey on Android</small></figcaption></figure>
+  <figure><a href="examples/mk-rosti.png"><img src="examples/mk-rosti.png"></a><figcaption><b>Phone pair: before / after</b> <span class="new">NEW: frameless, .duo</span><br><code>.phone.duo</code>: both phones left at full height, findings right.<small>16125 re-rendered · Röstí hero speed</small></figcaption></figure>
+  <figure><a href="examples/pos-bookings-1-day-view.png"><img src="examples/pos-bookings-1-day-view.png"></a><figcaption><b>Tablet: POS / Kiosk</b>Landscape tablet is wide enough for the default <code>.shot</code>. No frame.<small>16257 · POS bookings</small></figcaption></figure>
+</div>
+
+<h2>1b. Marks: point at the exact spot</h2>
+<p class="lead">Thin ring in a color picked to contrast with the screenshot (never the brand red on a red header), white edge, soft halo. Numbered when there are two or three, and the finding starts with the same number. No arrows, no dimming.</p>
+<div class="grid">
+  <figure><a href="examples/mk-hamra.png"><img src="examples/mk-hamra.png"></a><figcaption><b>Numbered marks on a wide shot</b><code>.hl</code> + <code>.mark data-n</code>, findings start with <code>.n</code>.<small>13976 re-rendered · demo</small></figcaption></figure>
+  <figure><a href="examples/mk-rosti.png"><img src="examples/mk-rosti.png"></a><figcaption><b>Single mark on a phone</b>One spot, no number.<small>16125 re-rendered · demo</small></figcaption></figure>
+</div>
+
+<h2>2. Themes: which surface the shot is from</h2>
+<p class="lead">Set per slide with <code>data-theme</code>. One deck often mixes them (bug on the storefront, guard in the dashboard). The surface in the screenshot decides, not the issue's tag.</p>
+<div class="grid">
+  <figure><a href="examples/hamraborg-megatilbod-1-hero-desktop.png"><img src="examples/hamraborg-megatilbod-1-hero-desktop.png"></a><figcaption><b>customer</b>35 brand sites + Expo apps. Wears the brand's own colors (from the site's <code>app.css</code> / tailwind), brand bar on the left.<small>13976</small></figcaption></figure>
+  <figure><a href="examples/split-coupon-1-kit-discounts.png"><img src="examples/split-coupon-1-kit-discounts.png"></a><figcaption><b>kit</b><code>@upsell/kit</code>. Graphite, no brand, three-tick rule on top: "this hits every brand".<small>13623</small></figcaption></figure>
+  <figure><a href="examples/kronikan-deal-price-1-prod-10100.png"><img src="examples/kronikan-deal-price-1-prod-10100.png"></a><figcaption><b>widget</b><code>upsell-widget</code>. Purple, the shot sits inside a "HOST PAGE" mat.<small>14830</small></figcaption></figure>
+  <figure><a href="examples/category-page-design-1-seam.png"><img src="examples/category-page-design-1-seam.png"></a><figcaption><b>dashboard</b>Dashboard, dashboard-v2, POS, Kiosk. Cooler, smaller type, more room for dense crops.<small>13191</small></figcaption></figure>
+  <figure><a href="examples/castello-free-delivery-1-overcharge.png"><img src="examples/castello-free-delivery-1-overcharge.png"></a><figcaption><b>terminal</b><code>upsell-api</code>, CLI, workers. Dark, all mono. Logs, SQL, test output.<small>14170</small></figcaption></figure>
+</div>
+
+<h2>3. Provenance footer: always true</h2>
+<div class="grid">
+  <figure><a href="examples/castello-free-delivery-1-overcharge.png"><img src="examples/castello-free-delivery-1-overcharge.png"></a><figcaption><b>LIVE PRODUCTION</b>Shot from the real deployed system.</figcaption></figure>
+  <figure><a href="examples/pos-bookings-1-day-view.png"><img src="examples/pos-bookings-1-day-view.png"></a><figcaption><b>PREVIEW</b>Branch preview or local dev. Sim/emulator shots name the device: <code>PREVIEW · ANDROID 11 EMULATOR, PIXEL TABLET</code>.</figcaption></figure>
+  <figure><a href="examples/astro-half-and-half-1-before-6280.png"><img src="examples/astro-half-and-half-1-before-6280.png"></a><figcaption><b>SIMULATED RESPONSE</b>Any data injected or stubbed. Orange, so it never passes as real.</figcaption></figure>
+</div>
+
+<h2>4. Scenarios: what you get for each situation</h2>
+<table>
+  <tr><th>Situation</th><th>Layout</th><th>Theme</th><th>Notes</th></tr>
+  <tr><td>Bug or fix on a brand website (desktop)</td><td>Default <code>.shot</code></td><td>customer</td><td>Brand colors from the site. Crop to the thing, no full browser chrome.</td></tr>
+  <tr><td>One price / button / label is the point</td><td>any + <code>.mark</code></td><td>by surface</td><td>Measure the spot on the real image, max 3 marks.</td></tr>
+  <tr><td>Same page before vs after a fix</td><td><code>.pair</code> (web) or <code>.phone.duo</code> (phones)</td><td>by surface</td><td>Same viewport, same data, only the fix differs.</td></tr>
+  <tr><td>Brand site on a phone (390 wide web capture)</td><td><code>.phone</code> + <code>.screen</code></td><td>customer</td><td>Frameless. Need the browser visible? Shoot real Safari on the iOS Simulator.</td></tr>
+  <tr><td>Expo app (Flatey, Te&amp;Kaffi, Saffran...) full screen</td><td><code>.phone</code> + <code>.screen</code></td><td>customer</td><td><code>shot.sh</code> for a clean 9:41 status bar. Footer names the simulator/emulator.</td></tr>
+  <tr><td>One wrong price / label in an app</td><td><code>.phone</code> + crop in <code>.shot</code></td><td>customer</td><td>A fragment, not the whole screen.</td></tr>
+  <tr><td>Design vs app</td><td><code>.phone.duo</code></td><td>customer</td><td>Captions DESIGN / APP instead of BEFORE / AFTER.</td></tr>
+  <tr><td>POS or Kiosk (landscape tablet)</td><td>Default <code>.shot</code></td><td>dashboard</td><td>No frame.</td></tr>
+  <tr><td>Dashboard admin screen</td><td>Default <code>.shot</code></td><td>dashboard</td><td>Crop hard: a full dashboard is dead grey at thumbnail size.</td></tr>
+  <tr><td>Shared kit bug (hits every brand)</td><td>any</td><td>kit</td><td>Even if photographed on one brand.</td></tr>
+  <tr><td>Widget embed</td><td>Default or <code>.split</code></td><td>widget</td><td>Drawn on a host-page mat.</td></tr>
+  <tr><td>API, SQL, logs, test runs</td><td>Default <code>.shot</code></td><td>terminal</td><td>Before/after test output can use <code>.pair</code>.</td></tr>
+  <tr><td>A step that only makes sense moving</td><td>same layout, as GIF</td><td>by surface</td><td>Only when you name it: <code>/walkthrough (gif the payment step)</code>. 1092px, under ~2 MB / 10 s.</td></tr>
+  <tr><td>Stubbed data to show a render</td><td>any</td><td>by surface</td><td>Footer says SIMULATED RESPONSE. Reshoot when the real thing is reachable.</td></tr>
+</table>
+
+<h2>5. Defaults and outputs</h2>
+<table>
+  <tr><td>Count</td><td>3 slides, one per case. More only if you name a number.</td></tr>
+  <tr><td>Files</td><td><code>~/Developer/walkthrough/&lt;issue&gt;/&lt;slug&gt;-N-&lt;case&gt;.png</code>, or <code>unfiled/&lt;slug&gt;/</code></td></tr>
+  <tr><td>Issue</td><td>Thumbnails spliced into the issue body under <code>## Walkthrough</code></td></tr>
+  <tr><td>Slack</td><td>Never posts. Draft only if you ask.</td></tr>
+  <tr><td><code>--deck</code></td><td>Also publishes a scroll-snap Artifact with extra context slides. Only when asked.</td></tr>
+  <tr><td>Source</td><td>Shots logged in <code>.work/captures/&lt;date&gt;/manifest.md</code> while the work happened. Never re-runs the check.</td></tr>
+</table>
+</main></body></html>

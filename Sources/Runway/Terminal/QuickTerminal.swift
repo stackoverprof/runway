@@ -67,6 +67,8 @@ struct QuickTerminal: View {
         )
         // The controller is briefed like every other seat, or it is only a
         // Claude in a folder that has never heard of a flight.
+        env["RUNWAY_WALKTHROUGH"] = Walkthrough.toolkit.path
+        env["RUNWAY_WALKTHROUGH_OUT"] = Walkthrough.output.path
         env["RUNWAY_ROLE_CARD"] = RoleCard.writeController(
             boxID: boxID,
             repository: GitHubFeed.shared.repo

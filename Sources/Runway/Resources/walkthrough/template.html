@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>__DECK_TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&display=swap">
+<style>
+  /* ─────────────────────────────────────────────────────────────────────
+     FIVE THEMES, ONE FILE.
+
+     Set one per slide:  <section class="sq" data-theme="customer">
+       customer   35 brand sites + the 2 Expo apps. Pass brand colors.
+       kit        @upsell/kit. Deliberately brand-neutral: a kit slide
+                  means "every brand", so it must not wear one brand.
+       widget     upsell-widget. Framed as an embed on a host page.
+       dashboard  upsell-dashboard, dashboard-v2. Denser, cooler.
+       terminal   upsell-api, upsell-cli, workers. Logs, SQL, tests.
+
+     Slides in one deck may use different themes. Most decks do: the
+     problem on a storefront, the guard in the dashboard.
+
+     CUSTOMER BRAND COLORS come from the site itself, never invented:
+       React Router sites  customers/<brand>-web/app/app.css
+                           --color-brand, --color-paper, --color-ink
+       Next sites          customers/<brand>-web/tailwind.config.ts
+     Pass them inline, and nothing else:
+       <section class="sq" data-theme="customer"
+                style="--brand:#dd2c27; --paper:#f6f6f6; --ink:#111">
+     Leave them off and it falls back to Upsell green on warm paper.
+     ───────────────────────────────────────────────────────────────────── */
+
+  :root{
+    --f-display:'Archivo','Helvetica Neue',Arial,sans-serif;
+    --f-body:'Newsreader',Georgia,serif;
+    --f-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --side: 760px;
+    /* EVERY size below is written at the 760px reference and multiplied by
+       --u, so the slide scales as one piece. Capture is 1092px; type pinned in
+       absolute px renders a third smaller there than it was drawn, which is
+       what made the first decks unreadable as Slack thumbnails. --u is one
+       reference pixel as a LENGTH, so a size is `calc(<n> * var(--u))` with no
+       unit on the number: `calc(44px * var(--u))` is px squared and silently
+       drops the whole declaration. */
+    --u: calc(var(--side) / 760);
+
+    /* base: the customer theme's defaults, inherited by the rest */
+    --paper:#F2F6F3; --surface:#FFF; --surface-2:#E9F0EB;
+    --ink:#131A17; --ink-2:#566761; --ink-3:#7D8F88;
+    --rule:#D5E1DA; --rule-hard:#B6C8BE;
+    --brand:#23795A; --accent:var(--brand); --shot-mat:#DFE8E2;
+    --pad: calc(44 * var(--u)) calc(46 * var(--u)) calc(38 * var(--u));
+    --h2-size: calc(31 * var(--u));
+    --find-size: calc(15.5 * var(--u));
+    --shot-radius: calc(3 * var(--u));
+    --shot-shadow: 0 calc(1 * var(--u)) 0 rgba(0,0,0,.14), 0 calc(8 * var(--u)) calc(22 * var(--u)) rgba(0,0,0,.16);
+  }
+
+  /* ── customer ───────────────────────────────────────────────────────
+     Warm, roomy, brand-led. The accent IS the brand, so the slide for
+     Keiluhöllin reads red and the one for Yuzu does not. A thin brand
+     bar down the left is the only chrome that carries color, which
+     keeps it from fighting the screenshot.                            */
+  [data-theme="customer"]{
+    --paper:#FAF8F5; --surface-2:#F0EBE4;
+    --ink:#141210; --ink-2:#5E574F; --ink-3:#8A8178;
+    --rule:#E4DCD2; --rule-hard:#CFC3B5;
+    --accent:var(--brand);
+    --shot-mat:#EFE9E1;
+  }
+  [data-theme="customer"] .sq-inner{border-left:calc(3 * var(--u)) solid var(--brand);padding-left:calc(17 * var(--u));margin-left:calc(-20 * var(--u))}
+
+  /* ── kit ────────────────────────────────────────────────────────────
+     Cool graphite, no brand anywhere. The three-tick rule above the
+     eyebrow is the tell: shared code, many brands downstream.         */
+  [data-theme="kit"]{
+    --paper:#F4F5F7; --surface-2:#E7E9ED;
+    --ink:#14171C; --ink-2:#545B66; --ink-3:#818995;
+    --rule:#D9DDE3; --rule-hard:#BCC2CB;
+    --brand:#3D5AFE; --accent:#2C3E9E;
+    --shot-mat:#E4E7EC;
+  }
+  [data-theme="kit"] .sq-inner::before{
+    content:"";display:block;width:calc(46 * var(--u));height:calc(3 * var(--u));margin-bottom:calc(15 * var(--u));
+    background:repeating-linear-gradient(90deg,var(--accent) 0 calc(10 * var(--u)),transparent calc(10 * var(--u)) calc(18 * var(--u)));
+  }
+
+  /* ── widget ─────────────────────────────────────────────────────────
+     The widget never stands alone, so the mat is drawn as a host page
+     with the embed sitting inside it.                                 */
+  [data-theme="widget"]{
+    --paper:#F5F3F8; --surface-2:#EBE6F2;
+    --ink:#171320; --ink-2:#5B5268; --ink-3:#8A8096;
+    --rule:#E0D9EA; --rule-hard:#C4B9D4;
+    --brand:#6C4BB6; --accent:#59399F;
+    --shot-mat:#FFFFFF;
+  }
+  [data-theme="widget"] .shot{
+    background:
+      linear-gradient(var(--surface-2),var(--surface-2)) padding-box,
+      var(--shot-mat);
+    padding:calc(22 * var(--u)) calc(30 * var(--u)); position:relative;
+  }
+  [data-theme="widget"] .shot::before{
+    content:"HOST PAGE";position:absolute;top:calc(7 * var(--u));left:calc(11 * var(--u));
+    font-family:var(--f-mono);font-size:calc(8 * var(--u));letter-spacing:.18em;color:var(--ink-3);
+  }
+
+  /* ── dashboard ──────────────────────────────────────────────────────
+     Admin captures are dense, so everything else shrinks: smaller
+     headline, tighter findings, more of the square left to the crop.  */
+  [data-theme="dashboard"]{
+    --paper:#EEF1F4; --surface-2:#E1E6EB;
+    --ink:#111418; --ink-2:#4E565F; --ink-3:#7B848E;
+    --rule:#D3DAE1; --rule-hard:#B3BDC7;
+    --brand:#00AB55; --accent:#0B6B44;
+    --shot-mat:#E5EAEF;
+    --pad: calc(36 * var(--u)) calc(38 * var(--u)) calc(32 * var(--u));
+    --h2-size: calc(26 * var(--u));
+    --find-size: calc(14.5 * var(--u));
+  }
+
+  /* ── terminal ───────────────────────────────────────────────────────
+     Dark, mono throughout. A log or a SQL dump on light paper reads as
+     a mistake; here the slide matches the thing it is showing.        */
+  [data-theme="terminal"]{
+    --paper:#14171A; --surface-2:#20262B;
+    --ink:#E6EDF3; --ink-2:#9BA9B4; --ink-3:#6E7F8C;
+    --rule:#2A323A; --rule-hard:#3C4650;
+    --brand:#3FB950; --accent:#3FB950;
+    --shot-mat:#0D1013;
+    --shot-shadow: 0 0 0 calc(1 * var(--u)) rgba(255,255,255,.04), 0 calc(10 * var(--u)) calc(26 * var(--u)) rgba(0,0,0,.5);
+    --find-size: calc(14.5 * var(--u));
+  }
+  [data-theme="terminal"] h2{font-family:var(--f-mono);font-weight:500;letter-spacing:-.01em;font-size:calc(25 * var(--u))}
+  [data-theme="terminal"] .findings li{font-family:var(--f-mono);font-size:calc(13.5 * var(--u));line-height:1.55}
+  [data-theme="terminal"] code{background:#0D1013;border-color:var(--rule-hard);color:var(--ink)}
+
+  /* ── frame ──────────────────────────────────────────────────────── */
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#8a9a92}
+  body{font-family:var(--f-body);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:0}
+  .sq{
+    width:var(--side); height:var(--side);
+    background:var(--paper); color:var(--ink);
+    padding:var(--pad);
+    display:flex; flex-direction:column;
+    overflow:hidden;
+  }
+  .sq-inner{display:flex;flex-direction:column;gap:calc(16 * var(--u));flex:1 1 auto;min-height:0}
+  .eyebrow{font-family:var(--f-mono);font-size:calc(11 * var(--u));font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:calc(11 * var(--u));flex:0 0 auto}
+  .eyebrow::after{content:"";flex:1;height:calc(1 * var(--u));background:var(--rule)}
+  .eyebrow .num{color:var(--ink-3)}
+  h2{font-family:var(--f-display);font-weight:600;font-size:var(--h2-size);letter-spacing:-.024em;line-height:1.08;margin:0;flex:0 0 auto;text-wrap:balance}
+  /* The shot takes whatever the headline and findings do not. Sized 0 0 auto
+     it left a dead band under every slide and made the crop look smaller than
+     the square it was drawn on; growing it means a wide crop fills the width,
+     a tall one fills the height, and the mat absorbs the slack. */
+  .shot{
+    flex:1 1 auto; min-height:0;
+    background:var(--shot-mat);border:calc(1 * var(--u)) solid var(--rule-hard);border-radius:var(--shot-radius);
+    padding:calc(9 * var(--u)); display:flex;justify-content:center;align-items:center;overflow:hidden;
+  }
+  .shot img{display:block;width:100%;height:auto;max-height:100%;object-fit:contain;border-radius:calc(2 * var(--u));box-shadow:var(--shot-shadow)}
+  .split{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:calc(230 * var(--u)) minmax(0,1fr);gap:calc(28 * var(--u));align-items:center}
+  .split .shot{flex:1 1 auto;height:100%}
+  .split .shot img{width:auto;height:100%;max-width:100%}
+  .findings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:calc(10 * var(--u));flex:0 0 auto}
+  .split .findings{flex:0 1 auto}
+  .findings li{display:grid;grid-template-columns:calc(19 * var(--u)) minmax(0,1fr);gap:calc(10 * var(--u));align-items:start;font-size:var(--find-size);line-height:1.42}
+  .tick{font-family:var(--f-mono);font-size:calc(11 * var(--u));font-weight:700;color:var(--accent);line-height:1.9}
+  code{font-family:var(--f-mono);font-size:.84em;background:var(--surface-2);border:calc(1 * var(--u)) solid var(--rule);border-radius:calc(4 * var(--u));padding:calc(1 * var(--u)) calc(4 * var(--u));white-space:nowrap}
+  .foot{font-family:var(--f-mono);font-size:calc(11 * var(--u));color:var(--ink-3);letter-spacing:.05em;flex:0 0 auto;
+    margin-top:auto; border-top:calc(1 * var(--u)) solid var(--rule);padding-top:calc(11 * var(--u));display:flex;gap:calc(10 * var(--u));align-items:center;flex-wrap:wrap}
+  .foot .dot{width:calc(3 * var(--u));height:calc(3 * var(--u));border-radius:50%;background:var(--rule-hard);flex:0 0 auto}
+  .live{color:var(--accent);font-weight:700}
+  /* ── phone shots (iOS Simulator / Android emulator) ─────────────────
+     A portrait phone on a square wastes two thirds of it, so the phone
+     sits LEFT and the findings RIGHT. No device frame: a drawn bezel or a
+     drawn Safari bar never looked real (#16125), so a full screen is the
+     bare screenshot in .screen, rounded and lifted off the page. A crop
+     uses the plain .shot. .pair puts a before and an after side by side. */
+  .phone{flex:1 1 0;min-height:0;display:grid;grid-template-columns:auto minmax(calc(300 * var(--u)),1fr);grid-template-rows:minmax(0,1fr);gap:calc(30 * var(--u));align-items:center}
+  /* The row must be definite, or the phone sizes to the screenshot's natural height and spills off the square. */
+  .phone .findings{flex:0 1 auto}
+  .screen{height:100%;min-height:0;display:flex;align-items:center;justify-content:center}
+  .screen img{display:block;width:auto;height:auto;max-width:100%;max-height:100%;border-radius:calc(16 * var(--u));
+    box-shadow:0 0 0 calc(1 * var(--u)) var(--rule-hard), 0 calc(8 * var(--u)) calc(22 * var(--u)) rgba(0,0,0,.14)}
+  .phone .shot{height:100%;max-width:calc(330 * var(--u))}
+  .phone .shot img{width:auto;height:auto;max-width:100%;max-height:100%}
+  .pair{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:calc(18 * var(--u))}
+  .pair figure{margin:0;min-height:0;display:flex;flex-direction:column;gap:calc(8 * var(--u));align-items:center}
+  .pair figcaption{font-family:var(--f-mono);font-size:calc(10 * var(--u));font-weight:700;letter-spacing:.16em;color:var(--ink-3)}
+  .pair figcaption.after{color:var(--accent)}
+  .pair .screen,.pair .shot{flex:1 1 0;width:100%}
+  /* Two phones under the headline left them short and far apart. .phone.duo
+     puts the .pair LEFT at full height and the findings RIGHT. */
+  .phone.duo{grid-template-columns:minmax(0,1.6fr) minmax(calc(230 * var(--u)),1fr)}
+  .phone.duo .pair{height:100%;gap:calc(14 * var(--u))}
+  .phone.duo .screen{align-items:flex-start}
+  /* ── marks: point at the exact spot ───────────────────────────────
+     Wrap the img in .hl with --ar (the image's width/height) and add one
+     <i class="mark"> per spot, placed in % of the image: --x --y --w --h.
+     data-n="1" adds a small number when there are several. A thin ring and
+     a soft halo, nothing else: no arrows, no dimming.
+     The ring is NOT the slide accent: a red ring on Hamraborg's red header
+     vanished. The script at the end of the page samples the pixels around
+     every mark and sets --mark on the slide to the palette color farthest
+     from them (cobalt, magenta, cyan, yellow, ink). Force one with
+     data-mark="#hex" on the section. */
+  .hl{position:relative;aspect-ratio:var(--ar);flex:0 0 auto}
+  .shot:has(> .hl),.screen:has(> .hl){container-type:size}
+  .shot > .hl,.screen > .hl{width:min(100cqw,calc(100cqh * var(--ar)))}
+  .screen:has(> .hl){width:100%}
+  .hl > img{width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;display:block}
+  .mark{position:absolute;left:calc(var(--x) * 1%);top:calc(var(--y) * 1%);width:calc(var(--w) * 1%);height:calc(var(--h) * 1%);
+    border:calc(2.5 * var(--u)) solid var(--mark,#1D4DFF);border-radius:calc(6 * var(--u));
+    box-shadow:0 0 0 calc(1.5 * var(--u)) var(--mark-edge,#fff), 0 0 0 calc(6 * var(--u)) color-mix(in srgb,var(--mark,#1D4DFF) 22%,transparent)}
+  .mark[data-n]::after{content:attr(data-n);position:absolute;top:calc(-10 * var(--u));left:calc(-10 * var(--u));
+    width:calc(18 * var(--u));height:calc(18 * var(--u));border-radius:50%;background:var(--mark,#1D4DFF);color:var(--mark-ink,#fff);
+    box-shadow:0 0 0 calc(1.5 * var(--u)) var(--mark-edge,#fff);
+    font:700 calc(10 * var(--u))/calc(18 * var(--u)) var(--f-mono);text-align:center}
+  .findings .n{display:inline-block;width:calc(15 * var(--u));height:calc(15 * var(--u));border-radius:50%;background:var(--mark,#1D4DFF);color:var(--mark-ink,#fff);
+    font:700 calc(9 * var(--u))/calc(15 * var(--u)) var(--f-mono);text-align:center;margin-right:calc(6 * var(--u));vertical-align:calc(1 * var(--u))}
+  /* SIMULATED RESPONSE must not look like the other two. */
+  .live.sim{color:#B4541E}
+  [data-theme="terminal"] .live.sim{color:#E3934F}
+</style></head><body>
+<div class="stage">
+
+  <!-- One <section class="sq"> per case. Change data-theme per slide.
+       provenance: LIVE PRODUCTION | PREVIEW | SIMULATED RESPONSE (must be true)
+       add class="sim" to .live when it is SIMULATED RESPONSE -->
+
+  <section class="sq" data-theme="customer" style="--brand:__BRAND_HEX__">
+    <div class="sq-inner">
+      <div class="eyebrow"><span>Evidence 1 of __N__</span><span class="num">__REF__</span></div>
+      <h2>__HEADLINE__</h2>
+      <div class="shot"><img src="__SHOT_1__" alt="__ALT__"></div>
+      <ul class="findings">
+        <li><span class="tick">OK</span><span>__FINDING__</span></li>
+        <li><span class="tick">OK</span><span>__FINDING__</span></li>
+        <li><span class="tick">OK</span><span>__FINDING__</span></li>
+      </ul>
+      <div class="foot"><span class="live">__PROVENANCE__</span><span class="dot"></span><span>__WHERE_AND_WHEN__</span></div>
+    </div>
+  </section>
+
+  <!-- Portrait shot (an Expo app, a phone-width site)? .split puts the
+       image beside the findings instead of letting it waste the width:
+
+  <section class="sq" data-theme="customer" style="--brand:#dd2c27">
+    <div class="sq-inner">
+      <div class="eyebrow">...</div>
+      <h2>...</h2>
+      <div class="split">
+        <ul class="findings">...</ul>
+        <div class="shot"><img src="__SHOT_N__" alt="..."></div>
+      </div>
+      <div class="foot">...</div>
+    </div>
+  </section>
+  -->
+
+  <!-- PHONE SCREEN (iOS Simulator / Android emulator / a phone-width web
+       capture). Phone LEFT, findings RIGHT. Full screen: .screen, no frame.
+       A crop: plain .shot.
+
+  <div class="phone">
+    <div class="screen"><img src="__SHOT_N__" alt="..."></div>
+    <ul class="findings">...</ul>
+  </div>
+
+       BEFORE / AFTER phones: .phone.duo, the pair LEFT, findings RIGHT.
+
+  <div class="phone duo">
+    <div class="pair">
+      <figure><figcaption>BEFORE</figcaption><div class="screen"><img src="..."></div></figure>
+      <figure><figcaption class="after">AFTER</figcaption><div class="screen"><img src="..."></div></figure>
+    </div>
+    <ul class="findings">...</ul>
+  </div>
+
+       BEFORE / AFTER web (wide shots): plain .pair of .shot, findings under.
+  -->
+
+  <!-- MARK THE SPOT. Wrap the img in .hl with --ar = width/height, then one
+       .mark per spot in % of the image. Works in .shot and .screen.
+
+  <div class="shot"><div class="hl" style="--ar:1.6">
+    <img src="__SHOT_N__" alt="...">
+    <i class="mark" style="--x:62;--y:40;--w:20;--h:8"></i>
+  </div></div>
+
+       Several spots: number them and start the matching finding with the number.
+    <i class="mark" data-n="1" style="..."></i> ... <li><span class="tick">OK</span><span><b class="n">1</b>...</span></li>
+  -->
+
+</div>
+<script>
+/* Mark color: per slide, the palette color farthest (CIELAB) from the pixels
+   around its marks, judged by the closest 10% of samples so a ring never
+   sits on a patch of its own color. Needs data: URIs (file:// taints the canvas,
+   then the default cobalt stays). */
+(function(){
+  const PAL=[['#1D4DFF','#fff','#fff'],['#E5007D','#fff','#fff'],['#00B4D8','#06222b','#fff'],['#FFD60A','#1a1600','#111'],['#141414','#fff','#fff']];
+  const lab=([r,g,b])=>{const f=c=>(c/=255)<=.04045?c/12.92:((c+.055)/1.055)**2.4;r=f(r);g=f(g);b=f(b);
+    let x=(r*.4124+g*.3576+b*.1805)/.95047,y=r*.2126+g*.7152+b*.0722,z=(r*.0193+g*.1192+b*.9505)/1.08883;
+    const t=v=>v>.008856?Math.cbrt(v):7.787*v+16/116;x=t(x);y=t(y);z=t(z);return[116*y-16,500*(x-y),200*(y-z)]};
+  const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+  const d=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+  function pick(sec){
+    if(sec.dataset.mark){sec.style.setProperty('--mark',sec.dataset.mark);return sec.dataset.mark}
+    const px=[];
+    for(const hl of sec.querySelectorAll('.hl')){
+      const img=hl.querySelector('img');if(!img||!img.naturalWidth)continue;
+      const W=img.naturalWidth,H=img.naturalHeight,c=document.createElement('canvas');c.width=W;c.height=H;
+      const g=c.getContext('2d');g.drawImage(img,0,0);
+      for(const m of hl.querySelectorAll('.mark')){
+        const cs=getComputedStyle(m),v=k=>parseFloat(cs.getPropertyValue(k));
+        const x=v('--x')/100*W,y=v('--y')/100*H,w=v('--w')/100*W,h=v('--h')/100*H,pad=Math.max(4,.04*Math.max(w,h));
+        for(let i=0;i<=40;i++){const t=i/40;
+          for(const [sx,sy] of [[x+t*w,y-pad],[x+t*w,y+h+pad],[x-pad,y+t*h],[x+w+pad,y+t*h],[x+t*w,y+pad],[x+t*w,y+h-pad]]){
+            const X=Math.min(W-1,Math.max(0,Math.round(sx))),Y=Math.min(H-1,Math.max(0,Math.round(sy)));
+            try{px.push(lab(g.getImageData(X,Y,1,1).data))}catch(e){return null}}}
+      }
+    }
+    if(!px.length)return null;
+    let best=PAL[0],bs=-1;
+    for(const p of PAL){const L=lab(hex(p[0])),ds=px.map(q=>d(L,q)).sort((a,b)=>a-b),s=ds[Math.floor(ds.length*.1)];if(s>bs){bs=s;best=p}}
+    sec.style.setProperty('--mark',best[0]);sec.style.setProperty('--mark-ink',best[1]);sec.style.setProperty('--mark-edge',best[2]);
+    return best[0];
+  }
+  function run(){const out=[];for(const sec of document.querySelectorAll('section.sq')){
+      const inner=sec.querySelector('.sq-inner');
+      out.push({id:sec.id,mark:sec.querySelector('.mark')?pick(sec):null,overflow:inner?inner.scrollHeight>inner.clientHeight+1:false})}
+    document.body.dataset.check=JSON.stringify(out)}
+  if(document.readyState==='complete')run();else addEventListener('load',run);
+})();
+</script>
+</body></html>

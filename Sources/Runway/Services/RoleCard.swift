@@ -183,6 +183,28 @@ enum RoleCard {
     A crew never closes its own issue. It reports, and the pilot or Erbin
     closes it.
 
+    Evidence, as slides
+
+    What you verified becomes square slides Erbin can drag into Slack, and
+    they are saved on the issue too. The whole method, the layouts, the
+    themes, the provenance rules and the traps, is in
+    `$RUNWAY_WALKTHROUGH/GUIDE.md`. Read it before the first one; it travels
+    with Runway, so there is nothing to install.
+
+      python3 -I $RUNWAY_WALKTHROUGH/render.py <spec.json>
+      $RUNWAY_WALKTHROUGH/publish-to-issue.sh <issue> [repo]
+
+    Three slides, always, unless Erbin says a number. A crew makes a
+    walkthrough for its own issue when the work is verified. A pilot makes
+    one for the whole flight when it lands: the big statement, three slides
+    across the crews, not a repeat of theirs. Later findings may add a
+    follow-up set of fewer than three; say it is a follow-up.
+
+    It packages what was already checked. Never re-run the verification,
+    never invent a case, and never dress a stubbed response as a real one:
+    the footer says `LIVE PRODUCTION`, `PREVIEW` or `SIMULATED RESPONSE`, and
+    it has to be true.
+
     Saying where an issue stands
 
     Do not guess it: read it. The issue body, its pull requests

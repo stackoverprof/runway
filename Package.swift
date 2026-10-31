@@ -21,7 +21,11 @@ let package = Package(
                 .product(name: "GhosttyKit", package: "GhosttyKit"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ],
-            path: "Sources/Runway"
+            path: "Sources/Runway",
+            // The walkthrough toolkit travels with the app, so any agent
+            // Runway starts can make evidence slides without a skill
+            // installed beside it.
+            resources: [.copy("Resources/walkthrough")]
         ),
         .testTarget(
             name: "RunwayTests",
