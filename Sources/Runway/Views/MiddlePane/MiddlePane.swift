@@ -890,7 +890,7 @@ struct MiddlePane: View {
             // One rail down the whole log, not a segment per entry. The
             // segments left a gap at every row boundary, which read as a
             // broken line rather than a thread.
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     HStack(alignment: .top, spacing: 9) {
                         VStack(spacing: 0) {
@@ -923,9 +923,13 @@ struct MiddlePane: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.bottom, index < entries.count - 1 ? 10 : 0)
+
+                        Spacer(minLength: 0)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
         }
     }
