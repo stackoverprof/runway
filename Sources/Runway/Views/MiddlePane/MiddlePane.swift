@@ -13,6 +13,9 @@ struct MiddlePane: View {
     @State private var askingToCloseWithoutEvidence = false
     /// The step copied a moment ago, so its card can flash.
     @State private var copiedStep: String?
+    /// Whether the pointer is on the close button, which is the only time it
+    /// shows its colour.
+    @State private var hoveringState = false
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
@@ -753,7 +756,14 @@ struct MiddlePane: View {
                 Text(flightClosed ? "Reopen issue" : "Close issue")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(flightClosed ? Runway.green : Runway.purple)
+            // Quiet until you reach for it. Closing a flight is the one
+            // irreversible thing on this bar, so it should not sit there
+            // coloured, competing with the work above it.
+            .foregroundStyle(
+                hoveringState
+                    ? (flightClosed ? Runway.green : Runway.purple)
+                    : Color.white.opacity(0.6)
+            )
             .frame(maxWidth: .infinity)
             .frame(height: 28)
             .background(
@@ -761,17 +771,29 @@ struct MiddlePane: View {
                     .fill(Self.card)
                     .overlay(
                         RoundedRectangle(cornerRadius: 7)
-                            .fill((flightClosed ? Runway.green : Runway.purple).opacity(0.14))
+                            .fill(
+                                hoveringState
+                                    ? (flightClosed ? Runway.green : Runway.purple).opacity(0.14)
+                                    : Color.white.opacity(0.05)
+                            )
                     )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .stroke((flightClosed ? Runway.green : Runway.purple).opacity(0.28), lineWidth: 1)
+                    .stroke(
+                        hoveringState
+                            ? (flightClosed ? Runway.green : Runway.purple).opacity(0.28)
+                            : Color.white.opacity(0.1),
+                        lineWidth: 1
+                    )
             )
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .pointerCursor()
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.14)) { hoveringState = hovering }
+        }
     }
 
     /// Every PR of the flight, drawn the way the Pulls tab draws them.
