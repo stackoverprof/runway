@@ -288,7 +288,12 @@ struct MiddlePane: View {
                     if let seen = issues.issue(number) {
                         let showing = number == ws.flightNumber
                         ForEach(PilotSeat.allCases) { seat in
-                            seatTerminal(seat, flight: seen, repository: repository)
+                            seatTerminal(
+                                seat,
+                                flight: seen,
+                                repository: repository,
+                                visible: showing && crewTab == seat
+                            )
                                 // Room to breathe for the one terminal you
                                 // read most. Here rather than in the shared
                                 // terminal theme, so a crew box and the ATC
@@ -369,7 +374,8 @@ struct MiddlePane: View {
     private func seatTerminal(
         _ seat: PilotSeat,
         flight: AssignedIssue,
-        repository: String
+        repository: String,
+        visible: Bool
     ) -> some View {
         let rank: AgentRank = seat == .pilot ? .pilot : .copilot
         return TerminalSurfaceView(
@@ -379,6 +385,7 @@ struct MiddlePane: View {
                 issue: flight.number
             ),
             workspace: ws,
+            isVisible: visible,
             config: FlightCrewSessions.config(
                 rank: rank,
                 repository: repository,

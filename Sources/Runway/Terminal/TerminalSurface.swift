@@ -93,11 +93,22 @@ import UniformTypeIdentifiers
 struct TerminalSurfaceView: View {
     let boxID: UUID
     let workspace: Workspace
+    /// False for a terminal that is mounted but off screen. A hidden view is
+    /// not drawn, and not drawing is the whole point: every visible terminal
+    /// renders on the main thread and waits for its own GPU frame, so a
+    /// handful of parked flights were enough to stall the window.
+    let isVisible: Bool
     @State private var session: GhosttyTerminalSession
 
-    init(boxID: UUID, workspace: Workspace, config: TerminalConfig) {
+    init(
+        boxID: UUID,
+        workspace: Workspace,
+        isVisible: Bool = true,
+        config: TerminalConfig
+    ) {
         self.boxID = boxID
         self.workspace = workspace
+        self.isVisible = isVisible
         let launch = GhosttyTerminalLaunchConfiguration(
             command: config.command,
             workingDirectory: config.workingDirectory,
@@ -117,7 +128,9 @@ struct TerminalSurfaceView: View {
                 TerminalSessionPool.shared.mounted(boxID)
                 applyRunwayTheme(to: session)
                 registerForFocus()
+                showOrHide()
             }
+            .onChange(of: isVisible) { _, _ in showOrHide() }
             .onDisappear { TerminalSessionPool.shared.parked(boxID) }
             // GhosttyKit's embedded view doesn't accept file drops; replicate
             // Ghostty's behavior by typing the dropped file's path (shell-escaped)
@@ -139,6 +152,22 @@ struct TerminalSurfaceView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
                 forceTerminalLayoutUpdate(for: session)
             }
+    }
+
+    /// Keep the backing view's hidden flag in step with the pane. AppKit
+    /// skips drawing a hidden view, so a parked terminal costs nothing while
+    /// its session keeps running.
+    private func showOrHide() {
+        Task { @MainActor in
+            for _ in 0..<40 {
+                if let view = session.view {
+                    if view.isHidden != !isVisible { view.isHidden = !isVisible }
+                    if isVisible { forceTerminalLayoutUpdate(for: session) }
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
     }
 
     /// Register this box's terminal view so clicks on it resolve to the box.
