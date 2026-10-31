@@ -602,31 +602,18 @@ struct MiddlePane: View {
     private var issueSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionLabel("PROGRESS")
-            // The pilot's own checklist, kept in the issue body, read as a
-            // strip you scroll along and opening where the flight is.
+            // The pilot's own checklist, kept in the issue body. Read down
+            // the page, the way a checklist is written: the sideways strip
+            // cut every step after the third in half and hid the rest.
             let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
             if steps.isEmpty {
                 Text("The pilot has not written a checklist for this flight yet.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Color.white.opacity(0.3))
             } else {
-                ScrollViewReader { strip in
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                                stepCard(step, number: index + 1)
-                                    .id(index)
-                            }
-                        }
-                        .padding(.vertical, 1)
-                    }
-                    .scrollIndicators(.hidden)
-                    .contentMargins(.horizontal, 0, for: .scrollContent)
-                    .onAppear { strip.scrollTo(currentStep(in: steps), anchor: .leading) }
-                    .onChange(of: flight?.body) { _, _ in
-                        withAnimation(.easeInOut(duration: 0.22)) {
-                            strip.scrollTo(currentStep(in: steps), anchor: .leading)
-                        }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                        stepCard(step, number: index + 1)
                     }
                 }
             }
@@ -657,30 +644,25 @@ struct MiddlePane: View {
         }
     }
 
-    /// Where the flight is: the first step still to do, or the last one when
-    /// they are all ticked.
-    private func currentStep(in steps: [IssueBody.Step]) -> Int {
-        steps.firstIndex { !$0.done } ?? max(0, steps.count - 1)
-    }
 
     private func stepCard(_ step: IssueBody.Step, number: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(step.done ? Runway.green : Color.white.opacity(0.25))
-                Text("\(number)")
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.32))
-                Spacer(minLength: 0)
-            }
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10))
+                .foregroundStyle(step.done ? Runway.green : Color.white.opacity(0.25))
+                .padding(.top, 1)
+            Text("\(number)")
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.32))
+                .padding(.top, 1)
 
+            VStack(alignment: .leading, spacing: 4) {
             MarkdownText(text: step.label)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Color.white.opacity(step.done ? 0.45 : 0.85))
                 .strikethrough(step.done, color: Color.white.opacity(0.3))
                 .multilineTextAlignment(.leading)
-                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // The blocker belongs to the step, not to a list of its own.
@@ -691,15 +673,17 @@ struct MiddlePane: View {
                     MarkdownText(text: needs, tint: AgentState.needsAction.color)
                         .font(.system(size: 10))
                         .multilineTextAlignment(.leading)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
+
+            Spacer(minLength: 0)
         }
         .padding(9)
-        .frame(width: 150, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white.opacity(copiedStep == step.text ? 0.09 : 0.04))
