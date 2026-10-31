@@ -1130,7 +1130,7 @@ enum PilotSeat: String, CaseIterable, Identifiable {
 
 enum FlightSection: String, CaseIterable, Identifiable {
     case issue = "Issue"
-    case pulls = "PRs"
+    case pulls = "Pulls"
     case slides = "Walkthrough"
     case thread = "Thread"
 
