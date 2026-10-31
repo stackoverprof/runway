@@ -244,7 +244,7 @@ extension AgentControl {
             fields["schema"] = 2
             try:
                 with open(ACTIVITY, "a") as handle:
-                    handle.write(json.dumps(fields, sort_keys=True) + "\n")
+                    handle.write(json.dumps(fields, sort_keys=True) + "\\n")
             except Exception:
                 pass
 
