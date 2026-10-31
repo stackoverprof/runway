@@ -973,7 +973,7 @@ struct MiddlePane: View {
 
     private func slideThumbnail(_ slide: URL) -> some View {
         Group {
-            if let image = NSImage(contentsOf: slide) {
+            if let image = SlideThumbnails.image(for: slide) {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
