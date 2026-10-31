@@ -656,31 +656,28 @@ struct MiddlePane: View {
                 .foregroundStyle(Color.white.opacity(0.32))
                 .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 4) {
             MarkdownText(text: step.label)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(Color.white.opacity(step.done ? 0.45 : 0.85))
                 .strikethrough(step.done, color: Color.white.opacity(0.3))
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-            // The blocker belongs to the step, not to a list of its own.
+            Spacer(minLength: 12)
+
+            // The blocker belongs to the step, and sits at the far end of
+            // its row: what the step is comes first, what it waits on last.
             if let needs = step.needs, !step.done {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 8.5))
                     MarkdownText(text: needs, tint: AgentState.needsAction.color)
                         .font(.system(size: 10))
-                        .multilineTextAlignment(.leading)
+                        .multilineTextAlignment(.trailing)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            }
-
-            Spacer(minLength: 0)
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .topLeading)
