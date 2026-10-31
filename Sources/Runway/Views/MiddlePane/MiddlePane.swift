@@ -245,6 +245,11 @@ struct MiddlePane: View {
             ZStack {
                 ForEach(PilotSeat.allCases) { seat in
                     seatTerminal(seat, flight: flight, repository: repository)
+                        // Room to breathe for the one terminal you read most.
+                        // Here rather than in the shared terminal theme, so a
+                        // crew box and the ATC panel keep their tight fit.
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
                         .opacity(crewTab == seat ? 1 : 0)
                         .allowsHitTesting(crewTab == seat)
                 }
