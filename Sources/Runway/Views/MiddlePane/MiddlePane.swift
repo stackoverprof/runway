@@ -80,7 +80,12 @@ struct MiddlePane: View {
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Runway.teal.opacity(0.9))
                 Spacer(minLength: 8)
-                statusChip(flight?.isClosed == true ? "landed" : "in the air")
+                statusChip(
+                    FlightStatus.of(
+                        closed: flight?.isClosed == true,
+                        steps: IssueBody.steps("Progress", in: flight?.body ?? "")
+                    )
+                )
             }
 
             Text(flight?.title ?? "")
@@ -144,13 +149,13 @@ struct MiddlePane: View {
             .frame(height: 3)
     }
 
-    private func statusChip(_ status: String) -> some View {
-        Text(status.uppercased())
+    private func statusChip(_ status: FlightStatus) -> some View {
+        Text(status.label)
             .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-            .foregroundStyle(Runway.amber)
+            .foregroundStyle(status.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
-            .background(Capsule().fill(Runway.amber.opacity(0.12)))
+            .background(Capsule().fill(status.color.opacity(0.12)))
     }
 
     // MARK: Pilot and copilot
