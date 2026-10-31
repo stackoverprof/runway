@@ -211,6 +211,13 @@ enum RoleCard {
     across the crews, not a repeat of theirs. Later findings may add a
     follow-up set of fewer than three; say it is a follow-up.
 
+    A review that finds a problem is a walkthrough too, and the most useful
+    kind: the author has to see what you saw. Capture it while it is on
+    screen, during the check, not afterwards. A before state is usually gone
+    by the time anyone asks for a deck, and a shot taken at the moment of
+    diagnosis costs nothing while the same shot a day later costs an
+    afternoon or is impossible.
+
     It packages what was already checked. Never re-run the verification,
     never invent a case, and never dress a stubbed response as a real one:
     the footer says `LIVE PRODUCTION`, `PREVIEW` or `SIMULATED RESPONSE`, and
