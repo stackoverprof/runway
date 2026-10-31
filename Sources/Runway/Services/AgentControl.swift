@@ -626,7 +626,23 @@ enum AgentControl {
         func recordingSession(_ matcher: [String: Any]) -> [String: Any] {
             running(claudeSessionHookPath, after: matcher)
         }
-        let settings: [String: Any] = ["hooks": [
+        // A seat is told to file issues, keep checklists, review and approve.
+        // Being told to do a thing and then being stopped by a prompt nobody
+        // is sitting in front of is worse than not being told: on 31 Oct a
+        // crew reviewed two of Sindri's PRs, found them good, never pressed
+        // Approve, and the Slack reply already said it had. These are the
+        // verbs the role cards hand out, and nothing wider.
+        let permissions: [String: Any] = [
+            "allow": [
+                "Bash(runway:*)",
+                "Bash(gh issue:*)",
+                "Bash(gh pr review:*)",
+                "Bash(gh pr comment:*)",
+                "Bash(gh pr checks:*)",
+                "Bash(gh api graphql:*)",
+            ]
+        ]
+        let settings: [String: Any] = ["permissions": permissions, "hooks": [
             // A session that has just opened has been asked nothing: it is
             // idle, not working. Calling it running left a crew green forever
             // if you never typed in it, and kept the pool from ever letting it
