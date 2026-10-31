@@ -28,17 +28,6 @@ struct AssignedIssueCard: View {
                         .fixedSize()
                 }
 
-                // How the flight is doing, as a badge, so the card stays two
-                // lines whether or not it carries crews.
-                if issue.isFlight {
-                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Runway.teal.opacity(0.85))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
-                        .fixedSize()
-                }
             }
 
             Text(issue.title)
@@ -47,7 +36,16 @@ struct AssignedIssueCard: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
 
-            if let parent = issue.parent {
+            // How the flight is doing, under its name where the eye lands
+            // after reading it.
+            if issue.isFlight {
+                Text("\(issue.landedLegs)/\(issue.legs.count) landed")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Runway.teal.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Runway.teal.opacity(0.12)))
+            } else if let parent = issue.parent {
                 Text("crew of \(GitHubNumber.reference(parent))")
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.3))
