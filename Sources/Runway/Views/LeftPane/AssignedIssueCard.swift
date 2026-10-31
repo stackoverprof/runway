@@ -18,6 +18,18 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Color.white.opacity(0.52))
                     .lineLimit(1)
 
+                // How the flight is doing, on the line that already says
+                // which issue it is.
+                if issue.isFlight {
+                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Runway.teal.opacity(0.85))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
+                        .fixedSize()
+                }
+
                 Spacer(minLength: 6)
 
                 if let closedAt = issue.closedAt {
@@ -36,16 +48,7 @@ struct AssignedIssueCard: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
 
-            // How the flight is doing, under its name where the eye lands
-            // after reading it.
-            if issue.isFlight {
-                Text("\(issue.landedLegs)/\(issue.legs.count) landed")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Runway.teal.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Runway.teal.opacity(0.12)))
-            } else if let parent = issue.parent {
+            if let parent = issue.parent {
                 Text("crew of \(GitHubNumber.reference(parent))")
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.3))
