@@ -155,7 +155,6 @@ struct MiddlePane: View {
 
     private var seatStrip: some View {
         HStack(spacing: 4) {
-            Spacer(minLength: 8)
             ForEach(PilotSeat.allCases) { seat in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { crewTab = seat }
@@ -186,16 +185,24 @@ struct MiddlePane: View {
                 .pointerCursor()
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 44)
+        .padding(.trailing, 10)
         .padding(.top, 8)
         .padding(.bottom, 20)
-        // Floating in the terminal, over a fade to its black, the way the
-        // flight buttons float over the card.
+        // A patch of black around the buttons, not a band across the top: it
+        // fades away downwards and leftwards into whatever the agent printed.
         .background(
             LinearGradient(
-                colors: [Color.black, Color.black, Color.black.opacity(0.75), Color.black.opacity(0)],
+                colors: [Color.black, Color.black, Color.black.opacity(0.7), Color.black.opacity(0)],
                 startPoint: .top,
                 endPoint: .bottom
+            )
+            .mask(
+                LinearGradient(
+                    colors: [Color.black.opacity(0), Color.black, Color.black],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
             )
         )
     }
