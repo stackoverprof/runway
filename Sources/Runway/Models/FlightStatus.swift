@@ -26,7 +26,9 @@ enum FlightStatus: String {
         case .enRoute: Runway.teal
         case .holding: Runway.amber
         case .onApproach: Runway.green
-        case .landed: Runway.green
+        // Purple is closed everywhere in Runway, and a landed flight is
+        // closed. Green here read as "still going well".
+        case .landed: Runway.purple
         }
     }
 

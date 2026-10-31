@@ -124,16 +124,36 @@ struct MiddlePane: View {
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // A landed flight wears it: the card's head washes purple and fades
+        // back into the grey, so a closed flight is obvious from across the
+        // room rather than only from its chip.
+        .background(
+            LinearGradient(
+                colors: [
+                    Runway.purple.opacity(flight?.isClosed == true ? 0.22 : 0),
+                    Runway.purple.opacity(flight?.isClosed == true ? 0.09 : 0),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+        )
     }
 
     /// The flight as a route: the legs behind it flown in green, the aircraft
     /// where it is now, the legs ahead in grey.
     private var legsBar: some View {
         let legs = flight?.legs ?? []
-        let flown = legs.filter(\.isClosed).count
+        let landed = flight?.isClosed == true
+        // A landed flight has arrived, whatever its crews say: the run is
+        // flown end to end, and drawn in the colour of closed.
+        let flown = landed ? legs.count : legs.filter(\.isClosed).count
+        let trail = landed ? Runway.purple : Runway.green
         return HStack(spacing: 4) {
             Circle()
-                .fill(Runway.green.opacity(0.9))
+                .fill(trail.opacity(0.9))
                 .frame(width: 5, height: 5)
 
             // A route reads left to right: what is flown, then the aircraft,
@@ -146,23 +166,29 @@ struct MiddlePane: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Runway.teal)
                 }
-                legSegment(done: index < flown)
+                legSegment(done: index < flown, colour: trail)
             }
 
             if legs.isEmpty {
                 Capsule()
-                    .fill(Color.white.opacity(0.14))
+                    .fill(landed ? trail : Color.white.opacity(0.14))
                     .frame(height: 3)
             }
 
-            if !legs.isEmpty, flown == legs.count {
+            if landed || (!legs.isEmpty && flown == legs.count) {
                 Image(systemName: "airplane.arrival")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Runway.green)
+                    .foregroundStyle(trail)
             }
 
             Circle()
-                .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                .fill(landed ? trail.opacity(0.9) : Color.clear)
+                .overlay(
+                    Circle().strokeBorder(
+                        landed ? Color.clear : Color.white.opacity(0.28),
+                        lineWidth: 1
+                    )
+                )
                 .frame(width: 5, height: 5)
 
             Text(legs.isEmpty ? "no crews yet" : "\(flown)/\(legs.count) crews")
@@ -173,9 +199,9 @@ struct MiddlePane: View {
         }
     }
 
-    private func legSegment(done: Bool) -> some View {
+    private func legSegment(done: Bool, colour: Color) -> some View {
         Capsule()
-            .fill(done ? Runway.green : Color.white.opacity(0.14))
+            .fill(done ? colour : Color.white.opacity(0.14))
             .frame(height: 3)
     }
 
