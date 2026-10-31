@@ -36,6 +36,7 @@ struct RunwayApp: App {
 /// via `swift run` outside an .app bundle.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
+    private var scrollMonitor: Any?
 
     /// Runway's palette is hand-picked near-black; every surface color is a
     /// literal, not a semantic one. Left on the system appearance, flipping the
@@ -67,7 +68,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentControl.install()
         AgentControl.resetStates()
         installShortcutMonitor()
+        installTerminalScrollMonitor()
         observeFullScreen()
+    }
+
+    /// Tame dense trackpad scrolling over terminals so mouse-reporting TUIs
+    /// like Claude do not overshoot. Every terminal in Runway gets this, the
+    /// pilot's and a crew's and the ATC panel's, so they all scroll alike.
+    private func installTerminalScrollMonitor() {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            // Local event monitors fire on the main thread, so the event is safe.
+            nonisolated(unsafe) let ev = event
+            // True when we handled the event ourselves, and swallow it.
+            let swallow: Bool = MainActor.assumeIsolated {
+                guard let window = ev.window,
+                      let hit = window.contentView?.hitTest(ev.locationInWindow)
+                else { return false }
+
+                var node: NSView? = hit
+                var terminal: NSView?
+                while let current = node {
+                    if terminal == nil, current is GhosttyTerminalView { terminal = current }
+                    node = current.superview
+                }
+                guard terminal != nil else { return false }
+
+                // Drop momentum, which overshoots a mouse-reporting TUI, then
+                // throttle the dense precise-scroll stream. A coarse mouse
+                // wheel is not precise and passes through untouched.
+                if !ev.momentumPhase.isEmpty { return true }
+                if ev.hasPreciseScrollingDeltas {
+                    guard let ws = RunwayWindowRegistry.shared
+                        .context(for: ev.window)?.workspace else { return false }
+                    let since = ev.timestamp - ws.lastTerminalScrollTS
+                    if since < 0.055 { return true }
+                    ws.lastTerminalScrollTS = ev.timestamp
+                }
+                return false
+            }
+            return swallow ? nil : event
+        }
     }
 
     /// SwiftUI supplies its own File > Close command for every WindowGroup.
