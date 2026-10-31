@@ -866,7 +866,7 @@ struct MiddlePane: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.forward.app")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text("Open thread")
+                            Text(threadButtonTitle)
                                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         }
                         .foregroundStyle(Runway.teal.opacity(0.85))
@@ -892,6 +892,20 @@ struct MiddlePane: View {
             // broken line rather than a thread.
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if let day = entry.day, day != entries[safe: index - 1]?.day {
+                        HStack(spacing: 9) {
+                            Rectangle()
+                                .fill(Color.white.opacity(index > 0 ? 0.08 : 0))
+                                .frame(width: 1, height: 22)
+                                .frame(width: 5)
+                            Text(day)
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color.white.opacity(0.32))
+                                .tracking(0.6)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     HStack(alignment: .top, spacing: 9) {
                         VStack(spacing: 0) {
                             // The 5 points above a dot are rail too, for
@@ -937,6 +951,13 @@ struct MiddlePane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
         }
+    }
+
+    /// What the button says: where this flight's conversation lives.
+    private var threadButtonTitle: String {
+        let channel = IssueBody.homeChannel("Situation Development", in: flight?.body ?? "")
+        guard let channel, !channel.isEmpty else { return "Open thread" }
+        return "Open thread in \(channel)"
     }
 
     private func sectionLabel(_ text: String) -> some View {

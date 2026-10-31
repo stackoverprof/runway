@@ -37,7 +37,10 @@ enum IssueBody {
         let who: String
         let said: String
         let link: URL?
-        var id: String { who + said }
+        /// The day header this entry sits under, as the log writes it:
+        /// `Fri, 30 Oct`. Nil when the log has no headers.
+        var day: String?
+        var id: String { (day ?? "") + who + said }
     }
 
     /// The lines under one `## Heading`, up to the next heading of any depth.
@@ -80,8 +83,16 @@ enum IssueBody {
     /// The conversation log: `- [who](link): what happened.` under its
     /// heading, with day headers and anything else left out.
     static func conversation(_ name: String, in body: String) -> [Entry] {
-        section(name, in: body).compactMap { line in
+        var day: String?
+        return section(name, in: body).compactMap { line -> Entry? in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // A bold line of its own is the day the entries under it happened.
+            if trimmed.hasPrefix("**"), trimmed.hasSuffix("**"), !trimmed.hasPrefix("- ") {
+                let header = trimmed.dropFirst(2).dropLast(2)
+                    .trimmingCharacters(in: .whitespaces)
+                if !header.lowercased().hasPrefix("channel") { day = header }
+                return nil
+            }
             guard trimmed.hasPrefix("- "), trimmed.contains("]("), trimmed.contains("): ") else {
                 return nil
             }
@@ -100,7 +111,8 @@ enum IssueBody {
             return Entry(
                 who: who,
                 said: clean(said),
-                link: URL(string: link)
+                link: URL(string: link),
+                day: day
             )
         }
     }
@@ -111,7 +123,32 @@ enum IssueBody {
         conversation(name, in: body).first?.link
     }
 
+    /// Where the conversation lives, as the log names it on its first line:
+    /// `**Channel:** #upsell-dashboard`, or a DM.
+    static func homeChannel(_ name: String, in body: String) -> String? {
+        for line in section(name, in: body) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let colon = trimmed.range(of: "Channel:", options: .caseInsensitive) else {
+                continue
+            }
+            let said = trimmed[colon.upperBound...]
+                .replacingOccurrences(of: "*", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            return said.isEmpty ? nil : said
+        }
+        return nil
+    }
+
     private static func clean(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespaces)
+    }
+}
+
+
+extension Array {
+    /// The element at `index`, or nil when there is none. Reading the entry
+    /// before this one is the natural way to ask "is this a new day?".
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

@@ -73,3 +73,40 @@ struct IssueBodyTests {
         #expect(IssueBody.homeThread("Situation Development", in: "## Situation Development\n") == nil)
     }
 }
+
+@Suite("A conversation's days and where it lives")
+struct ConversationShapeTests {
+    private let body = """
+    ## Situation Development
+
+    **Channel:** #upsell-dashboard
+
+    **Fri, 30 Oct**
+    - [Sindri](https://viska.slack.com/archives/C1/p1): asked for a review.
+
+    **Sat, 31 Oct**
+    - [Erbin](https://viska.slack.com/archives/C1/p2): said he would look today.
+    - [Erbin](https://viska.slack.com/archives/C1/p3): told Sindri they are approved.
+    """
+
+    @Test("Each entry carries the day it sits under")
+    func daysAreKept() {
+        let entries = IssueBody.conversation("Situation Development", in: body)
+        #expect(entries.count == 3)
+        #expect(entries[0].day == "Fri, 30 Oct")
+        #expect(entries[1].day == "Sat, 31 Oct")
+        #expect(entries[2].day == "Sat, 31 Oct")
+    }
+
+    @Test("The channel line is not mistaken for a day")
+    func channelIsNotADay() {
+        #expect(IssueBody.homeChannel("Situation Development", in: body) == "#upsell-dashboard")
+        #expect(IssueBody.conversation("Situation Development", in: body)[0].day == "Fri, 30 Oct")
+    }
+
+    @Test("A log with no channel line says so")
+    func noChannel() {
+        let bare = "## Situation Development\n\n_No channel recorded yet._"
+        #expect(IssueBody.homeChannel("Situation Development", in: bare) == nil)
+    }
+}
