@@ -25,6 +25,27 @@ enum RoleCard {
             lines.append("You sit above every flight and belong to none. You can order any")
             lines.append("pilot or crew, make a flight, and take work off one.")
             lines.append("Repository on screen: \(repository)")
+            lines.append("")
+            lines.append("A flight is a GitHub issue. Its crews are that issue's sub-issues.")
+            lines.append("A cluster of work is one flight, named after the cluster, and each")
+            lines.append("piece of it is a crew under that flight.")
+            lines.append("")
+            lines.append("Asked to make a flight for something new, look first: `runway list`")
+            lines.append("shows the flights already in the air. If the work belongs under one")
+            lines.append("of them, adopt it there as a crew rather than opening a flight of")
+            lines.append("its own. Only work that is its own cluster gets its own flight.")
+            lines.append("")
+            lines.append("  runway list                      the flights in this repository")
+            lines.append("  runway show <issue>              one flight and how its crews stand")
+            lines.append("  runway flight create --title \"<cluster>\" --body \"...\"")
+            lines.append("  runway crew add --title \"<title>\" --flight <issue>")
+            lines.append("  runway crew adopt <issue> --flight <issue>")
+            lines.append("  runway crew up|down <issue>      open or close a crew's terminal")
+            lines.append("")
+            lines.append("You do not fly. Say what is to be done and let the pilot do it: a")
+            lines.append("pilot that is up is a Claude session named after its flight, such as")
+            lines.append("`dependency`, and a crew is named after its issue, `monorepo-16790`.")
+            lines.append("Message that name to reach it.")
         case .pilot, .copilot:
             lines.append("You fly \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
@@ -77,6 +98,21 @@ enum RoleCard {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// The controller's own card. It flies nothing, so it has no issue of its
+    /// own; its card is keyed by the panel it sits in.
+    @discardableResult
+    static func writeController(boxID: UUID, repository: String) -> URL {
+        write(
+            id: boxID,
+            rank: .atc,
+            repository: repository,
+            issue: 0,
+            title: "",
+            flight: nil,
+            reportsTo: "you"
+        )
+    }
+
     @discardableResult
     static func write(
         rank: AgentRank,
@@ -86,9 +122,29 @@ enum RoleCard {
         flight: Int?,
         reportsTo: String?
     ) -> URL {
+        write(
+            id: FlightCrewSessions.boxID(rank: rank, repository: repository, issue: issue),
+            rank: rank,
+            repository: repository,
+            issue: issue,
+            title: title,
+            flight: flight,
+            reportsTo: reportsTo
+        )
+    }
+
+    @discardableResult
+    static func write(
+        id: UUID,
+        rank: AgentRank,
+        repository: String,
+        issue: Int,
+        title: String,
+        flight: Int?,
+        reportsTo: String?
+    ) -> URL {
         let directory = RunwayStorage.supportDir.appendingPathComponent("roles", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let id = FlightCrewSessions.boxID(rank: rank, repository: repository, issue: issue)
         let file = directory.appendingPathComponent("\(id.uuidString).md")
         let card = text(
             rank: rank,

@@ -57,7 +57,7 @@ struct QuickTerminal: View {
             quickTerminalSession: true,
             quickTerminalRoot: root
         )
-        let env = AgentControl.environment(
+        var env = AgentControl.environment(
             for: boxID,
             rank: .atc,
             autorun: command,
@@ -65,6 +65,12 @@ struct QuickTerminal: View {
             quickTerminalSession: true,
             quickTerminalRoot: root
         )
+        // The controller is briefed like every other seat, or it is only a
+        // Claude in a folder that has never heard of a flight.
+        env["RUNWAY_ROLE_CARD"] = RoleCard.writeController(
+            boxID: boxID,
+            repository: GitHubFeed.shared.repo
+        ).path
 
         // A folder picked in Settings wins; otherwise reopen where the last
         // shell was left, and fall back to the shell's own default.
