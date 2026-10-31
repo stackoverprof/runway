@@ -627,7 +627,11 @@ enum AgentControl {
             running(claudeSessionHookPath, after: matcher)
         }
         let settings: [String: Any] = ["hooks": [
-            "SessionStart": [running(issueContextHookPath, after: recordingSession(reporter("running")))],
+            // A session that has just opened has been asked nothing: it is
+            // idle, not working. Calling it running left a crew green forever
+            // if you never typed in it, and kept the pool from ever letting it
+            // go. The first prompt turns it green.
+            "SessionStart": [running(issueContextHookPath, after: recordingSession(reporter("idle")))],
             "UserPromptSubmit": [recordingSession(reporter("running"))],
             "PreToolUse": [reporter("running")],
             "PostToolUse": [reporter("running")],
