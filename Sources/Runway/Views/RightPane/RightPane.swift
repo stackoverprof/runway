@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The crew pane: one box per leg of the flight.
@@ -16,6 +17,10 @@ struct RightPane: View {
     /// up as well as you can. Which one you are reading is yours alone.
     private let deck = CrewDeck.shared
     @State private var reading: Int?
+    /// The pane's own view, so a click anywhere else in the window can be
+    /// told apart from a click on a crew.
+    @State private var paneView = PaneViewBox()
+    @State private var clickWatch: Any?
 
     private var crews: [IssueLeg] {
         (issues.issue(ws.flightNumber)?.legs ?? []).filter { !$0.isClosed }
@@ -51,13 +56,36 @@ struct RightPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
         .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.22)) { reading = nil }
+        .background(PaneHitArea(box: paneView))
+        // Reading one crew larger is a choice that lasts only while you are
+        // in the pane. Click the pilot, the left pane, anything else, and the
+        // crews go back to an equal share.
+        .onAppear { watchClicks() }
+        .onDisappear {
+            if let clickWatch { NSEvent.removeMonitor(clickWatch) }
+            clickWatch = nil
         }
         .overlay {
             if crews.isEmpty { noCrews }
         }
         .background(Color.black)
+    }
+
+    /// Any click in the window that did not land on this pane clears the
+    /// choice. A click inside it is left alone: the crew boxes decide.
+    private func watchClicks() {
+        guard clickWatch == nil else { return }
+        clickWatch = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            Task { @MainActor in
+                guard reading != nil, let view = paneView.view else { return }
+                let inside = view.window === event.window
+                    && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+                if !inside {
+                    withAnimation(.easeInOut(duration: 0.22)) { reading = nil }
+                }
+            }
+            return event
+        }
     }
 
     private var noCrews: some View {
@@ -169,6 +197,12 @@ struct RightPane: View {
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
         }
+        .simultaneousGesture(
+            // A click into the terminal itself is still a click on this crew.
+            TapGesture().onEnded {
+                withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
+            }
+        )
     }
 
     @ViewBuilder
@@ -321,4 +355,27 @@ struct CrewAccordion: Layout {
 /// is left that this crew's box takes.
 struct CrewShareKey: LayoutValueKey {
     static let defaultValue = 0
+}
+
+
+/// Holds the pane's backing view so a click monitor can ask where a click
+/// landed. A class, because the view arrives after the struct is made.
+@MainActor
+final class PaneViewBox {
+    weak var view: NSView?
+}
+
+/// An empty view whose only job is to hand its `NSView` to the box.
+private struct PaneHitArea: NSViewRepresentable {
+    let box: PaneViewBox
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        box.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        box.view = nsView
+    }
 }
