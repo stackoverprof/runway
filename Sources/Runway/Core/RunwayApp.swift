@@ -92,7 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if terminal == nil, current is GhosttyTerminalView { terminal = current }
                     node = current.superview
                 }
-                ScrollProbe.note(terminal: terminal != nil, event: ev)
                 guard terminal != nil else { return false }
 
                 // Drop momentum, which overshoots a mouse-reporting TUI, then
