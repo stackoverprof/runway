@@ -298,7 +298,10 @@ struct MiddlePane: View {
             if hovering { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
         }
         .gesture(
-            DragGesture()
+            // Global, not local: a local drag measures against the divider
+            // itself, and the divider moves as you drag it, so the reading
+            // feeds back into the next frame and the pane shakes.
+            DragGesture(coordinateSpace: .global)
                 .onChanged { value in
                     let start = dragStartShare ?? terminalShare
                     dragStartShare = start
