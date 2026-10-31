@@ -179,7 +179,7 @@ struct MiddlePane: View {
                     .frame(height: 22)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(crewTab == seat ? Color(white: 0.13) : .clear)
+                            .fill(crewTab == seat ? Color.white.opacity(0.08) : .clear)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
@@ -187,15 +187,15 @@ struct MiddlePane: View {
                 .pointerCursor()
             }
         }
-        .padding(.leading, 44)
+        .padding(.leading, 90)
         .padding(.trailing, 10)
         .padding(.top, 8)
-        .padding(.bottom, 20)
+        .padding(.bottom, 34)
         // A patch of black around the buttons, not a band across the top: it
         // fades away downwards and leftwards into whatever the agent printed.
         .background(
             LinearGradient(
-                colors: [Color.black, Color.black, Color.black.opacity(0.7), Color.black.opacity(0)],
+                colors: [Color.black, Color.black, Color.black, Color.black.opacity(0.7), Color.black.opacity(0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
