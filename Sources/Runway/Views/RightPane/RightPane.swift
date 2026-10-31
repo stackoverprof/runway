@@ -50,6 +50,10 @@ struct RightPane: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.22)) { reading = nil }
+        }
         .overlay {
             if crews.isEmpty { noCrews }
         }
@@ -157,7 +161,7 @@ struct RightPane: View {
         .overlay(
             RoundedRectangle(cornerRadius: 9)
                 .stroke(
-                    isReading ? Runway.teal.opacity(0.45) : Color.white.opacity(0.1),
+                    Color.white.opacity(isReading ? 0.18 : 0.1),
                     lineWidth: 1
                 )
         )
@@ -249,9 +253,10 @@ struct RightPane: View {
     private func standDown(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
             deck.standDown(crewRepositoryName(crew), crew.number)
-            if reading == crew.number {
-                reading = crews.first { isUp($0) }?.number
-            }
+            // Standing down the one you were reading leaves no one chosen,
+            // so the rest go back to equal rather than one being picked for
+            // you.
+            if reading == crew.number { reading = nil }
         }
     }
 }
