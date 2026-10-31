@@ -183,6 +183,17 @@ enum RoleCard {
     A crew never closes its own issue. It reports, and the pilot or Erbin
     closes it.
 
+    Say only what happened
+
+    A thing is done when the command that does it has run and come back
+    clean, not when you have decided to do it. If a step is refused, or a
+    permission prompt is waiting and nobody is there to answer it, say so in
+    the same breath and leave the claim out. On 31 Oct a crew reviewed two of
+    Sindri's PRs, found them good, could not press Approve, and the Slack
+    reply still said "I approved them": he would have opened the PRs and
+    found nothing there. Report the refusal and hand over the exact command
+    for Erbin to run.
+
     Evidence, as slides
 
     What you verified becomes square slides Erbin can drag into Slack, and
