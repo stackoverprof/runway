@@ -31,16 +31,27 @@ final class CrewDeck {
         up.contains(Self.seat(repository, number))
     }
 
-    func bringUp(_ repository: String, _ number: Int) {
+    /// When each crew came up, so standing it down can say how long it ran.
+    private var since: [String: Date] = [:]
+
+    func bringUp(_ repository: String, _ number: Int, title: String = "") {
+        let seat = Self.seat(repository, number)
+        guard !up.contains(seat) else { return }
         var next = up
-        next.insert(Self.seat(repository, number))
+        next.insert(seat)
+        since[seat] = Date()
         write(next)
+        ActivityLog.crewUp(number, title: title, repository: repository)
     }
 
-    func standDown(_ repository: String, _ number: Int) {
+    func standDown(_ repository: String, _ number: Int, title: String = "") {
+        let seat = Self.seat(repository, number)
+        guard up.contains(seat) else { return }
         var next = up
-        next.remove(Self.seat(repository, number))
+        next.remove(seat)
+        let ran = since.removeValue(forKey: seat).map { Int(Date().timeIntervalSince($0)) } ?? 0
         write(next)
+        ActivityLog.crewDown(number, title: title, repository: repository, seconds: ran)
     }
 
     /// A closed crew leaves the pane, so it leaves the deck with it.

@@ -10,6 +10,7 @@ extension AgentControl {
         the team reads.
         \"\"\"
         import argparse
+        import datetime
         import json
         import os
         import subprocess
@@ -188,6 +189,7 @@ extension AgentControl {
         def cmd_flight_create(args):
             repo = repo_of(args)
             number, url = create_issue(repo, args.title, args.body)
+            note("flight_created", issue=number, title=args.title, repository=repo)
             print("Flight #%d: %s" % (number, url))
             for title in args.crew or []:
                 crew_number, crew_url = create_issue(repo, title, "")
@@ -218,8 +220,33 @@ extension AgentControl {
                 sys.exit("runway: which flight? Pass --flight <number>.")
             adopt(repo, flight, args.issue)
             assign_me(repo, flight)
+            note("crew_adopted", issue=int(str(args.issue).lstrip("#")), flight=int(flight), repository=repo)
             print("Crew #%s joins flight #%s" % (args.issue, flight))
             nudge()
+
+
+        ACTIVITY = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "activity.jsonl",
+        )
+
+
+        def note(action, **fields):
+            # The same line the app writes, from the other side. A report
+            # reads one file, whoever moved the work.
+            fields["action"] = action
+            fields["at"] = (
+                datetime.datetime.now(datetime.timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            fields["schema"] = 2
+            try:
+                with open(ACTIVITY, "a") as handle:
+                    handle.write(json.dumps(fields, sort_keys=True) + "\n")
+            except Exception:
+                pass
 
 
         DECK = os.path.join(
@@ -248,6 +275,7 @@ extension AgentControl {
             seats = read_deck()
             seats.add("%s#%s" % (repo, args.issue))
             write_deck(seats)
+            note("crew_up", issue=int(str(args.issue).lstrip("#")), repository=repo)
             print("Crew #%s is up" % args.issue)
             nudge()
 
@@ -257,6 +285,7 @@ extension AgentControl {
             seats = read_deck()
             seats.discard("%s#%s" % (repo, args.issue))
             write_deck(seats)
+            note("crew_down", issue=int(str(args.issue).lstrip("#")), repository=repo)
             print("Crew #%s stood down" % args.issue)
             nudge()
 
@@ -313,6 +342,7 @@ extension AgentControl {
             entry["order"] = order
             board[repo] = entry
             write_board(board)
+            note("order_changed", repository=repo, order=order, by=args.by or "given")
             print("Board order set, %d flights" % len(order))
             for number in order:
                 print("  #%s" % number)
@@ -338,6 +368,7 @@ extension AgentControl {
             entry["priority"] = priority
             board[repo] = entry
             write_board(board)
+            note("priority_set", issue=int(number), repository=repo, priority=priority.get(number))
             nudge()
 
 
@@ -443,6 +474,7 @@ extension AgentControl {
             steps = steps_of(split_progress(issue_body(repo, number))[1])
             steps.append((False, args.step))
             save_steps(repo, number, steps)
+            note("step_added", issue=int(number), repository=repo, step=args.step)
             print("#%s step %d: %s" % (number, len(steps), args.step))
 
 
@@ -455,6 +487,12 @@ extension AgentControl {
                 sys.exit("runway: #%s has no step %d" % (number, args.step))
             steps[index] = (done, steps[index][1])
             save_steps(repo, number, steps)
+            note(
+                "step_ticked" if done else "step_unticked",
+                issue=int(number),
+                repository=repo,
+                step=steps[index][1],
+            )
             print("#%s step %d %s" % (number, args.step, "ticked" if done else "unticked"))
 
 
@@ -474,6 +512,13 @@ extension AgentControl {
             said = (args.said or "").strip()
             steps[index] = (done, bare if not said else "%s (needs: %s)" % (bare, said))
             save_steps(repo, number, steps)
+            note(
+                "needs_set" if said else "needs_cleared",
+                issue=int(number),
+                repository=repo,
+                step=steps[index][1],
+                needs=said,
+            )
             print("#%s step %d: %s" % (number, args.step, steps[index][1]))
 
 
@@ -495,6 +540,160 @@ extension AgentControl {
             print("#%s checklist rewritten, %d steps" % (number, len(steps)))
 
 
+        def parse_since(said):
+            # "24h", "90m", "3d", or an ISO timestamp. Anything else is the
+            # start of today, which is what "today" means to a report.
+            now = datetime.datetime.now(datetime.timezone.utc)
+            said = (said or "").strip().lower()
+            if not said or said == "today":
+                local = datetime.datetime.now().astimezone()
+                start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+                return start.astimezone(datetime.timezone.utc)
+            if said.endswith("h") and said[:-1].isdigit():
+                return now - datetime.timedelta(hours=int(said[:-1]))
+            if said.endswith("m") and said[:-1].isdigit():
+                return now - datetime.timedelta(minutes=int(said[:-1]))
+            if said.endswith("d") and said[:-1].isdigit():
+                return now - datetime.timedelta(days=int(said[:-1]))
+            try:
+                parsed = datetime.datetime.fromisoformat(said.replace("z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.astimezone()
+                return parsed.astimezone(datetime.timezone.utc)
+            except ValueError:
+                sys.exit("runway: --since takes 24h, 90m, 3d, today, or a timestamp")
+
+
+        def read_activity(since):
+            rows = []
+            try:
+                with open(ACTIVITY) as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except Exception:
+                            continue
+                        when = row.get("at", "")
+                        try:
+                            at = datetime.datetime.fromisoformat(when.replace("Z", "+00:00"))
+                        except Exception:
+                            continue
+                        if at >= since:
+                            row["_at"] = at
+                            rows.append(row)
+            except FileNotFoundError:
+                return []
+            rows.sort(key=lambda r: r["_at"])
+            return rows
+
+
+        def spell(seconds):
+            seconds = int(seconds or 0)
+            if seconds < 60:
+                return "%ds" % seconds
+            if seconds < 3600:
+                return "%dm" % (seconds // 60)
+            return "%dh%02dm" % (seconds // 3600, (seconds % 3600) // 60)
+
+
+        def cmd_log(args):
+            # What Runway saw happen. A report reads this for the shape of the
+            # day and goes to GitHub for the evidence.
+            since = parse_since(args.since)
+            rows = read_activity(since)
+            if args.json:
+                for row in rows:
+                    row.pop("_at", None)
+                print(json.dumps(rows, indent=2))
+                return
+            if not rows:
+                print("Nothing in the log since %s." % since.isoformat())
+                return
+            if not args.summary:
+                for row in rows:
+                    local = row["_at"].astimezone()
+                    bits = []
+                    if row.get("issue"):
+                        bits.append("#%s" % row["issue"])
+                    if row.get("title"):
+                        bits.append(row["title"])
+                    if row.get("step"):
+                        bits.append(row["step"])
+                    if row.get("needs"):
+                        bits.append("needs: %s" % row["needs"])
+                    if row.get("name"):
+                        bits.append(row["name"])
+                    if row.get("seconds"):
+                        bits.append(spell(row["seconds"]))
+                    print("%s  %-16s %s" % (
+                        local.strftime("%d %b %H:%M"), row["action"], "  ".join(str(b) for b in bits)
+                    ))
+                return
+
+            attention = {}
+            worked = {}
+            titles = {}
+            ticked = []
+            blocked = []
+            closed = []
+            made = []
+            for row in rows:
+                issue = row.get("issue")
+                if row.get("title"):
+                    titles[issue] = row["title"]
+                action = row["action"]
+                if action == "flight_left":
+                    attention[issue] = attention.get(issue, 0) + int(row.get("seconds", 0))
+                elif action in ("crew_down", "seat_worked"):
+                    worked[issue] = worked.get(issue, 0) + int(row.get("seconds", 0))
+                elif action == "step_ticked":
+                    ticked.append((issue, row.get("step", "")))
+                elif action == "needs_set":
+                    blocked.append((issue, row.get("step", ""), row.get("needs", "")))
+                elif action == "issue_closed":
+                    closed.append(issue)
+                elif action == "flight_created":
+                    made.append((issue, row.get("title", "")))
+
+            def name(issue):
+                return "#%s %s" % (issue, titles.get(issue, "")).strip()
+
+            print("Since %s" % since.astimezone().strftime("%d %b %H:%M"))
+            if attention:
+                print("")
+                print("Your attention")
+                for issue, seconds in sorted(attention.items(), key=lambda kv: -kv[1]):
+                    print("  %-8s %s" % (spell(seconds), name(issue)))
+            if worked:
+                print("")
+                print("Agents working")
+                for issue, seconds in sorted(worked.items(), key=lambda kv: -kv[1]):
+                    print("  %-8s %s" % (spell(seconds), name(issue)))
+            if ticked:
+                print("")
+                print("Steps ticked")
+                for issue, step in ticked:
+                    print("  #%s  %s" % (issue, step))
+            if blocked:
+                print("")
+                print("Blockers set")
+                for issue, step, needs in blocked:
+                    print("  #%s  %s (needs: %s)" % (issue, step, needs))
+            if made:
+                print("")
+                print("Flights made")
+                for issue, title in made:
+                    print("  #%s  %s" % (issue, title))
+            if closed:
+                print("")
+                print("Closed")
+                for issue in closed:
+                    print("  %s" % name(issue))
+
+
         def cmd_close(args):
             repo = repo_of(args)
             gh(["issue", "close", str(args.number), "--repo", repo])
@@ -502,6 +701,7 @@ extension AgentControl {
             seats = read_deck()
             seats.discard("%s#%s" % (repo, args.number))
             write_deck(seats)
+            note("issue_closed", issue=int(str(args.number).lstrip("#")), repository=repo)
             print("#%s closed" % args.number)
             nudge()
 
@@ -509,6 +709,7 @@ extension AgentControl {
         def cmd_reopen(args):
             repo = repo_of(args)
             gh(["issue", "reopen", str(args.number), "--repo", repo])
+            note("issue_reopened", issue=int(str(args.number).lstrip("#")), repository=repo)
             print("#%s reopened" % args.number)
             nudge()
 
@@ -608,6 +809,12 @@ extension AgentControl {
             priority.add_argument("issue")
             priority.add_argument("level", help="1 to 5, or none")
             priority.set_defaults(run=cmd_priority)
+
+            log = verbs.add_parser("log", help="what Runway saw happen, for a report")
+            log.add_argument("--since", default="today", help="24h, 90m, 3d, today, or a timestamp")
+            log.add_argument("--summary", action="store_true", help="grouped, not line by line")
+            log.add_argument("--json", action="store_true")
+            log.set_defaults(run=cmd_log)
 
             close = verbs.add_parser("close", help="close a flight or a crew")
             close.add_argument("number")

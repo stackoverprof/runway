@@ -14,6 +14,34 @@ enum FlightCrewSessions {
         )
     }
 
+    /// Every seat Runway has handed an id to, so a control file can be read
+    /// back as "the pilot of #17345" rather than a bare uuid.
+    struct Seat {
+        let rank: AgentRank
+        let repository: String
+        let issue: Int
+        let name: String
+    }
+
+    private static var seats: [UUID: Seat] = [:]
+
+    static func remember(
+        _ id: UUID,
+        rank: AgentRank,
+        repository: String,
+        issue: Int,
+        title: String
+    ) {
+        seats[id] = Seat(
+            rank: rank,
+            repository: repository,
+            issue: issue,
+            name: sessionName(rank: rank, repository: repository, issue: issue, title: title)
+        )
+    }
+
+    static func seat(for id: UUID) -> Seat? { seats[id] }
+
     /// What the session calls itself, and what other sessions address it by.
     ///
     /// A pilot takes the flight's own name, the part of its title before the
@@ -66,6 +94,7 @@ enum FlightCrewSessions {
         reportsTo: String?
     ) -> [String: String] {
         let id = boxID(rank: rank, repository: repository, issue: issue)
+        remember(id, rank: rank, repository: repository, issue: issue, title: title)
         var env = AgentControl.environment(
             for: id,
             rank: rank,

@@ -261,6 +261,10 @@ struct RightPane: View {
             .contextMenu { crewMenu(crew) }
 
             crewTerminal(crew)
+                // The same room the pilot's terminal gets, so text never
+                // runs into the box's edge.
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -357,14 +361,14 @@ struct RightPane: View {
 
     private func bringUp(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            deck.bringUp(crewRepositoryName(crew), crew.number)
+            deck.bringUp(crewRepositoryName(crew), crew.number, title: crew.title)
             reading = crew.number
         }
     }
 
     private func standDown(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            deck.standDown(crewRepositoryName(crew), crew.number)
+            deck.standDown(crewRepositoryName(crew), crew.number, title: crew.title)
             // Standing down the one you were reading leaves no one chosen,
             // so the rest go back to equal rather than one being picked for
             // you.

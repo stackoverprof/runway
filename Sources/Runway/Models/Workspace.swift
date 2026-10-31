@@ -317,7 +317,30 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
                   let state = json["state"] as? String else { continue }
             states[id] = AgentState(control: state)
         }
+        noteSeatWork(states)
         if states != agentStates { agentStates = states }
+    }
+
+    /// When each seat started working, so the moment it goes quiet can say
+    /// how long it was at it. This is where a report's "the Sentry crew
+    /// worked 1h12m" comes from.
+    @ObservationIgnored private var workingSince: [UUID: Date] = [:]
+
+    private func noteSeatWork(_ states: [UUID: AgentState]) {
+        for (id, state) in states where state == .running && workingSince[id] == nil {
+            workingSince[id] = Date()
+        }
+        for (id, started) in workingSince where states[id] != .running {
+            workingSince.removeValue(forKey: id)
+            guard let seat = FlightCrewSessions.seat(for: id) else { continue }
+            ActivityLog.seatWorked(
+                rank: seat.rank,
+                issue: seat.issue,
+                repository: seat.repository,
+                name: seat.name,
+                seconds: Int(Date().timeIntervalSince(started))
+            )
+        }
     }
 
     private func load() {

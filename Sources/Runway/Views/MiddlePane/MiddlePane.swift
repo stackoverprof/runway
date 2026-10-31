@@ -59,8 +59,16 @@ struct MiddlePane: View {
             }
         }
         .background(Color.black)
-        .onAppear { keepMounted(ws.flightNumber) }
-        .onChange(of: ws.flightNumber) { _, number in keepMounted(number) }
+        .onAppear {
+            keepMounted(ws.flightNumber)
+            noteOpened(ws.flightNumber)
+        }
+        .onChange(of: ws.flightNumber) { previous, number in
+            keepMounted(number)
+            noteLeft(previous)
+            noteOpened(number)
+        }
+        .onDisappear { noteLeft(ws.flightNumber) }
     }
 
     private var nothingFlying: some View {
@@ -295,6 +303,32 @@ struct MiddlePane: View {
                 .padding(.horizontal, 12)
         }
         }
+    }
+
+    /// When the flight on screen was opened, so leaving it can say how long
+    /// it held your attention.
+    @MainActor private static var openedAt: [Int: Date] = [:]
+
+    private func noteOpened(_ number: Int?) {
+        guard let number, let flight = issues.issue(number) else { return }
+        Self.openedAt[number] = Date()
+        ActivityLog.flightOpened(
+            number,
+            title: flight.title,
+            repository: issues.repository ?? ""
+        )
+    }
+
+    private func noteLeft(_ number: Int?) {
+        guard let number, let since = Self.openedAt.removeValue(forKey: number) else { return }
+        let seconds = Int(Date().timeIntervalSince(since))
+        guard seconds >= 5 else { return }
+        ActivityLog.flightLeft(
+            number,
+            title: issues.issue(number)?.title ?? "",
+            repository: issues.repository ?? "",
+            seconds: seconds
+        )
     }
 
     /// Remember this flight's seats, and let the oldest go once there are
