@@ -179,7 +179,7 @@ struct MiddlePane: View {
                     .frame(height: 22)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(crewTab == seat ? Color.white.opacity(0.08) : .clear)
+                            .fill(crewTab == seat ? Color(white: 0.13) : .clear)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
@@ -372,7 +372,7 @@ struct MiddlePane: View {
                     .foregroundStyle(Color.white.opacity(0.6))
                     .frame(maxWidth: .infinity)
                     .frame(height: 28)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.05)))
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.13)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 7)
                             .stroke(Color.white.opacity(0.1), lineWidth: 1)
@@ -536,7 +536,11 @@ struct MiddlePane: View {
             .frame(height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill((flightClosed ? Runway.green : Runway.purple).opacity(0.1))
+                    .fill(Self.card)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill((flightClosed ? Runway.green : Runway.purple).opacity(0.14))
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
