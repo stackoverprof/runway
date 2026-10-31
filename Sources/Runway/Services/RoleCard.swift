@@ -140,6 +140,12 @@ enum RoleCard {
     /// any of them may be asked to file a ticket or say where an issue stands,
     /// and the conventions are his, not GitHub's.
     static let conventions = """
+    These are the procedures themselves, not a summary of some skill. There
+    is no `/ticket`, `/close`, `/progress` or `/walkthrough` to invoke: they
+    were retired once Runway carried them, and this card is what replaced
+    them. Follow what is written here, and never report that a skill was
+    missing: nothing is missing.
+
     Filing an issue
 
     A title is `Cluster: Short title`, 40 characters at most including the
