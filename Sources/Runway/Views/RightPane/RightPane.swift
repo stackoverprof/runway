@@ -228,10 +228,8 @@ struct RightPane: View {
         let isReading = reading == crew.number
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(crewColour(crew))
-                    .frame(width: 7, height: 7)
-                    .shadow(color: crewColour(crew).opacity(0.7), radius: 4)
+                // The control sits where the dot was, on both kinds of card.
+                activateButton(crew, up: true)
 
                 copyButton(
                     "\(crew.title) \(GitHubNumber.reference(crew.number))",
@@ -250,8 +248,6 @@ struct RightPane: View {
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.4))
                 }
-
-                activateButton(crew, up: true)
             }
             .padding(.horizontal, 11)
             .frame(height: 28)
@@ -343,18 +339,18 @@ struct RightPane: View {
         Button {
             if up { standDown(crew) } else { bringUp(crew) }
         } label: {
-            Image(systemName: up ? "stop.fill" : "play.fill")
-                .font(.system(size: 8.5))
-                .foregroundStyle(up ? Color.white.opacity(0.45) : Runway.green)
-                .frame(width: 20, height: 20)
+            Image(systemName: up ? "pause.fill" : "play.fill")
+                .font(.system(size: 7))
+                .foregroundStyle(up ? Color.white.opacity(0.5) : Runway.green)
+                .frame(width: 15, height: 15)
                 .background(
-                    Circle().fill(up ? Color.white.opacity(0.06) : Runway.green.opacity(0.12))
+                    Circle().fill(up ? Color.white.opacity(0.08) : Runway.green.opacity(0.12))
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
-        .help(up ? "Stand this crew down" : "Bring this crew up")
+        .help(up ? "Pause this crew" : "Bring this crew up")
     }
 
     private func bringUp(_ crew: IssueLeg) {
