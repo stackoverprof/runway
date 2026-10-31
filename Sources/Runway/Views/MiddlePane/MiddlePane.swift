@@ -15,6 +15,8 @@ struct MiddlePane: View {
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
+    /// Flights whose seats stay mounted, oldest first.
+    @State private var visited: [Int] = []
 
     /// The card every part of this pane sits on.
     static let card = Color(white: 0.082)
@@ -57,6 +59,8 @@ struct MiddlePane: View {
             }
         }
         .background(Color.black)
+        .onAppear { keepMounted(ws.flightNumber) }
+        .onChange(of: ws.flightNumber) { _, number in keepMounted(number) }
     }
 
     private var nothingFlying: some View {
@@ -241,21 +245,35 @@ struct MiddlePane: View {
         }
     }
 
+    /// Every flight you have opened keeps its seats on screen, hidden.
+    ///
+    /// Leaving a flight must not take its terminals out of the view
+    /// hierarchy. Holding the session alive while SwiftUI tore the view down
+    /// and built a new one meant re-attaching a libghostty surface through
+    /// that cycle, which wedged the app when you left one mid-start and came
+    /// back. So nothing is ever unmounted: a flight you leave only goes to
+    /// zero opacity, exactly as the copilot seat always has.
+    private static let flightsKeptMounted = 5
+
     private var terminalArea: some View {
         Group {
-        if let flight, let repository = issues.repository {
-            // Both seats stay mounted, so switching back finds the
-            // conversation where you left it rather than starting one.
+        if let repository = issues.repository, !visited.isEmpty {
             ZStack {
-                ForEach(PilotSeat.allCases) { seat in
-                    seatTerminal(seat, flight: flight, repository: repository)
-                        // Room to breathe for the one terminal you read most.
-                        // Here rather than in the shared terminal theme, so a
-                        // crew box and the ATC panel keep their tight fit.
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .opacity(crewTab == seat ? 1 : 0)
-                        .allowsHitTesting(crewTab == seat)
+                ForEach(visited, id: \.self) { number in
+                    if let seen = issues.issue(number) {
+                        let showing = number == ws.flightNumber
+                        ForEach(PilotSeat.allCases) { seat in
+                            seatTerminal(seat, flight: seen, repository: repository)
+                                // Room to breathe for the one terminal you
+                                // read most. Here rather than in the shared
+                                // terminal theme, so a crew box and the ATC
+                                // panel keep their tight fit.
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 7)
+                                .opacity(showing && crewTab == seat ? 1 : 0)
+                                .allowsHitTesting(showing && crewTab == seat)
+                        }
+                    }
                 }
             }
             .background(Color.black)
@@ -267,6 +285,33 @@ struct MiddlePane: View {
                 .fill(Color.black)
                 .padding(.horizontal, 12)
         }
+        }
+    }
+
+    /// Remember this flight's seats, and let the oldest go once there are
+    /// more than the pane keeps. A flight whose agent is mid-turn, or waiting
+    /// on you, is never the one dropped.
+    private func keepMounted(_ number: Int?) {
+        guard let number else { return }
+        if let already = visited.firstIndex(of: number) {
+            visited.remove(at: already)
+        }
+        visited.append(number)
+        while visited.count > Self.flightsKeptMounted {
+            let droppable = visited.dropLast().first { candidate in
+                guard let repository = issues.repository else { return true }
+                return !PilotSeat.allCases.contains { seat in
+                    TerminalSessionPool.isBusy(
+                        FlightCrewSessions.boxID(
+                            rank: seat == .pilot ? .pilot : .copilot,
+                            repository: repository,
+                            issue: candidate
+                        )
+                    )
+                }
+            }
+            guard let going = droppable, let at = visited.firstIndex(of: going) else { break }
+            visited.remove(at: at)
         }
     }
 
