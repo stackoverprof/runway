@@ -161,8 +161,9 @@ extension AgentControl {
 
         def cmd_show(args):
             if not args.number:
-                sys.exit("runway: which flight? Pass a number.")
-            flight = fetch_one(repo_of(args), args.number)
+                sys.exit("runway: which flight? Pass a name or a number.")
+            repo = repo_of(args)
+            flight = fetch_one(repo, resolve_flight(repo, args.number))
             if args.json:
                 print(json.dumps(flight, indent=2))
                 return
@@ -281,6 +282,7 @@ extension AgentControl {
             # Standing a crew up is the same act whoever does it: the pane and
             # the agents share one deck file.
             repo = repo_of(args)
+            args.issue = resolve_flight(repo, args.issue)
             seats = read_deck()
             seats.add("%s#%s" % (repo, args.issue))
             write_deck(seats)
@@ -291,6 +293,7 @@ extension AgentControl {
 
         def cmd_crew_down(args):
             repo = repo_of(args)
+            args.issue = resolve_flight(repo, args.issue)
             seats = read_deck()
             seats.discard("%s#%s" % (repo, args.issue))
             write_deck(seats)
@@ -322,6 +325,34 @@ extension AgentControl {
             query = "repo:%s assignee:@me is:issue state:open sort:updated-desc" % repo
             found = graphql(SEARCH_QUERY, q=query)["search"]["nodes"]
             return [issue for issue in found if issue and not issue.get("parent")]
+
+
+        def resolve_flight(repo, said):
+            # A flight has a name, and the name is what Erbin says: "teya",
+            # "saffran", "tap to pay". Making an agent look the number up
+            # first is three commands where there should be one.
+            said = str(said).strip()
+            if said.lstrip("#").isdigit():
+                return int(said.lstrip("#"))
+            wanted = said.lower().replace("&", "and")
+
+            def tidy(title):
+                return title.lower().replace("&", "and")
+
+            flights = flights_of(repo)
+            exact = [f for f in flights if tidy(f["title"]) == wanted]
+            starts = [f for f in flights if tidy(f["title"]).startswith(wanted)]
+            loose = [f for f in flights if wanted in tidy(f["title"])]
+            for found in (exact, starts, loose):
+                if len(found) == 1:
+                    return found[0]["number"]
+            candidates = exact or starts or loose
+            if not candidates:
+                sys.exit("runway: no flight called %r in %s" % (said, repo))
+            sys.exit(
+                "runway: %r matches %s"
+                % (said, ", ".join("#%s %s" % (f["number"], f["title"]) for f in candidates))
+            )
 
 
         def cmd_order(args):
@@ -358,26 +389,43 @@ extension AgentControl {
             nudge()
 
 
+        def looks_like_level(said):
+            said = str(said).strip().lower()
+            if said in ("none", "clear", "-"):
+                return True
+            bare = said.lstrip("p")
+            return bare.isdigit() and 1 <= int(bare) <= 5
+
+
         def cmd_priority(args):
+            # Both ways round, because both are natural to say:
+            #   runway priority teya 2
+            #   runway priority p2 teya saffran flatey
             repo = repo_of(args)
+            words = [args.issue] + list(args.rest)
+            if looks_like_level(words[0]) and len(words) > 1:
+                said, names = str(words[0]).lower(), words[1:]
+            else:
+                said, names = str(words[-1]).lower(), words[:-1]
+            if not looks_like_level(said) or not names:
+                sys.exit("runway: say a flight and a level, e.g. runway priority teya 2")
+
             board = read_board()
             entry = board.get(repo, {})
             priority = entry.get("priority", {})
-            said = str(args.level).lower()
-            number = str(int(str(args.issue).lstrip("#")))
-            if said in ("none", "clear", "-"):
-                priority.pop(number, None)
-                print("#%s has no priority" % number)
-            else:
-                level = int(said.lstrip("p"))
-                if level < 1 or level > 5:
-                    sys.exit("runway: priority is P1 to P5")
-                priority[number] = level
-                print("#%s is P%d" % (number, level))
+            for name in names:
+                number = str(resolve_flight(repo, name))
+                if said in ("none", "clear", "-"):
+                    priority.pop(number, None)
+                    print("#%s has no priority" % number)
+                else:
+                    priority[number] = int(said.lstrip("p"))
+                    print("#%s is P%d" % (number, priority[number]))
+                note("priority_set", issue=int(number), repository=repo,
+                     priority=priority.get(number))
             entry["priority"] = priority
             board[repo] = entry
             write_board(board)
-            note("priority_set", issue=int(number), repository=repo, priority=priority.get(number))
             nudge()
 
 
@@ -729,6 +777,7 @@ extension AgentControl {
 
         def cmd_close(args):
             repo = repo_of(args)
+            args.number = resolve_flight(repo, args.number)
             gh(["issue", "close", str(args.number), "--repo", repo])
             # A closed crew leaves the pane, so it leaves the deck with it.
             seats = read_deck()
@@ -845,9 +894,11 @@ extension AgentControl {
             )
             order.set_defaults(run=cmd_order)
 
-            priority = verbs.add_parser("priority", help="set a flight's priority, P1 to P5")
-            priority.add_argument("issue")
-            priority.add_argument("level", help="1 to 5, or none")
+            priority = verbs.add_parser(
+                "priority", help="a flight's priority, P1 to P5, by name or number"
+            )
+            priority.add_argument("issue", help="a flight, or the level")
+            priority.add_argument("rest", nargs="+", help="more flights, or the level")
             priority.set_defaults(run=cmd_priority)
 
             log = verbs.add_parser("log", help="what Runway saw happen, for a report")
