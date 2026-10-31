@@ -261,6 +261,86 @@ extension AgentControl {
             nudge()
 
 
+        BOARD = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "board.json",
+        )
+
+
+        def read_board():
+            try:
+                with open(BOARD) as handle:
+                    return json.load(handle)
+            except Exception:
+                return {}
+
+
+        def write_board(board):
+            with open(BOARD, "w") as handle:
+                json.dump(board, handle, indent=2)
+
+
+        def flights_of(repo):
+            query = "repo:%s assignee:@me is:issue state:open sort:updated-desc" % repo
+            found = graphql(SEARCH_QUERY, q=query)["search"]["nodes"]
+            return [issue for issue in found if issue and not issue.get("parent")]
+
+
+        def cmd_order(args):
+            # The board's order is Erbin's own, so an agent only ever rewrites
+            # it wholesale: either the numbers given, or a sort it can explain.
+            repo = repo_of(args)
+            board = read_board()
+            entry = board.get(repo, {})
+            if args.numbers:
+                order = [int(n.lstrip("#")) for n in args.numbers]
+            else:
+                flights = flights_of(repo)
+                priority = entry.get("priority", {})
+                if args.by == "priority":
+                    flights.sort(
+                        key=lambda f: (priority.get(str(f["number"]), 9), -f["number"])
+                    )
+                elif args.by == "title":
+                    flights.sort(key=lambda f: f["title"].lower())
+                elif args.by == "newest":
+                    flights.sort(key=lambda f: -f["number"])
+                elif args.by == "oldest":
+                    flights.sort(key=lambda f: f["number"])
+                else:
+                    sys.exit("runway: sort by priority, title, newest or oldest")
+                order = [f["number"] for f in flights]
+            entry["order"] = order
+            board[repo] = entry
+            write_board(board)
+            print("Board order set, %d flights" % len(order))
+            for number in order:
+                print("  #%s" % number)
+            nudge()
+
+
+        def cmd_priority(args):
+            repo = repo_of(args)
+            board = read_board()
+            entry = board.get(repo, {})
+            priority = entry.get("priority", {})
+            said = str(args.level).lower()
+            number = str(int(str(args.issue).lstrip("#")))
+            if said in ("none", "clear", "-"):
+                priority.pop(number, None)
+                print("#%s has no priority" % number)
+            else:
+                level = int(said.lstrip("p"))
+                if level < 1 or level > 5:
+                    sys.exit("runway: priority is P1 to P5")
+                priority[number] = level
+                print("#%s is P%d" % (number, level))
+            entry["priority"] = priority
+            board[repo] = entry
+            write_board(board)
+            nudge()
+
+
         def cmd_crew_release(args):
             repo = repo_of(args)
             flight = args.flight or FLIGHT
@@ -516,6 +596,18 @@ extension AgentControl {
             progress_set = progress_verbs.add_parser("set", help="rewrite the whole checklist from stdin")
             progress_set.add_argument("--flight", default="")
             progress_set.set_defaults(run=cmd_progress_set)
+
+            order = verbs.add_parser("order", help="the order flights sit in on the board")
+            order.add_argument("numbers", nargs="*", help="issue numbers, top first")
+            order.add_argument(
+                "--by", default="", help="priority, title, newest or oldest"
+            )
+            order.set_defaults(run=cmd_order)
+
+            priority = verbs.add_parser("priority", help="set a flight's priority, P1 to P5")
+            priority.add_argument("issue")
+            priority.add_argument("level", help="1 to 5, or none")
+            priority.set_defaults(run=cmd_priority)
 
             close = verbs.add_parser("close", help="close a flight or a crew")
             close.add_argument("number")

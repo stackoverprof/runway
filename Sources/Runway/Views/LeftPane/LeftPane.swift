@@ -25,6 +25,8 @@ struct LeftPane: View {
     @State private var prSearchVisible = false
     @State private var prSearchQuery = ""
     @State private var expandedPRAuthor: String?
+    /// The flight being dragged to a new place in the lane.
+    @State private var dragging: Int?
     /// Stacks fanned out, by their bottom PR.
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
@@ -502,20 +504,51 @@ struct LeftPane: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 
+    /// One card. In the open lane it can be dragged to a new place.
+    @ViewBuilder
+    private func issueCard(
+        _ issue: AssignedIssue,
+        lane: RunwayIssueTab,
+        among numbers: [Int]
+    ) -> some View {
+        let card = AssignedIssueCard(
+            issue: issue,
+            repository: issueRepositoryName,
+            isFlying: ws.flightNumber == issue.number,
+            onSetClosed: { closed in
+                Task { await assignedIssues.setClosed(closed, issue: issue.number) }
+            }
+        )
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) { ws.flightNumber = issue.number }
+        }
+        .opacity(dragging == issue.number ? 0.35 : 1)
+
+        if lane == .open {
+            card
+                .onDrag {
+                    dragging = issue.number
+                    return NSItemProvider(object: String(issue.number) as NSString)
+                }
+                .onDrop(
+                    of: [.text],
+                    delegate: FlightReorderDrop(
+                        over: issue.number,
+                        lane: numbers,
+                        repository: assignedIssues.repository ?? "",
+                        dragging: $dragging
+                    )
+                )
+        } else {
+            card
+        }
+    }
+
     private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 ForEach(issues) { issue in
-                    AssignedIssueCard(
-                        issue: issue,
-                        repository: issueRepositoryName,
-                        isFlying: ws.flightNumber == issue.number
-                    )
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            ws.flightNumber = issue.number
-                        }
-                    }
+                    issueCard(issue, lane: lane, among: issues.map(\.number))
                 }
             }
             .padding(.horizontal, 16)
@@ -1346,3 +1379,35 @@ enum PRStackItem: Identifiable {
 }
 
 
+
+
+/// Dropping one flight onto another puts it in that place, and the board
+/// keeps the arrangement.
+private struct FlightReorderDrop: DropDelegate {
+    let over: Int
+    let lane: [Int]
+    let repository: String
+    @Binding var dragging: Int?
+
+    func dropEntered(info: DropInfo) {
+        guard let moving = dragging, moving != over, !repository.isEmpty else { return }
+        guard let from = lane.firstIndex(of: moving), let to = lane.firstIndex(of: over) else {
+            return
+        }
+        var next = lane
+        next.remove(at: from)
+        next.insert(moving, at: to)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            FlightBoard.shared.setOrder(next, in: repository)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+}

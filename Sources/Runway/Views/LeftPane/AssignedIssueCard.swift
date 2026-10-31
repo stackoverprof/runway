@@ -7,18 +7,45 @@ struct AssignedIssueCard: View {
     let repository: String
     /// True when this is the issue the other two panes are answering for.
     var isFlying = false
+    /// Open or close the issue from the card. Absent means no state menu.
+    var onSetClosed: ((Bool) -> Void)?
     @State private var hovering = false
+    private let board = FlightBoard.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
-                statusIcon
+                if let onSetClosed {
+                    Menu {
+                        Button {
+                            onSetClosed(false)
+                        } label: {
+                            Label("Open", systemImage: "circle")
+                        }
+                        Button {
+                            onSetClosed(true)
+                        } label: {
+                            Label("Closed", systemImage: "checkmark.circle")
+                        }
+                    } label: {
+                        statusIcon.contentShape(Circle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .pointerCursor()
+                    .help("Open or close this issue")
+                } else {
+                    statusIcon
+                }
                 Text(verbatim: "\(repository) \(GitHubNumber.reference(issue.number))")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Color.white.opacity(0.52))
                     .lineLimit(1)
 
                 Spacer(minLength: 6)
+
+                priorityBadge
 
                 // How the flight is doing, in the card's top corner, clear of
                 // the name however long the name runs.
@@ -72,14 +99,67 @@ struct AssignedIssueCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onHover { hovering = $0 }
         .contextMenu {
-            Button("Copy issue link") { copyIssueLink() }
+            Button("Copy issue name") { copy("\(issue.title) \(GitHubNumber.reference(issue.number))") }
+            Button("Copy issue number") { copy(GitHubNumber.reference(issue.number)) }
+            Button("Copy issue link") { copy(issue.url.absoluteString) }
             Button("Open link") { NSWorkspace.shared.open(issue.url) }
+            if let onSetClosed {
+                Divider()
+                Button(issue.isClosed ? "Reopen issue" : "Close issue") {
+                    onSetClosed(!issue.isClosed)
+                }
+            }
+            Divider()
+            Menu("Priority") {
+                ForEach(FlightPriority.all, id: \.self) { level in
+                    Button(FlightPriority.label(level)) {
+                        board.setPriority(level, for: issue.number, in: repository)
+                    }
+                }
+                Divider()
+                Button("None") { board.setPriority(nil, for: issue.number, in: repository) }
+            }
         }
     }
 
-    private func copyIssueLink() {
+    /// P1 to P5, red through blue, set from the badge itself.
+    private var priorityBadge: some View {
+        let level = board.priority(issue.number, in: repository)
+        return Menu {
+            ForEach(FlightPriority.all, id: \.self) { choice in
+                Button(FlightPriority.label(choice)) {
+                    board.setPriority(choice, for: issue.number, in: repository)
+                }
+            }
+            Divider()
+            Button("None") { board.setPriority(nil, for: issue.number, in: repository) }
+        } label: {
+            Text(level.map(FlightPriority.label) ?? "P–")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(
+                    level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.28)
+                )
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule().fill(
+                        (level.map { FlightPriority.color($0) } ?? Color.white)
+                            .opacity(level == nil ? 0.05 : 0.14)
+                    )
+                )
+                .fixedSize()
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .pointerCursor()
+        .help("Set this flight's priority")
+        .opacity(level == nil && !hovering ? 0 : 1)
+    }
+
+    private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(issue.url.absoluteString, forType: .string)
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     private var statusIcon: some View {

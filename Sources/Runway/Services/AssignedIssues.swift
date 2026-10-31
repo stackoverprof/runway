@@ -113,9 +113,12 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
 
     /// The flights, newest first. A crew belongs to its flight's pane, not
     /// to this list, so an issue with a parent is left out of both.
+    /// Flights in the order you arranged them on the board, with any you have
+    /// not placed yet at the top, newest first.
     var open: [AssignedIssue] {
-        issues.filter { !$0.isClosed && $0.parent == nil }
-            .sorted { $0.number > $1.number }
+        let flights = issues.filter { !$0.isClosed && $0.parent == nil }
+        guard let repository else { return flights.sorted { $0.number > $1.number } }
+        return FlightBoard.shared.ordered(flights, in: repository)
     }
 
     var closed: [AssignedIssue] {
