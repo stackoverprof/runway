@@ -183,6 +183,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
 
     private func pollControlFiles() {
         pollSeatStates()
+        // An agent standing a crew up writes the deck; this is how it lands.
+        CrewDeck.shared.reload()
         let roots = QuickTerminalSession.tabRoots()
         var states: [String: AgentState] = [:]
         for root in roots {

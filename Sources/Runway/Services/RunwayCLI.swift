@@ -222,6 +222,45 @@ extension AgentControl {
             nudge()
 
 
+        DECK = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "crew-deck.json",
+        )
+
+
+        def read_deck():
+            try:
+                with open(DECK) as handle:
+                    return set(json.load(handle).get("up", []))
+            except Exception:
+                return set()
+
+
+        def write_deck(seats):
+            with open(DECK, "w") as handle:
+                json.dump({"up": sorted(seats)}, handle, indent=2)
+
+
+        def cmd_crew_up(args):
+            # Standing a crew up is the same act whoever does it: the pane and
+            # the agents share one deck file.
+            repo = repo_of(args)
+            seats = read_deck()
+            seats.add("%s#%s" % (repo, args.issue))
+            write_deck(seats)
+            print("Crew #%s is up" % args.issue)
+            nudge()
+
+
+        def cmd_crew_down(args):
+            repo = repo_of(args)
+            seats = read_deck()
+            seats.discard("%s#%s" % (repo, args.issue))
+            write_deck(seats)
+            print("Crew #%s stood down" % args.issue)
+            nudge()
+
+
         def cmd_crew_release(args):
             repo = repo_of(args)
             flight = args.flight or FLIGHT
@@ -379,6 +418,10 @@ extension AgentControl {
         def cmd_close(args):
             repo = repo_of(args)
             gh(["issue", "close", str(args.number), "--repo", repo])
+            # A closed crew leaves the pane, so it leaves the deck with it.
+            seats = read_deck()
+            seats.discard("%s#%s" % (repo, args.number))
+            write_deck(seats)
             print("#%s closed" % args.number)
             nudge()
 
@@ -432,6 +475,13 @@ extension AgentControl {
             crew_adopt.add_argument("issue")
             crew_adopt.add_argument("--flight", default="")
             crew_adopt.set_defaults(run=cmd_crew_adopt)
+            crew_up = crew_verbs.add_parser("up", help="bring a crew up: open its terminal")
+            crew_up.add_argument("issue")
+            crew_up.set_defaults(run=cmd_crew_up)
+            crew_down = crew_verbs.add_parser("down", help="stand a crew down to its card")
+            crew_down.add_argument("issue")
+            crew_down.set_defaults(run=cmd_crew_down)
+
             crew_release = crew_verbs.add_parser("release", help="let a crew go, without closing it")
             crew_release.add_argument("issue")
             crew_release.add_argument("--flight", default="")

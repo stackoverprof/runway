@@ -12,12 +12,22 @@ import SwiftUI
 struct RightPane: View {
     @Bindable var ws: Workspace
     @Bindable var issues: AssignedIssues
-    /// Which crews are up, and which one you are reading.
-    @State private var active: Set<Int> = []
+    /// Which crews are up is shared with the agents, so a pilot can stand one
+    /// up as well as you can. Which one you are reading is yours alone.
+    private let deck = CrewDeck.shared
     @State private var reading: Int?
 
     private var crews: [IssueLeg] {
         (issues.issue(ws.flightNumber)?.legs ?? []).filter { !$0.isClosed }
+    }
+
+    /// Where a crew's issue lives, which is how the deck names its seat.
+    private func crewRepositoryName(_ crew: IssueLeg) -> String {
+        crew.repository ?? issues.repository ?? ""
+    }
+
+    private func isUp(_ crew: IssueLeg) -> Bool {
+        deck.isUp(crewRepositoryName(crew), crew.number)
     }
 
     var body: some View {
@@ -25,7 +35,7 @@ struct RightPane: View {
         // the crews that are up divide every point that is left.
         CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
             ForEach(crews) { crew in
-                if active.contains(crew.number) {
+                if isUp(crew) {
                     activeBox(crew)
                         .layoutValue(
                             key: CrewShareKey.self,
@@ -231,16 +241,16 @@ struct RightPane: View {
 
     private func bringUp(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            active.insert(crew.number)
+            deck.bringUp(crewRepositoryName(crew), crew.number)
             reading = crew.number
         }
     }
 
     private func standDown(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            active.remove(crew.number)
+            deck.standDown(crewRepositoryName(crew), crew.number)
             if reading == crew.number {
-                reading = crews.first { active.contains($0.number) }?.number
+                reading = crews.first { isUp($0) }?.number
             }
         }
     }
