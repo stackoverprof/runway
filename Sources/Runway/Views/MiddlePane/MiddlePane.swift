@@ -47,7 +47,9 @@ struct MiddlePane: View {
                 RoundedRectangle(cornerRadius: 13)
                     .stroke(Color.white.opacity(0.07), lineWidth: 1)
             )
-            .padding(8)
+            // The same room the crew cards get in the right pane, so the
+            // three panes breathe alike.
+            .padding(14)
             }
         }
         .background(Color.black)
