@@ -123,7 +123,7 @@ struct TerminalSurfaceView: View {
     }
 
     var body: some View {
-        GhosttyTerminalRepresentable(session: session, configuration: .default)
+        PooledTerminal(session: session)
             .onAppear {
                 TerminalSessionPool.shared.mounted(boxID)
                 applyRunwayTheme(to: session)
@@ -421,4 +421,46 @@ private func uniqueDropDestination(_ url: URL) -> URL {
         if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
     }
     return url
+}
+
+
+/// Hands a pooled terminal's view from one place on screen to another.
+///
+/// GhosttyKit's own representable builds a fresh view every time SwiftUI
+/// mounts it, which is what made leaving a flight expensive: the surface was
+/// torn down and rebuilt, and with several alive the main thread sat in
+/// `waitUntilCompleted` for seconds. A terminal's view is made once and then
+/// only ever reparented, so exactly one surface is in the window per seat and
+/// leaving a flight costs nothing.
+@MainActor
+private struct PooledTerminal: NSViewRepresentable {
+    let session: GhosttyTerminalSession
+
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = RunwayTerminal.bodyNSColor.cgColor
+        attach(to: container)
+        return container
+    }
+
+    func updateNSView(_ container: NSView, context: Context) {
+        attach(to: container)
+    }
+
+    /// Put the session's one view inside this container, making it the first
+    /// time and moving it every time after.
+    private func attach(to container: NSView) {
+        let terminal = session.view ?? session.makeView(configuration: .default)
+        guard terminal.superview !== container else { return }
+        terminal.removeFromSuperview()
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(terminal)
+        NSLayoutConstraint.activate([
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: container.topAnchor),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
 }

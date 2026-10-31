@@ -269,7 +269,10 @@ struct MiddlePane: View {
     /// that cycle, which wedged the app when you left one mid-start and came
     /// back. So nothing is ever unmounted: a flight you leave only goes to
     /// zero opacity, exactly as the copilot seat always has.
-    private static let flightsKeptMounted = 5
+    /// One flight on screen at a time. Its seats' views are reparented, not
+    /// rebuilt, so leaving a flight neither kills the agent nor leaves a
+    /// second Metal surface drawing behind it.
+    private static let flightsKeptMounted = 1
 
     /// The flight on screen plus the ones left mounted behind it. Computed
     /// rather than read from state, so the flight you are on is mounted on
