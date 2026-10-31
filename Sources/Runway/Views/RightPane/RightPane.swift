@@ -35,8 +35,11 @@ struct RightPane: View {
     /// the bottom: they are one line each and nothing is waiting on them, so
     /// leaving one between two live crews only breaks the reading.
     private var crews: [IssueLeg] {
-        let legs = issues.issue(ws.flightNumber)?.legs ?? []
-        return legs.filter { !$0.isClosed } + legs.filter(\.isClosed)
+        let flight = issues.issue(ws.flightNumber)
+        return CrewOrder.sorted(
+            flight?.legs ?? [],
+            by: IssueBody.steps("Progress", in: flight?.body ?? "")
+        )
     }
 
     /// Where a crew's issue lives, which is how the deck names its seat.
