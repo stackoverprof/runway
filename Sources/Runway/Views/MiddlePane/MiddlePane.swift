@@ -547,16 +547,31 @@ struct MiddlePane: View {
             // No bar, no line: the strip floats, and what scrolls under it
             // fades into the card rather than being cut off by an edge.
             .background(
-                LinearGradient(
-                    colors: [
-                        Self.card.opacity(0),
-                        Self.card.opacity(0.75),
-                        Self.card,
-                        Self.card,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                ZStack {
+                    LinearGradient(
+                        colors: [
+                            Self.card.opacity(0),
+                            Self.card.opacity(0.75),
+                            Self.card,
+                            Self.card,
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    // The foot wears the flight's state the way the head
+                    // does, so the card is bracketed in its own colour
+                    // rather than coloured at one end and grey at the other.
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            flightStatus.color.opacity(0.07),
+                            flightStatus.color.opacity(0.20),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .allowsHitTesting(false)
             )
         }
     }
