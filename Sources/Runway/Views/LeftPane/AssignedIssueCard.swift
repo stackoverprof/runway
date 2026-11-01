@@ -75,13 +75,21 @@ struct AssignedIssueCard: View {
         static let ink = Color(red: 0.945, green: 0.945, blue: 0.933)    // #f1f1ee
         static let muted = Color(red: 0.541, green: 0.549, blue: 0.565)  // #8a8c90
         static let faint = Color(red: 0.333, green: 0.341, blue: 0.357)  // #55575b
+        /// The miles count, pitched to the bar it sits on rather than the title.
+        static let mile = Color(red: 0.416, green: 0.424, blue: 0.439)   // #6a6c70
     }
 
     private var paper: Color {
         isFlying ? Paper.flying : (hovering ? Paper.hover : Paper.base)
     }
 
-    /// The split-flap board: one tile a digit, with the fold line across it.
+    /// The split-flap board: one tile a digit.
+    ///
+    /// The seam is not a drawn line. Each tile's own face darkens into the
+    /// middle and back out, and a second gradient lies over the digit as
+    /// well, so the number reads as curving into the fold the way an open
+    /// book's gutter does. A 1-point black rule did the same job at a
+    /// distance and looked like a scratch up close.
     private var flaps: some View {
         HStack(spacing: 2) {
             ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
@@ -90,13 +98,38 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Paper.ink)
                     .frame(width: 13)
                     .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 2.5).fill(Paper.tile))
-                    .overlay(Rectangle().fill(Color.black).frame(height: 1))
+                    .background(Self.flapFace)
+                    .overlay(Self.flapFold)
+                    .clipShape(RoundedRectangle(cornerRadius: 2.5))
             }
         }
         .padding(.leading, 11)
         .padding(.vertical, 11)
     }
+
+    /// The tile's own face: light at the edges, nearly black at the seam.
+    private static let flapFace = LinearGradient(
+        stops: [
+            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 0),    // #1d1e21
+            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.46), // #121315
+            .init(color: Color(red: 0.031, green: 0.035, blue: 0.039), location: 0.50), // #08090a
+            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.54),
+            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 1),
+        ],
+        startPoint: .top, endPoint: .bottom
+    )
+
+    /// The same shadow again, this time over the digit.
+    private static let flapFold = LinearGradient(
+        stops: [
+            .init(color: .clear, location: 0.28),
+            .init(color: .black.opacity(0.5), location: 0.47),
+            .init(color: .black.opacity(0.7), location: 0.50),
+            .init(color: .black.opacity(0.5), location: 0.53),
+            .init(color: .clear, location: 0.72),
+        ],
+        startPoint: .top, endPoint: .bottom
+    )
 
     private var destination: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -168,21 +201,22 @@ struct AssignedIssueCard: View {
 
             // One fixed slot, whatever it holds, so every card is the same
             // height whether it is flying or standing.
-            VStack(spacing: 3) {
+            VStack(spacing: 0) {
                 switch status {
                 case .scheduled:
                     Image(systemName: "airplane.departure")
-                        .font(.system(size: 14))
+                        .font(.system(size: 11))
                         .foregroundStyle(stubColour)
                 case .landed:
                     Image(systemName: "airplane.arrival")
-                        .font(.system(size: 14))
+                        .font(.system(size: 11))
                         .foregroundStyle(stubColour)
                 case .onAir:
                     Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Paper.ink)
-                    mileBar(flown).padding(.top, 1)
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(Paper.mile)
+                    mileBar(flown).padding(.top, 2)
                 }
             }
             .frame(height: 24)
