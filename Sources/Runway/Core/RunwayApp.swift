@@ -44,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the whole app to Dark once, before any window exists.
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
+        // Rendering the cards to a file and quitting, rather than running.
+        if let path = CardSnapshot.wanted { CardSnapshot.writeAndExit(to: path) }
         // `runway://` links arrive as a GetURL Apple event. Handling it here,
         // rather than through SwiftUI's scene routing, keeps a link from opening
         // a second window or activating the app.

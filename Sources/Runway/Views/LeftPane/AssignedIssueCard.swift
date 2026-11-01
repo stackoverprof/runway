@@ -27,12 +27,10 @@ struct AssignedIssueCard: View {
         .background(
             TicketShape(stub: Self.stubWidth).fill(paper, style: FillStyle(eoFill: true))
         )
-        // The border follows the card, not the notches: stroking the holes
-        // as well drew a ring around each one, which read as a button.
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(isFlying ? 0.16 : (hovering ? 0.10 : 0.05)), lineWidth: 1)
-        )
+        // No border at all, the way the sheet draws it. A hairline looks
+        // harmless until it runs through the notches: it closes the bite
+        // back up and the pair at a card join reads as a bead on a string.
+        // The flight on screen is told apart by its lighter paper instead.
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
         .offset(y: hovering ? -1 : 0)
@@ -65,7 +63,7 @@ struct AssignedIssueCard: View {
     // MARK: The ticket
 
     private static let stubWidth: CGFloat = 96
-    private static let notch: CGFloat = 5
+    private static let notch: CGFloat = 3.5
 
     /// The sheet's own palette. Named here so the card reads as the design
     /// and not as a pile of literals.
@@ -148,7 +146,7 @@ struct AssignedIssueCard: View {
                 path.move(to: CGPoint(x: x, y: Self.notch + 5))
                 path.addLine(to: CGPoint(x: x, y: geo.size.height - Self.notch - 5))
             }
-            .stroke(Paper.line, style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
+            .stroke(Paper.line.opacity(0.9), style: StrokeStyle(lineWidth: 1, dash: [2.5, 3]))
         }
         .allowsHitTesting(false)
     }
@@ -225,35 +223,20 @@ struct AssignedIssueCard: View {
         .frame(width: width, alignment: .leading)
     }
 
-    /// The gate class: "Class P1", only the tier in its own colour, and the
-    /// whole thing is the menu that sets it.
+    /// The gate class: "Class P1", only the tier in its own colour. Setting
+    /// it is the right-click menu's job; this line is type, not a control,
+    /// because the sheet draws it as part of the sentence under the title.
     private var priorityBadge: some View {
         let level = board.priority(issue.number, in: boardKey)
-        return Menu {
-            ForEach(FlightPriority.all, id: \.self) { choice in
-                Button(FlightPriority.label(choice)) {
-                    board.setPriority(choice, for: issue.number, in: boardKey)
-                }
-            }
-            Divider()
-            Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
-        } label: {
-            HStack(spacing: 3) {
-                Text("Class")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Paper.muted)
-                Text(level.map(FlightPriority.label) ?? "P–")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
-            }
-            .fixedSize()
+        return HStack(spacing: 4) {
+            Text("Class")
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Paper.muted)
+            Text(level.map(FlightPriority.label) ?? "P–")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
-        .pointerCursor()
-        .help("Set this flight's priority")
-        .opacity(level == nil && !hovering ? 0.45 : 1)
     }
 
     private func copy(_ value: String) {
@@ -267,7 +250,7 @@ struct AssignedIssueCard: View {
 /// stub tears off. Filled even-odd so the notches are holes, not circles.
 struct TicketShape: Shape {
     let stub: CGFloat
-    var notch: CGFloat = 5
+    var notch: CGFloat = 3.5
 
     func path(in rect: CGRect) -> Path {
         var path = Path(roundedRect: rect, cornerRadius: 8)
