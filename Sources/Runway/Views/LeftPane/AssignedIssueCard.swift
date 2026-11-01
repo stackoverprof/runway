@@ -63,7 +63,7 @@ struct AssignedIssueCard: View {
     // MARK: The ticket
 
     private static let stubWidth: CGFloat = 96
-    private static let notch: CGFloat = 3.5
+    private static let notch: CGFloat = 2
 
     /// The sheet's own palette. Named here so the card reads as the design
     /// and not as a pile of literals.
@@ -246,20 +246,34 @@ struct AssignedIssueCard: View {
 
 }
 
-/// A boarding pass: rounded, with two notches bitten out of it where the
-/// stub tears off. Filled even-odd so the notches are holes, not circles.
+/// A boarding pass: rounded, with a nick taken out of each edge where the
+/// stub tears off. Filled even-odd so the nicks are holes, not circles.
+///
+/// The nick is shallow on purpose. A half-circle bite meets the next card's
+/// bite across the 10-point gap, and the pair reads as a dark bead threaded
+/// on the list rather than as a perforation. Pushing the circle most of the
+/// way out of the card leaves a scallop a couple of points deep, which is
+/// all the eye needs to know the stub tears off.
 struct TicketShape: Shape {
     let stub: CGFloat
-    var notch: CGFloat = 3.5
+    var notch: CGFloat = 4.5
+    /// How much of the circle stays inside the card.
+    var depth: CGFloat = 2
 
     func path(in rect: CGRect) -> Path {
         var path = Path(roundedRect: rect, cornerRadius: 8)
         let x = rect.maxX - stub
         path.addEllipse(in: CGRect(
-            x: x - notch, y: rect.minY - notch, width: notch * 2, height: notch * 2
+            x: x - notch,
+            y: rect.minY + depth - notch * 2,
+            width: notch * 2,
+            height: notch * 2
         ))
         path.addEllipse(in: CGRect(
-            x: x - notch, y: rect.maxY - notch, width: notch * 2, height: notch * 2
+            x: x - notch,
+            y: rect.maxY - depth,
+            width: notch * 2,
+            height: notch * 2
         ))
         return path
     }
