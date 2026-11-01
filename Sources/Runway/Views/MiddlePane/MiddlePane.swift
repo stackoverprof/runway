@@ -503,11 +503,12 @@ struct MiddlePane: View {
             }
         }
         .padding(2)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(white: 0.11))
-        )
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        // Frosted, not solid: the strip floats over the card's own colour
+        // and lets the wash behind it through instead of punching a grey
+        // rectangle through the middle of it.
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .environment(\.colorScheme, .dark)
     }
 
     @ViewBuilder
