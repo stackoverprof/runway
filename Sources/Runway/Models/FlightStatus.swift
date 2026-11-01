@@ -28,6 +28,23 @@ enum FlightStatus: String {
         }
     }
 
+    /// How far along the flight is, in the terms the card prints: how many
+    /// legs are down out of how many there are.
+    ///
+    /// Crews first, because a flight with crews is measured by them, and the
+    /// checklist second for a flight that has none.
+    static func miles(of issue: AssignedIssue) -> (done: Int, total: Int) {
+        if issue.isFlight { return (issue.landedLegs, issue.legs.count) }
+        let work = IssueBody.steps("Progress", in: issue.body).filter { !$0.isLanding }
+        return (work.filter(\.done).count, work.count)
+    }
+
+    static func of(_ issue: AssignedIssue) -> FlightStatus {
+        if issue.isClosed { return .landed }
+        let flown = miles(of: issue)
+        return flown.done > 0 ? .onAir : .scheduled
+    }
+
     /// The checklist's closing line is the pilot's own; it is not work, so it
     /// does not count toward whether the flight has started.
     static func of(closed: Bool, steps: [IssueBody.Step]) -> FlightStatus {

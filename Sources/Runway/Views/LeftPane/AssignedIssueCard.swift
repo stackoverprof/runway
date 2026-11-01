@@ -18,100 +18,21 @@ struct AssignedIssueCard: View {
     private let board = FlightBoard.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                if let onSetClosed {
-                    Menu {
-                        // The menu wears the same green and purple the dots
-                        // do, so the choice looks like what it sets.
-                        Button {
-                            onSetClosed(false)
-                        } label: {
-                            Label {
-                                Text("Open")
-                            } icon: {
-                                colouredIcon("circle", Self.openNSColor)
-                            }
-                        }
-                        Button {
-                            onSetClosed(true)
-                        } label: {
-                            Label {
-                                Text("Closed")
-                            } icon: {
-                                colouredIcon("checkmark.circle", Self.closedNSColor)
-                            }
-                        }
-                    } label: {
-                        statusIcon.contentShape(Circle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .pointerCursor()
-                    .help("Open or close this issue")
-                } else {
-                    statusIcon
-                }
-                Text(verbatim: "\(repository) \(GitHubNumber.reference(issue.number))")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.white.opacity(0.52))
-                    .lineLimit(1)
-
-                Spacer(minLength: 6)
-
-                // How the flight is doing, then what it is worth, at the
-                // card's far corner.
-                if issue.isFlight {
-                    Text("\(issue.landedLegs)/\(issue.legs.count) landed")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Runway.teal.opacity(0.85))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Runway.teal.opacity(0.12)))
-                        .fixedSize()
-                }
-
-                priorityBadge
-
-                if let closedAt = issue.closedAt {
-                    Text("Closed \(closedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.white.opacity(0.24))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-
-            }
-
-            Text(issue.title)
-                .font(.system(size: 13.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.94))
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
-
-            if let parent = issue.parent {
-                Text("crew of \(GitHubNumber.reference(parent))")
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
-            }
+        HStack(spacing: 0) {
+            flaps
+            destination
+            stub
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        // The flight on screen is the brighter card. No coloured ring: the
-        // lift is enough, and it keeps every card the same shape.
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color(white: isFlying ? 0.17 : (hovering ? 0.09 : 0.075)))
-        )
+        .background(Self.ticket(stub: Self.stubWidth).fill(paper, style: FillStyle(eoFill: true)))
         .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(
-                    Color.white.opacity(isFlying ? 0.20 : (hovering ? 0.24 : 0.14)),
-                    lineWidth: 1
-                )
+            Self.ticket(stub: Self.stubWidth)
+                .stroke(Color.white.opacity(isFlying ? 0.18 : (hovering ? 0.12 : 0.06)), lineWidth: 1)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 9))
+        .overlay(alignment: .leading) { perforation }
+        .contentShape(Rectangle())
+        .offset(y: hovering ? -1 : 0)
+        .animation(.easeOut(duration: 0.15), value: hovering)
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Copy issue name") { copy("\(issue.title) \(GitHubNumber.reference(issue.number))") }
@@ -137,7 +58,157 @@ struct AssignedIssueCard: View {
         }
     }
 
-    /// P1 to P5, red through blue, set from the badge itself.
+    // MARK: The ticket
+
+    /// The boarding-pass outline: a rounded card with the stub's perforation
+    /// punched through it as two notches, the way a torn ticket reads.
+    private static func ticket(stub: CGFloat) -> some Shape { TicketShape(stub: stub) }
+
+    private static let stubWidth: CGFloat = 92
+    private static let notch: CGFloat = 5
+
+    private var paper: Color {
+        isFlying
+            ? Color(red: 0.16, green: 0.17, blue: 0.18)
+            : (hovering ? Color(red: 0.125, green: 0.13, blue: 0.14)
+                        : Color(red: 0.094, green: 0.098, blue: 0.106))
+    }
+
+    /// The split-flap board: one tile a digit, with the fold line across it.
+    private var flaps: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
+                Text(String(digit))
+                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.88))
+                    .frame(width: 13)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.055)))
+                    .overlay(Rectangle().fill(Color.black).frame(height: 1))
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 13)
+    }
+
+    private var destination: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(issue.title.uppercased())
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .tracking(0.4)
+                .foregroundStyle(Color.white.opacity(0.94))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            HStack(spacing: 5) {
+                Image(systemName: "airplane")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color.white.opacity(0.34))
+                Text(repository.uppercased())
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.white.opacity(0.42))
+                Text(verbatim: "·")
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(Color.white.opacity(0.22))
+                priorityBadge
+                if let parent = issue.parent {
+                    Text(verbatim: "·")
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(Color.white.opacity(0.22))
+                    Text("CREW OF \(GitHubNumber.reference(parent))")
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.3))
+                }
+            }
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+    }
+
+    /// The dashed tear line, with the notches already cut out of the card
+    /// behind it.
+    private var perforation: some View {
+        GeometryReader { geo in
+            Path { path in
+                let x = geo.size.width - Self.stubWidth
+                path.move(to: CGPoint(x: x, y: Self.notch + 4))
+                path.addLine(to: CGPoint(x: x, y: geo.size.height - Self.notch - 4))
+            }
+            .stroke(
+                Color.white.opacity(0.1),
+                style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+            )
+        }
+        .allowsHitTesting(false)
+    }
+
+    // MARK: The stub
+
+    private var status: FlightStatus { FlightStatus.of(issue) }
+
+    private var stub: some View {
+        let flown = FlightStatus.miles(of: issue)
+        return VStack(spacing: 4) {
+            Text(status.label)
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .tracking(1.1)
+                .foregroundStyle(status.color)
+
+            // One fixed slot, whatever it holds, so every card is the same
+            // height whether it is flying or standing.
+            VStack(spacing: 4) {
+                switch status {
+                case .scheduled:
+                    Image(systemName: "airplane.departure")
+                        .font(.system(size: 13))
+                        .foregroundStyle(status.color.opacity(0.7))
+                case .landed:
+                    Image(systemName: "airplane.arrival")
+                        .font(.system(size: 13))
+                        .foregroundStyle(status.color.opacity(0.8))
+                case .onAir:
+                    Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                    mileBar(flown)
+                }
+            }
+            .frame(height: 30)
+        }
+        .frame(width: Self.stubWidth)
+        .padding(.vertical, 10)
+    }
+
+    /// How far down the runway it is. The bar is grey on purpose: the status
+    /// word above it already carries the colour, and two of them read as two
+    /// different facts.
+    private func mileBar(_ flown: (done: Int, total: Int)) -> some View {
+        let share = flown.total > 0 ? Double(flown.done) / Double(flown.total) : 0
+        let width: CGFloat = 54
+        return ZStack(alignment: .leading) {
+            Capsule().fill(Color(white: 0.18)).frame(width: width, height: 3)
+            Capsule().fill(Color(white: 0.28)).frame(width: width * share, height: 3)
+            // The plane sits at the tip of the fill and cuts its own gap in
+            // the bar: the same shape twice, the lower one in the card's
+            // colour and a size wider.
+            ZStack {
+                Image(systemName: "airplane")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(paper)
+                Image(systemName: "airplane")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color(white: 0.46))
+            }
+            .rotationEffect(.degrees(0))
+            .offset(x: width * share - 7)
+        }
+        .frame(width: width, alignment: .leading)
+    }
+
+    /// The gate class: "Class P1", only the tier in its own colour, and the
+    /// whole thing is the menu that sets it.
     private var priorityBadge: some View {
         let level = board.priority(issue.number, in: boardKey)
         return Menu {
@@ -149,27 +220,25 @@ struct AssignedIssueCard: View {
             Divider()
             Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
         } label: {
-            Text(level.map(FlightPriority.label) ?? "P–")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(
-                    level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.3)
-                )
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(
-                        (level.map { FlightPriority.color($0) } ?? Color.white)
-                            .opacity(level == nil ? 0.06 : 0.14)
+            HStack(spacing: 3) {
+                Text("CLASS")
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.white.opacity(0.42))
+                Text(level.map(FlightPriority.label) ?? "P–")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(
+                        level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.3)
                     )
-                )
-                .fixedSize()
+            }
+            .fixedSize()
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .pointerCursor()
         .help("Set this flight's priority")
-        .opacity(level == nil && !hovering ? 0 : 1)
+        .opacity(level == nil && !hovering ? 0.45 : 1)
     }
 
     private func copy(_ value: String) {
@@ -177,32 +246,23 @@ struct AssignedIssueCard: View {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    /// A menu icon keeps its colour only when it is a real image rather than
-    /// a template symbol, which AppKit repaints to match the menu.
-    private func colouredIcon(_ name: String, _ colour: NSColor) -> Image {
-        let size = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        let palette = NSImage.SymbolConfiguration(paletteColors: [colour])
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(size.applying(palette)) else {
-            return Image(systemName: name).renderingMode(.original)
-        }
-        symbol.isTemplate = false
-        return Image(nsImage: symbol).renderingMode(.original)
-    }
+}
 
-    private var statusIcon: some View {
-        let size = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        let color = issue.isClosed ? Self.closedNSColor : Self.openNSColor
-        let palette = NSImage.SymbolConfiguration(paletteColors: [color])
-        let name = issue.isClosed ? "checkmark.circle" : "circle"
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(size.applying(palette)) else {
-            return Image(systemName: name).renderingMode(.original)
-        }
-        symbol.isTemplate = false
-        return Image(nsImage: symbol).renderingMode(.original)
-    }
+/// A boarding pass: rounded, with two notches bitten out of it where the
+/// stub tears off. Filled even-odd so the notches are holes, not circles.
+struct TicketShape: Shape {
+    let stub: CGFloat
+    var notch: CGFloat = 5
 
-    private static let openNSColor = NSColor(red: 0.18, green: 0.78, blue: 0.38, alpha: 1)
-    private static let closedNSColor = NSColor(red: 0.64, green: 0.42, blue: 0.94, alpha: 1)
+    func path(in rect: CGRect) -> Path {
+        var path = Path(roundedRect: rect, cornerRadius: 8)
+        let x = rect.maxX - stub
+        path.addEllipse(in: CGRect(
+            x: x - notch, y: rect.minY - notch, width: notch * 2, height: notch * 2
+        ))
+        path.addEllipse(in: CGRect(
+            x: x - notch, y: rect.maxY - notch, width: notch * 2, height: notch * 2
+        ))
+        return path
+    }
 }

@@ -112,7 +112,7 @@ enum AppAction: String, CaseIterable {
         case .nextCrew:
             return KeyChord(keyCode: 125, modifiers: [.command, .option, .shift])            // ⌘⌥⇧↓
         case .toggleCrew:
-            return KeyChord(keyCode: 36, modifiers: [.command, .control])                    // ⌘⌃↩
+            return KeyChord(keyCode: 36, modifiers: [.command, .option])                     // ⌘⌥↩
         case .previousSection: return KeyChord(keyCode: 123, modifiers: [.command, .option]) // ⌘⌥←
         case .nextSection:     return KeyChord(keyCode: 124, modifiers: [.command, .option]) // ⌘⌥→
         case .leaveTerminal:   return KeyChord(keyCode: 53, modifiers: [.command])           // ⌘esc
