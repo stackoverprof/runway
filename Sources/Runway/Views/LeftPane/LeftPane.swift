@@ -455,6 +455,9 @@ struct LeftPane: View {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
                         issueList(assignedIssues.open, lane: .open)
+                            .onChange(of: assignedIssues.open.first?.number, initial: true) {
+                                flyTheFirstFlight()
+                            }
                             .frame(width: geo.size.width)
                         issueList(assignedIssues.closed, lane: .closed)
                             .frame(width: geo.size.width)
@@ -537,6 +540,24 @@ struct LeftPane: View {
                 drag: flightDrag
             )
         )
+    }
+
+    /// Open Runway on a flight rather than on nothing.
+    ///
+    /// The window remembers which flight you were flying, but on a first run,
+    /// or when the flight you left has landed and gone from the lane, there
+    /// is nothing to restore and the middle pane came up empty. The top of
+    /// the board is the flight you ordered first, so it is the right default.
+    ///
+    /// It only ever fills an empty seat: a flight you have chosen is never
+    /// replaced, and a board that is still loading is left alone.
+    private func flyTheFirstFlight() {
+        guard let first = assignedIssues.open.first else { return }
+        if let flying = ws.flightNumber,
+           assignedIssues.issue(flying) != nil {
+            return
+        }
+        ws.flightNumber = first.number
     }
 
     private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
