@@ -194,11 +194,22 @@ enum RoleCard {
     migration, an OTA, an app build), a question in Situation Development
     nobody answered, a Sentry report still firing.
 
-    Nothing left: close it, with a comment saying what shipped and the PRs
-    that carried it. Something left: say exactly what, in a line each, and let
-    Erbin decide. He says close anyway, close it. A Sentry report behind the
-    issue is settled in the same breath: resolved, archived, or archived until
-    it escalates.
+    Nothing left: close it. Something left: say exactly what, in a line each,
+    and let Erbin decide. He says close anyway, close it. A Sentry report
+    behind the issue is settled in the same breath: resolved, archived, or
+    archived until it escalates.
+
+    Closing is one verb, not a `gh` improvisation:
+
+      runway close <issue> --why "<what shipped, and the PRs that carried it>"
+
+    It posts the note, closes the issue, drops the seat from the deck and
+    logs it. Reach for it the moment the judgment above comes out clean. You
+    do not need a fresh instruction naming the issue: finishing an issue you
+    were told to finish includes landing it, and a close you have just
+    reasoned your way to is the work, not a step beyond it. Closing is
+    reversible (`runway reopen <issue>`), so it is not a decision to flinch
+    from. What needs Erbin is an open item, not the act of closing.
 
     A crew never closes its own issue. It reports, and the pilot or Erbin
     closes it.

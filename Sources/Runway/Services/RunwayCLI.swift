@@ -785,6 +785,11 @@ extension AgentControl {
         def cmd_close(args):
             repo = repo_of(args)
             args.number = resolve_flight(repo, args.number)
+            # The closing note and the close are one act, so they are one
+            # verb: an issue never lands without a word on what shipped.
+            why = getattr(args, "why", None)
+            if why:
+                gh(["issue", "comment", str(args.number), "--repo", repo, "--body", why])
             gh(["issue", "close", str(args.number), "--repo", repo])
             # A closed crew leaves the pane, so it leaves the deck with it.
             seats = read_deck()
@@ -916,6 +921,7 @@ extension AgentControl {
 
             close = verbs.add_parser("close", help="close a flight or a crew")
             close.add_argument("number")
+            close.add_argument("--why", help="the closing comment: what shipped and the PRs that carried it")
             close.set_defaults(run=cmd_close)
 
             reopen = verbs.add_parser("reopen", help="put one back in the air")
