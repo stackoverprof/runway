@@ -60,7 +60,7 @@ struct AssignedIssueCard: View {
 
     // MARK: The ticket
 
-    private static let stubWidth: CGFloat = 96
+    private static let stubWidth: CGFloat = 80
 
     /// The sheet's own palette. Named here so the card reads as the design
     /// and not as a pile of literals.
@@ -86,52 +86,52 @@ struct AssignedIssueCard: View {
         HStack(spacing: 2) {
             ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
                 Text(String(digit))
-                    .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Paper.ink)
-                    .frame(width: 16.5)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Paper.tile))
+                    .frame(width: 13)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 2.5).fill(Paper.tile))
                     .overlay(Rectangle().fill(Color.black).frame(height: 1))
             }
         }
-        .padding(.leading, 14)
-        .padding(.vertical, 14)
+        .padding(.leading, 11)
+        .padding(.vertical, 11)
     }
 
     private var destination: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(issue.title.uppercased())
-                .font(.system(size: 14.5, weight: .medium, design: .monospaced))
-                .tracking(0.6)
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .tracking(0.5)
                 .foregroundStyle(Paper.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: "airplane")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 8))
                     .foregroundStyle(Paper.muted)
                 Text(repository.uppercased())
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .tracking(1.2)
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .tracking(1)
                     .foregroundStyle(Paper.muted)
                 Text(verbatim: "·")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 8.5))
                     .foregroundStyle(Paper.faint)
                 priorityBadge
                 if let parent = issue.parent {
                     Text(verbatim: "·")
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 8.5))
                         .foregroundStyle(Paper.faint)
                     Text("crew of \(GitHubNumber.reference(parent))")
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(.system(size: 8.5, design: .monospaced))
                         .foregroundStyle(Paper.faint)
                 }
             }
             .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 11)
     }
 
     /// The dashed tear line.
@@ -146,8 +146,8 @@ struct AssignedIssueCard: View {
         GeometryReader { geo in
             Path { path in
                 let x = geo.size.width - Self.stubWidth
-                path.move(to: CGPoint(x: x, y: 7))
-                path.addLine(to: CGPoint(x: x, y: geo.size.height - 7))
+                path.move(to: CGPoint(x: x, y: 6))
+                path.addLine(to: CGPoint(x: x, y: geo.size.height - 6))
             }
             .stroke(Paper.line.opacity(0.9), style: StrokeStyle(lineWidth: 1, dash: [2.5, 3]))
         }
@@ -160,35 +160,35 @@ struct AssignedIssueCard: View {
 
     private var stub: some View {
         let flown = FlightStatus.miles(of: issue)
-        return VStack(spacing: 4) {
+        return VStack(spacing: 3) {
             Text(status.label)
-                .font(.system(size: 10.5, design: .monospaced))
-                .tracking(1.3)
+                .font(.system(size: 8.5, design: .monospaced))
+                .tracking(1.1)
                 .foregroundStyle(stubColour)
 
             // One fixed slot, whatever it holds, so every card is the same
             // height whether it is flying or standing.
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 switch status {
                 case .scheduled:
                     Image(systemName: "airplane.departure")
-                        .font(.system(size: 17))
+                        .font(.system(size: 14))
                         .foregroundStyle(stubColour)
                 case .landed:
                     Image(systemName: "airplane.arrival")
-                        .font(.system(size: 17))
+                        .font(.system(size: 14))
                         .foregroundStyle(stubColour)
                 case .onAir:
                     Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Paper.ink)
-                    mileBar(flown).padding(.top, 2)
+                    mileBar(flown).padding(.top, 1)
                 }
             }
-            .frame(height: 36)
+            .frame(height: 24)
         }
         .frame(width: Self.stubWidth)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     /// The sheet's own three: grey while it waits, teal in the air, purple
@@ -206,22 +206,22 @@ struct AssignedIssueCard: View {
     /// different facts.
     private func mileBar(_ flown: (done: Int, total: Int)) -> some View {
         let share = flown.total > 0 ? Double(flown.done) / Double(flown.total) : 0
-        let width: CGFloat = 56
+        let width: CGFloat = 46
         return ZStack(alignment: .leading) {
-            Capsule().fill(Paper.line).frame(width: width, height: 3)
-            Capsule().fill(Paper.fill).frame(width: width * share, height: 3)
+            Capsule().fill(Paper.line).frame(width: width, height: 2.5)
+            Capsule().fill(Paper.fill).frame(width: width * share, height: 2.5)
             // The plane sits at the tip of the fill and cuts its own gap in
             // the bar: the same shape twice, the lower one in the card's
             // colour and a size wider.
             ZStack {
                 Image(systemName: "airplane")
-                    .font(.system(size: 14, weight: .black))
+                    .font(.system(size: 11.5, weight: .black))
                     .foregroundStyle(paper)
                 Image(systemName: "airplane")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 8))
                     .foregroundStyle(Paper.plane)
             }
-            .offset(x: width * share - 8)
+            .offset(x: width * share - 6.5)
         }
         .frame(width: width, alignment: .leading)
     }
@@ -231,12 +231,12 @@ struct AssignedIssueCard: View {
     /// because the sheet draws it as part of the sentence under the title.
     private var priorityBadge: some View {
         let level = board.priority(issue.number, in: boardKey)
-        return HStack(spacing: 4) {
+        return HStack(spacing: 3) {
             Text("Class")
-                .font(.system(size: 10.5, design: .monospaced))
+                .font(.system(size: 8.5, design: .monospaced))
                 .foregroundStyle(Paper.muted)
-            Text(level.map(FlightPriority.label) ?? "P–")
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            Text(level.map(FlightPriority.label) ?? "P-")
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
         }
         .fixedSize()
