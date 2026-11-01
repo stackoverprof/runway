@@ -94,7 +94,7 @@ struct AssignedIssueCard: View {
         HStack(spacing: 2) {
             ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
                 Text(String(digit))
-                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .font(.mono(11.5, .semibold))
                     .foregroundStyle(Paper.ink)
                     .frame(width: 13)
                     .padding(.vertical, 3)
@@ -134,7 +134,7 @@ struct AssignedIssueCard: View {
     private var destination: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(issue.title.uppercased())
-                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .font(.mono(11.5, .medium))
                 .tracking(0.5)
                 .foregroundStyle(Paper.ink)
                 .lineLimit(1)
@@ -145,7 +145,7 @@ struct AssignedIssueCard: View {
                     .font(.system(size: 8))
                     .foregroundStyle(Paper.muted)
                 Text(repository.uppercased())
-                    .font(.system(size: 8.5, design: .monospaced))
+                    .font(.mono(8.5))
                     .tracking(1)
                     .foregroundStyle(Paper.muted)
                 Text(verbatim: "·")
@@ -157,7 +157,7 @@ struct AssignedIssueCard: View {
                         .font(.system(size: 8.5))
                         .foregroundStyle(Paper.faint)
                     Text("crew of \(GitHubNumber.reference(parent))")
-                        .font(.system(size: 8.5, design: .monospaced))
+                        .font(.mono(8.5))
                         .foregroundStyle(Paper.faint)
                 }
             }
@@ -195,7 +195,7 @@ struct AssignedIssueCard: View {
         let flown = FlightStatus.miles(of: issue)
         return VStack(spacing: 3) {
             Text(status.label)
-                .font(.system(size: 8.5, design: .monospaced))
+                .font(.mono(8.5))
                 .tracking(1.1)
                 .foregroundStyle(stubColour)
 
@@ -213,7 +213,7 @@ struct AssignedIssueCard: View {
                         .foregroundStyle(stubColour)
                 case .onAir:
                     Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
-                        .font(.system(size: 8.5, design: .monospaced))
+                        .font(.mono(8.5))
                         .tracking(0.4)
                         .foregroundStyle(Paper.mile)
                     mileBar(flown).padding(.top, 2)
@@ -267,10 +267,10 @@ struct AssignedIssueCard: View {
         let level = board.priority(issue.number, in: boardKey)
         return HStack(spacing: 3) {
             Text("Class")
-                .font(.system(size: 8.5, design: .monospaced))
+                .font(.mono(8.5))
                 .foregroundStyle(Paper.muted)
             Text(level.map(FlightPriority.label) ?? "P-")
-                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .font(.mono(8.5, .semibold))
                 .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
         }
         .fixedSize()

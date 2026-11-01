@@ -25,7 +25,7 @@ let package = Package(
             // The walkthrough toolkit travels with the app, so any agent
             // Runway starts can make evidence slides without a skill
             // installed beside it.
-            resources: [.copy("Resources/walkthrough")]
+            resources: [.copy("Resources/walkthrough"), .copy("Resources/fonts")]
         ),
         .testTarget(
             name: "RunwayTests",
