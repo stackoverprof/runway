@@ -24,10 +24,14 @@ struct AssignedIssueCard: View {
             stub
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Self.ticket(stub: Self.stubWidth).fill(paper, style: FillStyle(eoFill: true)))
+        .background(
+            TicketShape(stub: Self.stubWidth).fill(paper, style: FillStyle(eoFill: true))
+        )
+        // The border follows the card, not the notches: stroking the holes
+        // as well drew a ring around each one, which read as a button.
         .overlay(
-            Self.ticket(stub: Self.stubWidth)
-                .stroke(Color.white.opacity(isFlying ? 0.18 : (hovering ? 0.12 : 0.06)), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(isFlying ? 0.16 : (hovering ? 0.10 : 0.05)), lineWidth: 1)
         )
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
@@ -60,18 +64,26 @@ struct AssignedIssueCard: View {
 
     // MARK: The ticket
 
-    /// The boarding-pass outline: a rounded card with the stub's perforation
-    /// punched through it as two notches, the way a torn ticket reads.
-    private static func ticket(stub: CGFloat) -> some Shape { TicketShape(stub: stub) }
-
-    private static let stubWidth: CGFloat = 92
+    private static let stubWidth: CGFloat = 96
     private static let notch: CGFloat = 5
 
+    /// The sheet's own palette. Named here so the card reads as the design
+    /// and not as a pile of literals.
+    private enum Paper {
+        static let base = Color(red: 0.094, green: 0.098, blue: 0.106)   // #18191b
+        static let hover = Color(red: 0.125, green: 0.129, blue: 0.141)  // #202124
+        static let flying = Color(red: 0.16, green: 0.165, blue: 0.18)
+        static let tile = Color(red: 0.055, green: 0.059, blue: 0.063)   // #0e0f10
+        static let line = Color(red: 0.18, green: 0.188, blue: 0.2)      // #2e3033
+        static let fill = Color(red: 0.275, green: 0.282, blue: 0.298)   // #46484c
+        static let plane = Color(red: 0.463, green: 0.471, blue: 0.486)  // #76787c
+        static let ink = Color(red: 0.945, green: 0.945, blue: 0.933)    // #f1f1ee
+        static let muted = Color(red: 0.541, green: 0.549, blue: 0.565)  // #8a8c90
+        static let faint = Color(red: 0.333, green: 0.341, blue: 0.357)  // #55575b
+    }
+
     private var paper: Color {
-        isFlying
-            ? Color(red: 0.16, green: 0.17, blue: 0.18)
-            : (hovering ? Color(red: 0.125, green: 0.13, blue: 0.14)
-                        : Color(red: 0.094, green: 0.098, blue: 0.106))
+        isFlying ? Paper.flying : (hovering ? Paper.hover : Paper.base)
     }
 
     /// The split-flap board: one tile a digit, with the fold line across it.
@@ -79,67 +91,64 @@ struct AssignedIssueCard: View {
         HStack(spacing: 2) {
             ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
                 Text(String(digit))
-                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.88))
-                    .frame(width: 13)
+                    .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Paper.ink)
+                    .frame(width: 16.5)
                     .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.055)))
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Paper.tile))
                     .overlay(Rectangle().fill(Color.black).frame(height: 1))
             }
         }
-        .padding(.leading, 12)
-        .padding(.vertical, 13)
+        .padding(.leading, 14)
+        .padding(.vertical, 14)
     }
 
     private var destination: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(issue.title.uppercased())
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .tracking(0.4)
-                .foregroundStyle(Color.white.opacity(0.94))
+                .font(.system(size: 14.5, weight: .medium, design: .monospaced))
+                .tracking(0.6)
+                .foregroundStyle(Paper.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             HStack(spacing: 5) {
                 Image(systemName: "airplane")
-                    .font(.system(size: 8))
-                    .foregroundStyle(Color.white.opacity(0.34))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Paper.muted)
                 Text(repository.uppercased())
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .tracking(0.5)
-                    .foregroundStyle(Color.white.opacity(0.42))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundStyle(Paper.muted)
                 Text(verbatim: "·")
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(Color.white.opacity(0.22))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Paper.faint)
                 priorityBadge
                 if let parent = issue.parent {
                     Text(verbatim: "·")
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(Color.white.opacity(0.22))
-                    Text("CREW OF \(GitHubNumber.reference(parent))")
-                        .font(.system(size: 8.5, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.3))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Paper.faint)
+                    Text("crew of \(GitHubNumber.reference(parent))")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Paper.faint)
                 }
             }
             .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
     }
 
-    /// The dashed tear line, with the notches already cut out of the card
-    /// behind it.
+    /// The dashed tear line, running between the two notches bitten out of
+    /// the card's own edge.
     private var perforation: some View {
         GeometryReader { geo in
             Path { path in
                 let x = geo.size.width - Self.stubWidth
-                path.move(to: CGPoint(x: x, y: Self.notch + 4))
-                path.addLine(to: CGPoint(x: x, y: geo.size.height - Self.notch - 4))
+                path.move(to: CGPoint(x: x, y: Self.notch + 5))
+                path.addLine(to: CGPoint(x: x, y: geo.size.height - Self.notch - 5))
             }
-            .stroke(
-                Color.white.opacity(0.1),
-                style: StrokeStyle(lineWidth: 1, dash: [3, 3])
-            )
+            .stroke(Paper.line, style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
         }
         .allowsHitTesting(false)
     }
@@ -152,9 +161,9 @@ struct AssignedIssueCard: View {
         let flown = FlightStatus.miles(of: issue)
         return VStack(spacing: 4) {
             Text(status.label)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .tracking(1.1)
-                .foregroundStyle(status.color)
+                .font(.system(size: 10.5, design: .monospaced))
+                .tracking(1.3)
+                .foregroundStyle(stubColour)
 
             // One fixed slot, whatever it holds, so every card is the same
             // height whether it is flying or standing.
@@ -162,23 +171,33 @@ struct AssignedIssueCard: View {
                 switch status {
                 case .scheduled:
                     Image(systemName: "airplane.departure")
-                        .font(.system(size: 13))
-                        .foregroundStyle(status.color.opacity(0.7))
+                        .font(.system(size: 17))
+                        .foregroundStyle(stubColour)
                 case .landed:
                     Image(systemName: "airplane.arrival")
-                        .font(.system(size: 13))
-                        .foregroundStyle(status.color.opacity(0.8))
+                        .font(.system(size: 17))
+                        .foregroundStyle(stubColour)
                 case .onAir:
                     Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.82))
-                    mileBar(flown)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(Paper.ink)
+                    mileBar(flown).padding(.top, 2)
                 }
             }
-            .frame(height: 30)
+            .frame(height: 36)
         }
         .frame(width: Self.stubWidth)
         .padding(.vertical, 10)
+    }
+
+    /// The sheet's own three: grey while it waits, teal in the air, purple
+    /// once it is down.
+    private var stubColour: Color {
+        switch status {
+        case .scheduled: Paper.muted
+        case .onAir: Color(red: 0.486, green: 0.776, blue: 0.722)   // #7cc6b8
+        case .landed: Color(red: 0.663, green: 0.545, blue: 0.941)  // #a98bf0
+        }
     }
 
     /// How far down the runway it is. The bar is grey on purpose: the status
@@ -186,23 +205,22 @@ struct AssignedIssueCard: View {
     /// different facts.
     private func mileBar(_ flown: (done: Int, total: Int)) -> some View {
         let share = flown.total > 0 ? Double(flown.done) / Double(flown.total) : 0
-        let width: CGFloat = 54
+        let width: CGFloat = 56
         return ZStack(alignment: .leading) {
-            Capsule().fill(Color(white: 0.18)).frame(width: width, height: 3)
-            Capsule().fill(Color(white: 0.28)).frame(width: width * share, height: 3)
+            Capsule().fill(Paper.line).frame(width: width, height: 3)
+            Capsule().fill(Paper.fill).frame(width: width * share, height: 3)
             // The plane sits at the tip of the fill and cuts its own gap in
             // the bar: the same shape twice, the lower one in the card's
             // colour and a size wider.
             ZStack {
                 Image(systemName: "airplane")
-                    .font(.system(size: 11, weight: .black))
+                    .font(.system(size: 14, weight: .black))
                     .foregroundStyle(paper)
                 Image(systemName: "airplane")
-                    .font(.system(size: 8))
-                    .foregroundStyle(Color(white: 0.46))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Paper.plane)
             }
-            .rotationEffect(.degrees(0))
-            .offset(x: width * share - 7)
+            .offset(x: width * share - 8)
         }
         .frame(width: width, alignment: .leading)
     }
@@ -221,15 +239,12 @@ struct AssignedIssueCard: View {
             Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
         } label: {
             HStack(spacing: 3) {
-                Text("CLASS")
-                    .font(.system(size: 8.5, design: .monospaced))
-                    .tracking(0.5)
-                    .foregroundStyle(Color.white.opacity(0.42))
+                Text("Class")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Paper.muted)
                 Text(level.map(FlightPriority.label) ?? "P–")
-                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(
-                        level.map { FlightPriority.color($0) } ?? Color.white.opacity(0.3)
-                    )
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
             }
             .fixedSize()
         }

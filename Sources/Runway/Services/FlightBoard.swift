@@ -105,9 +105,9 @@ enum FlightPriority {
     /// Red at P1, cooling to blue at P5.
     static func color(_ value: Int) -> Color {
         switch value {
-        case 1: Color(red: 0.91, green: 0.31, blue: 0.33)
-        case 2: Color(red: 0.94, green: 0.55, blue: 0.24)
-        case 3: Color(red: 0.90, green: 0.78, blue: 0.30)
+        case 1: Color(red: 0.898, green: 0.349, blue: 0.310)  // #e5594f
+        case 2: Color(red: 0.910, green: 0.569, blue: 0.228)  // #e8913a
+        case 3: Color(red: 0.847, green: 0.761, blue: 0.290)  // #d8c24a
         case 4: Color(red: 0.37, green: 0.75, blue: 0.62)
         default: Color(red: 0.38, green: 0.60, blue: 0.93)
         }

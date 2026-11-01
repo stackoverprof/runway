@@ -567,7 +567,7 @@ struct LeftPane: View {
     private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
         ScrollViewReader { scroll in
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 ForEach(issues) { issue in
                     issueCard(issue, lane: lane, among: issues.map(\.number))
                 }
