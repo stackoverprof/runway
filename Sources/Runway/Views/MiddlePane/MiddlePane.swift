@@ -325,6 +325,15 @@ struct MiddlePane: View {
     private var mounted: [Int] {
         var list = visited
         if let number = ws.flightNumber, !list.contains(number) { list.append(number) }
+        // Pilots held up from outside the window. An agent that wants to
+        // brief seven flights cannot click seven cards, so `runway pilot up`
+        // puts them here and their seats start behind whatever is on screen.
+        if let repository = issues.repository {
+            for number in PilotDeck.shared.flights(in: repository)
+            where !list.contains(number) && issues.issue(number) != nil {
+                list.append(number)
+            }
+        }
         return list
     }
 
@@ -404,6 +413,8 @@ struct MiddlePane: View {
         while visited.count > Self.flightsKeptMounted {
             let droppable = visited.dropLast().first { candidate in
                 guard let repository = issues.repository else { return true }
+                // A pilot held up on purpose is never the one dropped.
+                if PilotDeck.shared.isUp(repository, candidate) { return false }
                 return !PilotSeat.allCases.contains { seat in
                     TerminalSessionPool.isBusy(
                         FlightCrewSessions.boxID(

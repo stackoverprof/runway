@@ -204,6 +204,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         pollSeatStates()
         // An agent standing a crew up writes the deck; this is how it lands.
         CrewDeck.shared.reload()
+        // And a pilot held up from outside the window.
+        PilotDeck.shared.reload()
         // The same for an agent reordering the board or setting a priority.
         FlightBoard.shared.reload()
         let roots = QuickTerminalSession.tabRoots()

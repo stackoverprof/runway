@@ -309,6 +309,65 @@ extension AgentControl {
             nudge()
 
 
+        PILOT_DECK = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "pilot-deck.json",
+        )
+
+
+        def read_pilot_deck():
+            try:
+                with open(PILOT_DECK) as handle:
+                    return set(json.load(handle).get("up", []))
+            except Exception:
+                return set()
+
+
+        def write_pilot_deck(seats):
+            with open(PILOT_DECK, "w") as handle:
+                json.dump({"up": sorted(seats)}, handle, indent=2)
+
+
+        def cmd_pilot_up(args):
+            # A pilot's seats used to live only while its flight was the one on
+            # screen, so the only way to start seven of them was to click seven
+            # cards. The deck holds them up instead, whoever writes it.
+            repo = repo_of(args)
+            args.issue = resolve_flight(repo, args.issue)
+            seats = read_pilot_deck()
+            seats.add("%s#%s" % (repo, args.issue))
+            write_pilot_deck(seats)
+            note("pilot_up", issue=int(str(args.issue).lstrip("#")), repository=repo)
+            print("Pilot of #%s is up" % args.issue)
+            nudge()
+
+
+        def cmd_pilot_down(args):
+            repo = repo_of(args)
+            args.issue = resolve_flight(repo, args.issue)
+            seats = read_pilot_deck()
+            seats.discard("%s#%s" % (repo, args.issue))
+            write_pilot_deck(seats)
+            note("pilot_down", issue=int(str(args.issue).lstrip("#")), repository=repo)
+            print("Pilot of #%s stood down" % args.issue)
+            nudge()
+
+
+        def cmd_pilot_list(args):
+            repo = repo_of(args)
+            prefix = "%s#" % repo
+            held = sorted(
+                int(seat[len(prefix):])
+                for seat in read_pilot_deck()
+                if seat.startswith(prefix)
+            )
+            if not held:
+                print("No pilot is being held up. `runway pilot up <flight>` starts one.")
+                return
+            for number in held:
+                print("#%s" % number)
+
+
         BOARD = os.path.join(
             os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
             "board.json",
@@ -868,6 +927,21 @@ extension AgentControl {
             crew_release.add_argument("issue")
             crew_release.add_argument("--flight", default="")
             crew_release.set_defaults(run=cmd_crew_release)
+
+            pilot = verbs.add_parser("pilot", help="the pilot of a flight")
+            pilot_verbs = pilot.add_subparsers(dest="action", required=True)
+            pilot_up = pilot_verbs.add_parser(
+                "up", help="bring a pilot up: start its seats, on screen or not"
+            )
+            pilot_up.add_argument("issue")
+            pilot_up.set_defaults(run=cmd_pilot_up)
+            pilot_down = pilot_verbs.add_parser(
+                "down", help="let a pilot go when you are done with it"
+            )
+            pilot_down.add_argument("issue")
+            pilot_down.set_defaults(run=cmd_pilot_down)
+            pilot_list = pilot_verbs.add_parser("list", help="the pilots being held up")
+            pilot_list.set_defaults(run=cmd_pilot_list)
 
             progress = verbs.add_parser("progress", help="the checklist you keep on the issue")
             progress.add_argument("--flight", default="", help="defaults to your own flight or crew")

@@ -72,6 +72,20 @@ enum ActivityLog {
         ])
     }
 
+    /// A pilot's seats were held up, or let go, from outside the pane.
+    static func pilotUp(_ number: Int, title: String, repository: String) {
+        write("pilot_up", ["issue": number, "title": title, "repository": repository])
+    }
+
+    static func pilotDown(_ number: Int, title: String, repository: String, seconds: Int) {
+        write("pilot_down", [
+            "issue": number,
+            "title": title,
+            "repository": repository,
+            "seconds": seconds,
+        ])
+    }
+
     /// How long a seat's agent actually worked, measured from the control
     /// file that already drives the dot.
     static func seatWorked(
