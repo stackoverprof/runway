@@ -24,9 +24,7 @@ struct AssignedIssueCard: View {
             stub
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            TicketShape(stub: Self.stubWidth).fill(paper, style: FillStyle(eoFill: true))
-        )
+        .background(RoundedRectangle(cornerRadius: 8).fill(paper))
         // No border at all, the way the sheet draws it. A hairline looks
         // harmless until it runs through the notches: it closes the bite
         // back up and the pair at a card join reads as a bead on a string.
@@ -63,7 +61,6 @@ struct AssignedIssueCard: View {
     // MARK: The ticket
 
     private static let stubWidth: CGFloat = 96
-    private static let notch: CGFloat = 2
 
     /// The sheet's own palette. Named here so the card reads as the design
     /// and not as a pile of literals.
@@ -137,14 +134,20 @@ struct AssignedIssueCard: View {
         .padding(.horizontal, 14)
     }
 
-    /// The dashed tear line, running between the two notches bitten out of
-    /// the card's own edge.
+    /// The dashed tear line.
+    ///
+    /// No bite at its ends, whatever the sheet draws. A notch is a half
+    /// circle on the card's edge, the cards sit 10 points apart, and at this
+    /// size one card's notch and the next one's close into a dark blob
+    /// across the gap: checked at 3x zoom on the running app, at radius 5,
+    /// at 3.5, and as a 2-point scallop. The dashes alone say the stub tears
+    /// off, and nothing is left to read as a bead.
     private var perforation: some View {
         GeometryReader { geo in
             Path { path in
                 let x = geo.size.width - Self.stubWidth
-                path.move(to: CGPoint(x: x, y: Self.notch + 5))
-                path.addLine(to: CGPoint(x: x, y: geo.size.height - Self.notch - 5))
+                path.move(to: CGPoint(x: x, y: 7))
+                path.addLine(to: CGPoint(x: x, y: geo.size.height - 7))
             }
             .stroke(Paper.line.opacity(0.9), style: StrokeStyle(lineWidth: 1, dash: [2.5, 3]))
         }
@@ -244,37 +247,4 @@ struct AssignedIssueCard: View {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-}
-
-/// A boarding pass: rounded, with a nick taken out of each edge where the
-/// stub tears off. Filled even-odd so the nicks are holes, not circles.
-///
-/// The nick is shallow on purpose. A half-circle bite meets the next card's
-/// bite across the 10-point gap, and the pair reads as a dark bead threaded
-/// on the list rather than as a perforation. Pushing the circle most of the
-/// way out of the card leaves a scallop a couple of points deep, which is
-/// all the eye needs to know the stub tears off.
-struct TicketShape: Shape {
-    let stub: CGFloat
-    var notch: CGFloat = 4.5
-    /// How much of the circle stays inside the card.
-    var depth: CGFloat = 2
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path(roundedRect: rect, cornerRadius: 8)
-        let x = rect.maxX - stub
-        path.addEllipse(in: CGRect(
-            x: x - notch,
-            y: rect.minY + depth - notch * 2,
-            width: notch * 2,
-            height: notch * 2
-        ))
-        path.addEllipse(in: CGRect(
-            x: x - notch,
-            y: rect.maxY - depth,
-            width: notch * 2,
-            height: notch * 2
-        ))
-        return path
-    }
 }
