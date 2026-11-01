@@ -6,10 +6,12 @@ cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
 # RUNWAY_FLAVOR builds a Runway that lives beside the one you work in: its own
-# app, bundle id, state folder and URL scheme, so neither touches the other.
+# bundle id, state folder and URL scheme, so neither touches the other. The
+# app is still called Runway, in the Dock and in the menu bar: the flavor is
+# plumbing, not a name to read every day.
 # Unset builds the usual Runway.
 FLAVOR="${RUNWAY_FLAVOR:-}"
-APP_NAME="Runway${FLAVOR:+ $FLAVOR}"
+APP_NAME="Runway"
 EXEC_NAME="Runway${FLAVOR}"
 
 echo "▸ swift build -c $CONFIG"
@@ -25,8 +27,6 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -n "$FLAVOR" ]; then
   plutil -replace CFBundleExecutable -string "$EXEC_NAME" "$APP/Contents/Info.plist"
   plutil -replace CFBundleIdentifier -string "com.runway.Runway$FLAVOR" "$APP/Contents/Info.plist"
-  plutil -replace CFBundleName -string "$APP_NAME" "$APP/Contents/Info.plist"
-  plutil -replace CFBundleDisplayName -string "$APP_NAME" "$APP/Contents/Info.plist"
   plutil -replace RunwayStateFolder -string "Runway$FLAVOR" "$APP/Contents/Info.plist"
   plutil -replace CFBundleURLTypes.0.CFBundleURLSchemes.0 \
     -string "runway$FLAVOR" "$APP/Contents/Info.plist"
