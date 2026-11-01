@@ -34,7 +34,7 @@ struct LeftPane: View {
     @AppStorage(SettingsKey.brandTitle) private var brandTitle = Self.defaultBrandTitle
 
     /// What the left pane calls itself before anyone renames it in Settings.
-    static let defaultBrandTitle = "Runway V3"
+    static let defaultBrandTitle = "Runway"
 
     @AppStorage(SettingsKey.brandLogoFilename) private var brandLogoFilename = ""
 

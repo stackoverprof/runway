@@ -960,26 +960,7 @@ struct MiddlePane: View {
     }
 
     private func slideThumbnail(_ slide: URL) -> some View {
-        Group {
-            if let image = SlideThumbnails.image(for: slide) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else {
-                Color(white: 0.08)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.white.opacity(0.16))
-                    )
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
-        )
+        SlideThumbnail(slide: slide)
     }
 
     private var threadSection: some View {
@@ -1150,6 +1131,43 @@ enum CheckState {
         case .passing: Runway.green
         case .running: Runway.amber
         case .failing: Color(red: 0.94, green: 0.36, blue: 0.36)
+        }
+    }
+}
+
+
+/// One square in the walkthrough grid.
+///
+/// It owns its own image, so a slide finishing its decode redraws this
+/// square and nothing else. Reading a shared store from the pane's body
+/// instead meant every arrival redrew every slide on the tab.
+private struct SlideThumbnail: View {
+    let slide: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color(white: 0.08)
+                    .overlay(
+                        Image(systemName: "photo")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.white.opacity(0.16))
+                    )
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+        .task(id: slide) {
+            image = await SlideThumbnails.shared.thumbnail(for: slide)
         }
     }
 }

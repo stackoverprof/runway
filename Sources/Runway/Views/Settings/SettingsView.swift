@@ -104,7 +104,7 @@ enum SettingsKey {
             dropRetentionDays: 7,
             personProfiles: [],
             brandHeaderStyle: "text",
-            brandTitle: "Runway V3",
+            brandTitle: "Runway",
             brandLogoFilename: "",
             cloneSearchRoot: "",
             cloneSearchDepth: 6,
