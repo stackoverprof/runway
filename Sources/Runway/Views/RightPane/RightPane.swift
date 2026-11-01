@@ -14,9 +14,9 @@ struct RightPane: View {
     @Bindable var ws: Workspace
     @Bindable var issues: AssignedIssues
     /// Which crews are up is shared with the agents, so a pilot can stand one
-    /// up as well as you can. Which one you are reading is yours alone.
+    /// up as well as you can. Which one you are reading lives on the
+    /// workspace, so ⌘⌃1-9 and ⌘⌥⇧↑↓ can move it from outside the pane.
     private let deck = CrewDeck.shared
-    @State private var reading: Int?
     /// What was copied a moment ago, so the label can flash.
     @State private var copied: String?
     /// The landed crew under the pointer, whose tick becomes a play.
@@ -38,16 +38,12 @@ struct RightPane: View {
     /// the bottom: they are one line each and nothing is waiting on them, so
     /// leaving one between two live crews only breaks the reading.
     private var crews: [IssueLeg] {
-        let flight = issues.issue(ws.flightNumber)
-        return CrewOrder.sorted(
-            flight?.legs ?? [],
-            by: IssueBody.steps("Progress", in: flight?.body ?? "")
-        )
+        FlightCrews.all(in: issues, flight: ws.flightNumber)
     }
 
     /// Where a crew's issue lives, which is how the deck names its seat.
     private func crewRepositoryName(_ crew: IssueLeg) -> String {
-        crew.repository ?? issues.repository ?? ""
+        FlightCrews.repository(of: crew, in: issues)
     }
 
     private func isUp(_ crew: IssueLeg) -> Bool {
@@ -103,7 +99,7 @@ struct RightPane: View {
                     activeBox(crew)
                         .layoutValue(
                             key: CrewShareKey.self,
-                            value: reading == crew.number ? 2 : 1
+                            value: ws.readingCrew == crew.number ? 2 : 1
                         )
                 } else {
                     standingCard(crew)
@@ -161,11 +157,11 @@ struct RightPane: View {
         guard clickWatch == nil else { return }
         clickWatch = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             Task { @MainActor in
-                guard reading != nil, let view = paneView.view else { return }
+                guard ws.readingCrew != nil, let view = paneView.view else { return }
                 let inside = view.window === event.window
                     && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
                 if !inside {
-                    withAnimation(.easeInOut(duration: 0.22)) { reading = nil }
+                    withAnimation(.easeInOut(duration: 0.22)) { ws.readingCrew = nil }
                 }
             }
             return event
@@ -367,7 +363,7 @@ struct RightPane: View {
     // MARK: Flying
 
     private func activeBox(_ crew: IssueLeg) -> some View {
-        let isReading = reading == crew.number
+        let isReading = ws.readingCrew == crew.number
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 // The control sits where the dot was, on both kinds of card.
@@ -422,12 +418,12 @@ struct RightPane: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
+            withAnimation(.easeInOut(duration: 0.2)) { ws.readingCrew = crew.number }
         }
         .simultaneousGesture(
             // A click into the terminal itself is still a click on this crew.
             TapGesture().onEnded {
-                withAnimation(.easeInOut(duration: 0.2)) { reading = crew.number }
+                withAnimation(.easeInOut(duration: 0.2)) { ws.readingCrew = crew.number }
             }
         )
     }
@@ -507,7 +503,7 @@ struct RightPane: View {
     private func bringUp(_ crew: IssueLeg) {
         withAnimation(.easeInOut(duration: 0.22)) {
             deck.bringUp(crewRepositoryName(crew), crew.number, title: crew.title)
-            reading = crew.number
+            ws.readingCrew = crew.number
         }
     }
 
@@ -517,7 +513,7 @@ struct RightPane: View {
             // Standing down the one you were reading leaves no one chosen,
             // so the rest go back to equal rather than one being picked for
             // you.
-            if reading == crew.number { reading = nil }
+            if ws.readingCrew == crew.number { ws.readingCrew = nil }
         }
     }
 }

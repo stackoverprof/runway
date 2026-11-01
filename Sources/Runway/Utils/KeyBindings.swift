@@ -59,23 +59,60 @@ struct KeyChord: Codable, Equatable {
     }
 }
 
-/// The customizable actions (⌘1–9 "jump to card" stays fixed).
+/// The customizable actions.
+///
+/// The number families stay fixed, because they are positions rather than
+/// verbs: ⌘1-9 is the nth flight, ⌘⌃1-9 the nth crew, ⌘⌥1-3 a tab. Everything
+/// a sentence can name is here, and every one of these is rebindable.
 enum AppAction: String, CaseIterable {
-    case closeWindow, repoPicker, quickTerminal
+    case closeWindow, repoPicker, quickTerminal, palette
+    case nextFlight, previousFlight
+    case nextCrew, previousCrew
+    case nextSection, previousSection
+    case leaveTerminal
 
     var label: String {
         switch self {
-        case .closeWindow:   return "Close window"
-        case .repoPicker:    return "Switch repository"
-        case .quickTerminal: return "Toggle ATC panel"
+        case .closeWindow:     return "Close window"
+        case .repoPicker:      return "Switch repository"
+        case .quickTerminal:   return "Toggle ATC panel"
+        case .palette:         return "Search everything"
+        case .nextFlight:      return "Next flight"
+        case .previousFlight:  return "Previous flight"
+        case .nextCrew:        return "Next crew"
+        case .previousCrew:    return "Previous crew"
+        case .nextSection:     return "Next section"
+        case .previousSection: return "Previous section"
+        case .leaveTerminal:   return "Leave the terminal"
+        }
+    }
+
+    /// What the action is about, so Settings can group the rows.
+    var group: String {
+        switch self {
+        case .closeWindow, .repoPicker, .palette: return "Window"
+        case .quickTerminal, .leaveTerminal:      return "Terminals"
+        case .nextFlight, .previousFlight:        return "Flights"
+        case .nextCrew, .previousCrew:            return "Crews"
+        case .nextSection, .previousSection:      return "Sections"
         }
     }
 
     var defaultChord: KeyChord {
         switch self {
-        case .closeWindow:   return KeyChord(keyCode: 13, modifiers: [.command, .shift])   // ⌘⇧W
-        case .repoPicker:    return KeyChord(keyCode: 15, modifiers: [.command])           // ⌘R
-        case .quickTerminal: return KeyChord(keyCode: 12, modifiers: [.command, .option])  // ⌘⌥Q
+        case .closeWindow:     return KeyChord(keyCode: 13, modifiers: [.command, .shift])   // ⌘⇧W
+        case .repoPicker:      return KeyChord(keyCode: 15, modifiers: [.command])           // ⌘R
+        case .quickTerminal:   return KeyChord(keyCode: 12, modifiers: [.command, .option])  // ⌘⌥Q
+        case .palette:         return KeyChord(keyCode: 40, modifiers: [.command])           // ⌘K
+        case .previousFlight:  return KeyChord(keyCode: 126, modifiers: [.command, .option]) // ⌘⌥↑
+        case .nextFlight:      return KeyChord(keyCode: 125, modifiers: [.command, .option]) // ⌘⌥↓
+        case .previousCrew:
+            return KeyChord(keyCode: 126, modifiers: [.command, .option, .shift])            // ⌘⌥⇧↑
+        case .nextCrew:
+            return KeyChord(keyCode: 125, modifiers: [.command, .option, .shift])            // ⌘⌥⇧↓
+        case .previousSection: return KeyChord(keyCode: 123, modifiers: [.command, .option]) // ⌘⌥←
+        case .nextSection:     return KeyChord(keyCode: 124, modifiers: [.command, .option]) // ⌘⌥→
+        case .leaveTerminal:   return KeyChord(keyCode: 53, modifiers: [.command])           // ⌘esc
         }
     }
 }

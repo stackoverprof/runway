@@ -533,7 +533,7 @@ struct LeftPane: View {
         )
         .opacity(flightDrag.issue == issue.number ? 0 : 1)
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) { ws.flightNumber = issue.number }
+            withAnimation(.easeInOut(duration: 0.18)) { FlightRoster.fly(issue, ws: ws, reveal: false) }
         }
         .modifier(
             DraggableFlight(
@@ -565,6 +565,7 @@ struct LeftPane: View {
     }
 
     private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
+        ScrollViewReader { scroll in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 ForEach(issues) { issue in
@@ -596,6 +597,15 @@ struct LeftPane: View {
         }
         .contentMargins(.vertical, 0, for: .scrollContent)
         .scrollIndicators(.hidden)
+        // ⌘1-9, ⌘⌥↑↓ and the palette can name a flight that is well below
+        // the fold, so the list goes to it.
+        .onChange(of: ws.revealFlightRequestID) {
+            guard let number = ws.flightNumber, issues.contains(where: { $0.number == number })
+            else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                scroll.scrollTo(number, anchor: .center)
+            }
+        }
         .overlay {
             if issues.isEmpty {
                 placeholderCard(
@@ -605,6 +615,7 @@ struct LeftPane: View {
                 )
                 .padding(.horizontal, 16)
             }
+        }
         }
     }
 

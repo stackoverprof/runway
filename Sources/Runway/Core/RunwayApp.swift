@@ -169,6 +169,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
         let ws = context.workspace
+        let issues = context.issues
+
+        // While the palette is up it owns the keyboard, bar the chord that
+        // closes it again and the one that opened it.
+        if ws.paletteVisible {
+            if KeyBindings.shared.chord(for: .palette).matches(ev) {
+                ws.paletteVisible = false
+                return true
+            }
+            return false
+        }
         let mods = ev.modifierFlags.intersection([.command, .option, .shift, .control])
         let quickFocused = ws.isQuickTerminalFocused
 
@@ -190,6 +201,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Fixed: ⌘F toggles search for whichever tab is active.
         if mods == [.command], ev.keyCode == 3 {
             ws.requestFind()
+            return true
+        }
+
+        // ⌘1-9 is the nth flight in the lane on screen, and ⌘⌃1-9 the nth
+        // crew of the flight. The panes left to right, the modifiers one by
+        // one: the keyboard says which pane you mean.
+        if mods == [.command], let digit = Self.digit(for: ev.keyCode) {
+            FlightRoster.select(number: digit, in: issues, ws: ws)
+            return true
+        }
+        if mods == [.command, .control], let digit = Self.digit(for: ev.keyCode) {
+            FlightCrews.select(number: digit, in: issues, ws: ws)
             return true
         }
 
@@ -228,12 +251,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         switch KeyBindings.shared.action(for: ev) {
-        case .closeWindow:   return false               // handled before the lookup
-        case .repoPicker:    ws.requestRepoPicker()
-        case .quickTerminal: ws.toggleQuick()
-        case .none:          return false
+        case .closeWindow:     return false             // handled before the lookup
+        case .repoPicker:      ws.requestRepoPicker()
+        case .quickTerminal:   ws.toggleQuick()
+        case .palette:         openPalette(ws, in: ev.window)
+        case .nextFlight:      FlightRoster.step(by: 1, in: issues, ws: ws)
+        case .previousFlight:  FlightRoster.step(by: -1, in: issues, ws: ws)
+        case .nextCrew:        FlightCrews.step(by: 1, in: issues, ws: ws)
+        case .previousCrew:    FlightCrews.step(by: -1, in: issues, ws: ws)
+        case .nextSection:     ws.cycleSection(by: 1)
+        case .previousSection: ws.cycleSection(by: -1)
+        case .leaveTerminal:   leaveTerminal(ws, in: ev.window)
+        case .none:            return false
         }
         return true
+    }
+
+    /// Hand the keyboard back to the panes.
+    ///
+    /// A terminal keeps every key it is given, so without this the only way
+    /// out of one is the mouse. Resigning first responder is enough: the
+    /// panes take their own keys from the monitor, not from focus.
+    @MainActor
+    private static func leaveTerminal(_ ws: Workspace, in window: NSWindow?) {
+        let window = window ?? NSApp.keyWindow
+        window?.makeFirstResponder(window?.contentView)
+        ws.setFocus(nil)
+    }
+
+    /// The palette has to hold the keyboard itself, so the terminal under it
+    /// lets go before it opens.
+    @MainActor
+    private static func openPalette(_ ws: Workspace, in window: NSWindow?) {
+        leaveTerminal(ws, in: window)
+        ws.paletteVisible = true
     }
 
     private static func digit(for keyCode: UInt16) -> Int? {

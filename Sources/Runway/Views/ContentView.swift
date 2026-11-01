@@ -58,6 +58,13 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea()
+        // ⌘K, over everything including the terminals.
+        .overlay {
+            if context.workspace.paletteVisible {
+                CommandPalette(ws: context.workspace, issues: context.issues)
+                    .zIndex(10)
+            }
+        }
         .overlay(alignment: .top) {
             if !context.workspace.isFullScreen {
                 WindowDragRegion()

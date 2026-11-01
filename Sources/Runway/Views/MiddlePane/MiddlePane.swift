@@ -15,7 +15,6 @@ struct MiddlePane: View {
     /// Whether the pointer is on the close button, which is the only time it
     /// shows its colour.
     @State private var crewTab: PilotSeat = .pilot
-    @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
     @State private var terminalShare: CGFloat = 0.52
     @State private var dragStartShare: CGFloat?
@@ -479,22 +478,22 @@ struct MiddlePane: View {
         HStack(spacing: 0) {
             ForEach(FlightSection.allCases) { tab in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { section = tab }
+                    withAnimation(.easeInOut(duration: 0.15)) { ws.flightSection = tab }
                 } label: {
                     Text(tab.rawValue)
                         .font(.system(
                             size: 10,
-                            weight: section == tab ? .semibold : .medium,
+                            weight: ws.flightSection == tab ? .semibold : .medium,
                             design: .monospaced
                         ))
                         .foregroundStyle(
-                            section == tab ? Color.white.opacity(0.88) : Color.white.opacity(0.38)
+                            ws.flightSection == tab ? Color.white.opacity(0.88) : Color.white.opacity(0.38)
                         )
                         .padding(.vertical, 5)
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(section == tab ? Color.white.opacity(0.08) : .clear)
+                                .fill(ws.flightSection == tab ? Color.white.opacity(0.08) : .clear)
                         )
                         .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
@@ -515,7 +514,7 @@ struct MiddlePane: View {
     private var sectionBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                switch section {
+                switch ws.flightSection {
                 case .issue: issueSection
                 case .pulls: pullsSection
                 case .slides: slidesSection
@@ -1010,15 +1009,6 @@ enum Runway {
 enum PilotSeat: String, CaseIterable, Identifiable {
     case pilot = "pilot"
     case copilot = "copilot"
-
-    var id: String { rawValue }
-}
-
-enum FlightSection: String, CaseIterable, Identifiable {
-    case issue = "Issue"
-    case pulls = "Pulls"
-    case slides = "Walkthrough"
-    case thread = "Thread"
 
     var id: String { rawValue }
 }

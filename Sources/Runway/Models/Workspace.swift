@@ -49,6 +49,17 @@ enum SubtabNavigation {
     }
 }
 
+/// The four faces of the middle pane, in the order the strip shows them,
+/// which is also the order ⌘⌥1-4 and ⌘⌥← / ⌘⌥→ walk.
+enum FlightSection: String, CaseIterable, Identifiable, Codable {
+    case issue = "Issue"
+    case pulls = "Pulls"
+    case slides = "Walkthrough"
+    case thread = "Thread"
+
+    var id: String { rawValue }
+}
+
 /// Open / Closed inside the Runway tab.
 enum RunwayIssueTab: String, CaseIterable, Identifiable {
     case open = "Open"
@@ -103,6 +114,14 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     var runwayIssueTab: RunwayIssueTab = .open
     /// The issue being flown: what the middle and right panes answer for.
     var flightNumber: Int?
+    /// Which face of the middle pane is in front. Workspace state rather than
+    /// the pane's own, because the keyboard reaches it from outside the view.
+    var flightSection: FlightSection = .issue
+    /// The crew being read larger than the rest, by issue number. Shared for
+    /// the same reason: ⌘⌃1-9 and ⌘⌥⇧↑↓ move it from the key monitor.
+    var readingCrew: Int?
+    /// Whether the command palette is up.
+    var paletteVisible = false
     var feedFilter: FeedFilter = .all
     /// How wide the activity pane is, and the pane beside it. The third pane
     /// takes whatever is left.
@@ -209,6 +228,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     /// flag, so the same request twice in a row still arrives twice.
     private(set) var findRequestID = 0
     private(set) var repoPickerRequestID = 0
+    private(set) var revealFlightRequestID = 0
     private(set) var tabResetRequestID = 0
     private(set) var sourceRefreshRequestID = 0
     private(set) var sourceRefreshTab: FeedTab = .feeds
@@ -227,6 +247,28 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     func requestTabReset() { tabResetRequestID &+= 1 }
 
     func requestRepoPicker() { repoPickerRequestID &+= 1 }
+
+    /// Scroll the flight being flown into view. Only the keyboard and the
+    /// palette ask: a card you clicked is already on screen, and scrolling
+    /// under your own pointer is the kind of help nobody wants.
+    func revealFlight() { revealFlightRequestID &+= 1 }
+
+    func togglePalette() { paletteVisible.toggle() }
+
+    // MARK: The middle pane's sections
+
+    func selectSection(index: Int) {
+        guard FlightSection.allCases.indices.contains(index) else { return }
+        flightSection = FlightSection.allCases[index]
+    }
+
+    func cycleSection(by delta: Int) {
+        let all = FlightSection.allCases
+        guard let index = all.firstIndex(of: flightSection),
+              let next = SubtabNavigation.index(from: index, by: delta, count: all.count)
+        else { return }
+        flightSection = all[next]
+    }
 
     /// Refetch one tab's source in place (see `RunwayURLCommand`).
     func requestSourceRefresh(_ tab: FeedTab) {
@@ -292,6 +334,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     private struct Persisted: Codable {
         var selectedTab: FeedTab?
         var flightNumber: Int?
+        var flightSection: FlightSection?
         var leftWidth: CGFloat?
         var middleWidth: CGFloat?
         var quickHeight: CGFloat?
@@ -348,6 +391,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
               let saved = try? JSONDecoder().decode(Persisted.self, from: data) else { return }
         selectedTab = saved.selectedTab ?? .feeds
         flightNumber = saved.flightNumber
+        flightSection = saved.flightSection ?? .issue
         leftWidth = saved.leftWidth ?? leftWidth
         middleWidth = saved.middleWidth ?? middleWidth
         quickHeight = saved.quickHeight ?? 0
@@ -360,6 +404,7 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         let snapshot = Persisted(
             selectedTab: selectedTab,
             flightNumber: flightNumber,
+            flightSection: flightSection,
             leftWidth: leftWidth,
             middleWidth: middleWidth,
             quickHeight: quickHeight,
