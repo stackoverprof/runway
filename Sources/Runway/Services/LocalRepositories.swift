@@ -50,10 +50,11 @@ enum LocalRepositoryDirectory {
             maximumDepth: maximumDepth
         )
 
-        // Every full clone gets its own row, so a second copy of a repository
-        // (~/Developer/monosentry next to ~/Developer/monorepo/main) can be
-        // picked on its own. Linked worktrees still collapse into their
-        // repository: they only stand in when no full clone exists.
+        // One row per repository. A second copy of the same remote
+        // (~/Developer/monosentry beside ~/Developer/monorepo/main) is the
+        // same board, the same issues and the same pull requests, so
+        // listing each clone only made the picker longer and the choice
+        // meaningless. The preferred clone stands for them all.
         var byRepository: [String: [LocalRepository]] = [:]
         for checkout in checkouts {
             guard let remote = originURL(in: checkout),
@@ -62,10 +63,9 @@ enum LocalRepositoryDirectory {
                 .append(LocalRepository(nameWithOwner: repository, path: checkout))
         }
 
-        return byRepository.values.flatMap { group -> [LocalRepository] in
+        return byRepository.values.compactMap { group -> LocalRepository? in
             let ordered = group.sorted { isPreferred($0, over: $1) }
-            let clones = ordered.filter { isFullClone($0.path) }
-            return clones.isEmpty ? Array(ordered.prefix(1)) : clones
+            return ordered.first { isFullClone($0.path) } ?? ordered.first
         }.sorted {
             let order = $0.nameWithOwner.localizedCaseInsensitiveCompare($1.nameWithOwner)
             if order != .orderedSame { return order == .orderedAscending }

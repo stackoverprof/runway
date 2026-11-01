@@ -25,7 +25,7 @@ struct LocalRepositoriesTests {
         #expect(LocalRepositoryDirectory.parseGitHubRepository(from: remote) == nil)
     }
 
-    @Test("Discovers local clones, the one named after the repository first")
+    @Test("Discovers one row per repository, the clone named after it")
     func discoversLocalClones() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -37,7 +37,8 @@ struct LocalRepositoriesTests {
         try makeRepository(at: worktree, remote: "git@github.com:VISKA-IO/monorepo.git")
 
         let discovered = LocalRepositoryDirectory.discover(in: root.path)
-        #expect(discovered.count == 2)
+        // Two clones of one repository, one row: the same board either way.
+        #expect(discovered.count == 1)
         #expect(discovered.first?.nameWithOwner == "VISKA-IO/monorepo")
         #expect(URL(fileURLWithPath: discovered.first?.path ?? "").lastPathComponent == "monorepo")
         #expect(
@@ -48,8 +49,8 @@ struct LocalRepositoriesTests {
         )
     }
 
-    @Test("Lists a second clone of one repository as its own checkout")
-    func listsSecondClone() throws {
+    @Test("A second clone of one repository does not get a row of its own")
+    func foldsSecondClone() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -63,10 +64,10 @@ struct LocalRepositoriesTests {
         try runGit(["-C", main.path, "worktree", "add", "--quiet", worktree.path, "-b", "fix/thing-1"])
 
         let discovered = LocalRepositoryDirectory.discover(in: root.path)
-        // The worktree folds into its repository; both full clones stay, and
-        // the one named after the repository comes first although it is deeper.
-        #expect(discovered.map { URL(fileURLWithPath: $0.path).lastPathComponent }
-            == ["main", "monosentry"])
+        // One row per repository. The worktree and the second clone both
+        // fold into it, and the clone named after the repository is the one
+        // that stands for them, although it is deeper.
+        #expect(discovered.map { URL(fileURLWithPath: $0.path).lastPathComponent } == ["main"])
         #expect(discovered.allSatisfy { $0.nameWithOwner == "VISKA-IO/monorepo" })
     }
 
