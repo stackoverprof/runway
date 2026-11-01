@@ -21,6 +21,9 @@ struct RightPane: View {
     @State private var copied: String?
     /// The landed crew under the pointer, whose tick becomes a play.
     @State private var hoveringLanded: Int?
+    /// Whether the landed crews are unfolded. Folded by default: a long
+    /// flight is mostly landed crews, and they are not what you came to read.
+    @AppStorage("runway.showLandedCrews") private var showLanded = false
     /// The pane's own view, so a click anywhere else in the window can be
     /// told apart from a click on a crew.
     @State private var paneView = PaneViewBox()
@@ -51,15 +54,52 @@ struct RightPane: View {
         deck.isUp(crewRepositoryName(crew), crew.number)
     }
 
+    /// The crews still in the air, plus any landed one you have brought back
+    /// up: a crew with a terminal open belongs on screen whatever its state.
+    private var flying: [IssueLeg] {
+        crews.filter { !$0.isClosed || isUp($0) }
+    }
+
+    /// The landed crews, which fold away behind one line.
+    private var landed: [IssueLeg] {
+        crews.filter { $0.isClosed && !isUp($0) }
+    }
+
+    /// One line in place of the landed crews, and the way back to them.
+    private func landedToggle(_ count: Int) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { showLanded.toggle() }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: showLanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Runway.purple.opacity(0.7))
+                    .frame(width: 15, height: 15)
+                Text(showLanded ? "Hide \(count) landed" : "Show \(count) landed")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.42))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Runway.purple.opacity(0.07)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Runway.purple.opacity(0.14), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help(showLanded ? "Fold the landed crews away" : "Show every crew that has landed")
+    }
+
     var body: some View {
         // The cards take their own height, measured rather than guessed, and
         // the crews that are up divide every point that is left.
         CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
-            ForEach(crews) { crew in
-                if crew.isClosed, !isUp(crew) {
-                    landedCard(crew)
-                        .layoutValue(key: CrewShareKey.self, value: 0)
-                } else if isUp(crew) {
+            ForEach(flying) { crew in
+                if isUp(crew) {
                     activeBox(crew)
                         .layoutValue(
                             key: CrewShareKey.self,
@@ -68,6 +108,21 @@ struct RightPane: View {
                 } else {
                     standingCard(crew)
                         .layoutValue(key: CrewShareKey.self, value: 0)
+                }
+            }
+
+            // A flight that has been running a while is mostly landed crews:
+            // 54 struck-through lines you have to scroll past to reach the
+            // one that is flying. They fold into their own line instead.
+            let landed = self.landed
+            if !landed.isEmpty {
+                landedToggle(landed.count)
+                    .layoutValue(key: CrewShareKey.self, value: 0)
+                if showLanded {
+                    ForEach(landed) { crew in
+                        landedCard(crew)
+                            .layoutValue(key: CrewShareKey.self, value: 0)
+                    }
                 }
             }
         }

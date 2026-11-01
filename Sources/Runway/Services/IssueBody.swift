@@ -23,6 +23,19 @@ enum IssueBody {
             return said.isEmpty ? nil : said
         }
 
+        /// The checklist's own last line, the one that says "and then it is
+        /// closed". It is not work, so nothing counts it as progress.
+        ///
+        /// It used to read `/close`, after the skill of that name. The skill
+        /// is retired and Runway does the closing, so new checklists say
+        /// `land it`; issues filed before the change still say the old thing.
+        var isLanding: Bool {
+            let said = label
+                .trimmingCharacters(in: .whitespaces)
+                .lowercased()
+            return said == "/close" || said == "land it" || said == "close it"
+        }
+
         /// The step without its blocker, which is what a card shows.
         var label: String {
             guard needs != nil,

@@ -43,11 +43,11 @@ enum FlightStatus: String {
         }
     }
 
-    /// `/close` is the pilot's own last line; it is not work, so it does not
-    /// count toward how far along the flight is.
+    /// The checklist's closing line is the pilot's own; it is not work, so
+    /// it does not count toward how far along the flight is.
     static func of(closed: Bool, steps: [IssueBody.Step]) -> FlightStatus {
         if closed { return .landed }
-        let work = steps.filter { $0.text.lowercased() != "/close" }
+        let work = steps.filter { !$0.isLanding }
         guard !work.isEmpty else { return .onTheStand }
         let done = work.filter(\.done).count
         let remaining = work.filter { !$0.done }

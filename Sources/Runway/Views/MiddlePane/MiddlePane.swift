@@ -9,15 +9,11 @@ struct MiddlePane: View {
     @Bindable var ws: Workspace
     @Bindable var issues: AssignedIssues
     @State private var pullRequests = PullRequests.shared
-    @State private var closing = false
-    @State private var askingToCloseWithoutEvidence = false
     /// The step copied a moment ago, so its card can flash.
     @State private var copiedStep: String?
     @AppStorage(SettingsKey.pilotTerminalPadding) private var pilotPadding = 9
-    @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence) private var askBeforeLanding = true
     /// Whether the pointer is on the close button, which is the only time it
     /// shows its colour.
-    @State private var hoveringState = false
     @State private var crewTab: PilotSeat = .pilot
     @State private var section: FlightSection = .issue
     /// How much of the pane the terminal takes, as a fraction.
@@ -47,7 +43,6 @@ struct MiddlePane: View {
                 terminalArea
                     .frame(height: terminalHeight)
                 sectionDivider(in: geo.size.height)
-                sectionStrip
                 sectionBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -159,7 +154,7 @@ struct MiddlePane: View {
         // like a merge or a word to a teammate, and it changes as the work
         // changes. Counting crews measured only how the work was filed.
         let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
-            .filter { $0.text.lowercased() != "/close" }
+            .filter { !$0.isLanding }
         let landed = flight?.isClosed == true
         let flown = landed ? steps.count : steps.filter(\.done).count
         let trail = landed ? Runway.purple : Runway.green
@@ -508,10 +503,11 @@ struct MiddlePane: View {
             }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 1))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(white: 0.11))
+        )
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
     }
 
     @ViewBuilder
@@ -530,63 +526,25 @@ struct MiddlePane: View {
         }
         .contentMargins(.vertical, 0, for: .scrollContent)
         .scrollIndicators(.hidden)
-        .safeAreaInset(edge: .bottom, spacing: 0) { flightBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) { sectionBar }
     }
 
-    /// The two moves that are always available, whichever tab you are on:
-    /// read the issue where it lives, and close it when it has landed.
+    /// Which part of the flight you are reading, floating at the foot of the
+    /// card. It sits here rather than above the content because it is the
+    /// thing you reach for most, and the content runs under it into a fade
+    /// rather than stopping at a line.
+    ///
+    /// The two buttons that used to live here are gone: opening the issue on
+    /// GitHub is a click on its number, and closing a flight is the pilot's
+    /// own call now, not a button on the pane.
     @ViewBuilder
-    private var flightBar: some View {
-        if let flight {
-            HStack(spacing: 8) {
-                Button {
-                    NSWorkspace.shared.open(flight.url)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.up.forward.square")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Open on GitHub")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(Color.white.opacity(0.6))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.13)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("Open this issue on GitHub")
-
-                stateButton(closed: flight.isClosed)
-            }
-            .alert(
-                "This flight has no walkthrough",
-                isPresented: $askingToCloseWithoutEvidence
-            ) {
-                Button("Close anyway") {
-                    closing = true
-                    Task {
-                        await issues.setClosed(true, issue: flight.number)
-                        closing = false
-                    }
-                }
-                Button("Not yet", role: .cancel) {}
-            } message: {
-                Text(
-                    "Neither this flight nor its crews saved any slides, so "
-                    + "there is no evidence of what shipped. Ask the pilot "
-                    + "for a walkthrough first, or close it anyway."
-                )
-            }
-            .padding(.horizontal, 14)
+    private var sectionBar: some View {
+        if flight != nil {
+            sectionStrip
+            .padding(.horizontal, 12)
             .padding(.top, 28)
             .padding(.bottom, 10)
-            // No bar, no line: the buttons float, and what scrolls under them
+            // No bar, no line: the strip floats, and what scrolls under it
             // fades into the card rather than being cut off by an edge.
             .background(
                 LinearGradient(
@@ -721,70 +679,6 @@ struct MiddlePane: View {
         Task {
             try? await Task.sleep(nanoseconds: 450_000_000)
             if copiedStep == step.text { copiedStep = nil }
-        }
-    }
-
-    /// Close the flight's issue once it has landed, or put it back in the air.
-    private func stateButton(closed flightClosed: Bool) -> some View {
-        Button {
-            guard let number = flight?.number, !closing else { return }
-            // A flight lands with its evidence. Closing one that never made
-            // a walkthrough is allowed, but not by accident.
-            if !flightClosed, askBeforeLanding, slideSets.isEmpty {
-                askingToCloseWithoutEvidence = true
-                return
-            }
-            closing = true
-            Task {
-                await issues.setClosed(!flightClosed, issue: number)
-                closing = false
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: closing
-                    ? "hourglass"
-                    : (flightClosed ? "arrow.counterclockwise.circle" : "checkmark.circle"))
-                    .font(.system(size: 11, weight: .medium))
-                Text(flightClosed ? "Reopen issue" : "Close issue")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            // Quiet until you reach for it. Closing a flight is the one
-            // irreversible thing on this bar, so it should not sit there
-            // coloured, competing with the work above it.
-            .foregroundStyle(
-                hoveringState
-                    ? (flightClosed ? Runway.green : Runway.purple)
-                    : Color.white.opacity(0.6)
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Self.card)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(
-                                hoveringState
-                                    ? (flightClosed ? Runway.green : Runway.purple).opacity(0.14)
-                                    : Color.white.opacity(0.05)
-                            )
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(
-                        hoveringState
-                            ? (flightClosed ? Runway.green : Runway.purple).opacity(0.28)
-                            : Color.white.opacity(0.1),
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.14)) { hoveringState = hovering }
         }
     }
 

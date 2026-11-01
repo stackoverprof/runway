@@ -10,6 +10,7 @@ struct FlightSettings: View {
     @AppStorage(SettingsKey.walkthroughSlides) private var walkthroughSlides = 3
     @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence)
     private var askBeforeLanding = true
+    @AppStorage(SeatDirectory.perSeatKey) private var seatDirectories = true
 
     var body: some View {
         Form {
@@ -65,6 +66,15 @@ struct FlightSettings: View {
                 Text("Closing is never blocked, only questioned once.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+
+                Toggle("Open each seat where its work is", isOn: $seatDirectories)
+                Text(
+                    "A crew starts in its issue's worktree when one exists; a pilot "
+                    + "starts in the folder holding every checkout of the repository. "
+                    + "Off, every seat starts in the main checkout."
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

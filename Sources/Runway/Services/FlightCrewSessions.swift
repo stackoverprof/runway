@@ -77,11 +77,20 @@ enum FlightCrewSessions {
         return slug.isEmpty ? nil : slug
     }
 
-    /// The folder an agent starts in: the repository's main checkout. A crew
-    /// makes its own worktrees from there, as the house rules tell it to.
+    /// The repository's main checkout, whichever seat is asking.
     static func workingDirectory(for repository: String) -> String? {
-        guard let path = GitHubFeed.shared.localPath(for: repository) else { return nil }
-        return path
+        GitHubFeed.shared.localPath(for: repository)
+    }
+
+    /// Where this particular seat opens: see ``SeatDirectory``. A crew lands
+    /// in its own issue's worktree when one exists; a pilot opens at the
+    /// folder that holds every worktree of the repository.
+    static func workingDirectory(
+        rank: AgentRank,
+        repository: String,
+        issue: Int?
+    ) -> String? {
+        SeatDirectory.path(rank: rank, repository: repository, issue: issue)
     }
 
     /// Everything that session needs to know about itself.
@@ -106,7 +115,7 @@ enum FlightCrewSessions {
             focusRepository: repository,
             focusIssueNumber: issue,
             focusIssueTitle: title,
-            focusCheckoutPath: workingDirectory(for: repository),
+            focusCheckoutPath: workingDirectory(rank: rank, repository: repository, issue: issue),
             issueAgentSessionsEnabled: true
         )
         let name = sessionName(rank: rank, repository: repository, issue: issue, title: title)
@@ -148,7 +157,7 @@ enum FlightCrewSessions {
         let key = "\(rank.rawValue):\(repository):\(issue):\(title)"
         if let kept = configs[key] { return kept }
         let built = TerminalConfig(
-            workingDirectory: workingDirectory(for: repository),
+            workingDirectory: workingDirectory(rank: rank, repository: repository, issue: issue),
             environment: environment(
                 rank: rank,
                 repository: repository,

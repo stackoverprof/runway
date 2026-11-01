@@ -70,6 +70,10 @@ enum RoleCard {
             lines.append("You fly \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
             lines.append("Read it: gh issue view \(issue) --repo \(repository)")
+            lines.append("You open in the folder that holds this repository's checkouts, so")
+            lines.append("every crew's worktree is a sibling you can read. That folder is not")
+            lines.append("itself a checkout, so name the repository: `gh ... --repo`, and")
+            lines.append("`git -C <checkout>` when you need git at all.")
             lines.append("Its crews are that issue's sub-issues. You own the order they fly in,")
             lines.append("what each waits on, and when one is done. You do not write the code:")
             lines.append("that is the crew's work.")
@@ -102,10 +106,11 @@ enum RoleCard {
             lines.append("you named only one part of the work: being told to finish something")
             lines.append("includes landing it and tidying the crews behind it.")
             lines.append("")
-            lines.append("Three things do go to the user, and nothing else: closing this")
-            lines.append("flight, work that is not on this flight at all, and a real open")
-            lines.append("question nobody has answered (a decision, a refund, an approval, a")
-            lines.append("credential). Those you put in one line and move on with the rest.")
+            lines.append("Two things go to the user, and nothing else: work that is not on")
+            lines.append("this flight at all, and a real open question nobody has answered (a")
+            lines.append("decision, a refund, an approval, a credential). Those you put in one")
+            lines.append("line and move on with the rest. Closing is not one of them, not the")
+            lines.append("crews and not the flight: when the checklist is clean, land it.")
             lines.append("")
             lines.append("If a command of yours is refused, say so plainly in the same breath")
             lines.append("and hand over the exact line to run. Never present a refusal as a")
@@ -123,6 +128,9 @@ enum RoleCard {
             lines.append("Read it: gh issue view \(issue) --repo \(repository)")
             if let flight {
                 lines.append("You are a crew of flight \(GitHubNumber.reference(flight)).")
+                lines.append("You open in this issue's own worktree when one exists, with its")
+                lines.append("branch already checked out. If none does, you open in the main")
+                lines.append("checkout and make one, as the house rules say.")
                 lines.append("Report to it. The flight does the talking: you do not write")
                 lines.append("`## Situation Development` and you do not touch Slack.")
             }
@@ -169,6 +177,26 @@ enum RoleCard {
         return set == 0 ? 3 : set
     }
 
+    /// Whether a flight needs a walkthrough before it lands. It used to be
+    /// a question the pane asked at the Close button; the pane has no Close
+    /// button any more, because the pilot does the closing, so the rule goes
+    /// where the closing happens.
+    private static var evidenceRule: String {
+        let asked = UserDefaults.standard
+            .object(forKey: SettingsKey.askBeforeLandingWithoutEvidence) as? Bool ?? true
+        guard asked else { return "" }
+        return """
+        A flight lands with its evidence. Before closing one, check that it
+        or one of its crews saved walkthrough slides. None anywhere: capture
+        a walkthrough of what shipped first, and only then close. That is a
+        step to take, not a question to ask.
+        """
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.isEmpty ? "" : "    " + $0 }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespaces) + "\n\n"
+    }
+
     static var conventions: String { """
     These are the procedures themselves, not a summary of some skill. There
     is no `/ticket`, `/close`, `/progress` or `/walkthrough` to invoke: they
@@ -194,7 +222,7 @@ enum RoleCard {
       ## Sketch          optional: the approach, file paths, the small change
       ## Open questions  only what the request genuinely leaves open
       ## Acceptance      verifiable done-criteria
-      ## Progress        the rough ordered path, last line `- [ ] /close`
+      ## Progress        the rough ordered path, last line `- [ ] land it`
       ## Situation Development   the conversation this issue lives in
       ## References      optional
 
@@ -221,11 +249,18 @@ enum RoleCard {
     A Sentry report behind the issue is settled in the same breath: resolved,
     archived, or archived until it escalates.
 
-    Who decides depends on what is landing. A crew is the pilot's call, always,
-    and needs no permission: clean judgment, close it. A flight is Erbin's
-    call: he says close anyway, close it.
+    A crew is the pilot's call, always, and needs no permission: clean
+    judgment, close it.
 
-    Closing is one verb, not a `gh` improvisation:
+    A flight is the pilot's call too, once there is nothing left: every crew
+    landed, every step ticked, nothing waiting on anyone. Close it and say so
+    in one line. Asking "shall I close the flight?" when the checklist already
+    answers that is the question Erbin does not have time for. Only a real
+    open item holds a flight on the ground, and then you name the item, not
+    the close: "refunds for the 10 Castello orders are unassigned" tells him
+    something; "ready to close, shall I?" does not.
+
+    \(evidenceRule)Closing is one verb, not a `gh` improvisation:
 
       runway close <issue> --why "<what shipped, and the PRs that carried it>"
 
@@ -312,7 +347,11 @@ enum RoleCard {
     step no longer needed becomes `- [x] ~~<line>~~ (dropped: <reason>)`.
     Steps are actions in the order they happen, named concretely, with the PR
     as an explicit link `[#n](<url>)`. Stamp the `_Updated <Day, D Mon HH:MM>
-    WIB_` line, and keep `- [ ] /close` last.
+    WIB_` line, and keep `- [ ] land it` last. Older issues end that
+    checklist with `- [ ] /close`, after a skill that no longer exists;
+    reword it to `land it` the next time you touch the section. Never write
+    `/close`, in a checklist or in a sentence: Runway closes issues now, and
+    naming a retired skill makes the step read like something to go and find.
     """ }
 
     @discardableResult
