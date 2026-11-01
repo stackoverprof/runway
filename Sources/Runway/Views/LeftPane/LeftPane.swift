@@ -456,7 +456,11 @@ struct LeftPane: View {
                     HStack(spacing: 0) {
                         issueList(assignedIssues.open, lane: .open)
                             .onChange(of: assignedIssues.open.first?.number, initial: true) {
-                                flyTheFirstFlight()
+                                // Next turn, not this one: choosing a flight
+                                // writes to the workspace, and writing to
+                                // observed state while SwiftUI is mid-update
+                                // trips "setting value during update".
+                                Task { @MainActor in flyTheFirstFlight() }
                             }
                             .frame(width: geo.size.width)
                         issueList(assignedIssues.closed, lane: .closed)

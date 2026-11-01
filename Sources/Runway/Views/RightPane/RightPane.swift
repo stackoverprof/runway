@@ -137,6 +137,14 @@ struct RightPane: View {
         // in the pane. Click the pilot, the left pane, anything else, and the
         // crews go back to an equal share.
         .onAppear { watchClicks() }
+        // Read the worktree list here, where a slow call is allowed. A
+        // view's body may not: launching git from inside an update pass
+        // crashes SwiftUI.
+        .task(id: issues.repository) {
+            SeatDirectory.prime(FlightCrewSessions.workingDirectory(
+                for: issues.repository ?? ""
+            ))
+        }
         .onDisappear {
             if let clickWatch { NSEvent.removeMonitor(clickWatch) }
             clickWatch = nil

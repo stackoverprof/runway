@@ -146,6 +146,13 @@ enum FlightCrewSessions {
     /// answer is remembered until something about the seat changes.
     private static var configs: [String: TerminalConfig] = [:]
 
+    /// Build them again. A seat's folder can become known after its config
+    /// was first built, and a kept config would never pick it up. Live
+    /// terminals are untouched: a config only matters when one is started.
+    static func forgetConfigs() {
+        configs.removeAll()
+    }
+
     static func config(
         rank: AgentRank,
         repository: String,

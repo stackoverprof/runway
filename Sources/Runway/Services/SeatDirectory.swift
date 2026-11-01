@@ -68,16 +68,56 @@ enum SeatDirectory {
         let branch: String?
     }
 
-    /// `git worktree list`, remembered briefly. A pane asks this for every
-    /// crew it draws, and a flight has dozens.
+    /// `git worktree list`, remembered. A pane asks this for every crew it
+    /// draws, and a flight has dozens.
     private static var looked: [String: (at: Date, trees: [Worktree])] = [:]
-    private static let stale: TimeInterval = 10
+    private static var scanning: Set<String> = []
+    private static let stale: TimeInterval = 30
 
+    /// What is known right now, and nothing slower than a dictionary read.
+    ///
+    /// Running git here was a crash, not just a stall: starting a process
+    /// pumps the main runloop, SwiftUI's observer fires, and a second update
+    /// pass begins inside the first. AttributeGraph calls that "setting value
+    /// during update" and aborts. Nothing in a view's body may launch a
+    /// process, so the answer is read from the cache and the cache is filled
+    /// somewhere else.
     static func worktrees(from checkout: String) -> [Worktree] {
-        if let kept = looked[checkout], Date().timeIntervalSince(kept.at) < stale {
-            return kept.trees
+        let kept = looked[checkout]
+        if kept == nil || Date().timeIntervalSince(kept!.at) > stale {
+            scan(checkout)
         }
+        return kept?.trees ?? []
+    }
 
+    /// Fill the cache off the main thread. Safe to call from anywhere,
+    /// including a view: it starts a task and returns.
+    static func scan(_ checkout: String) {
+        guard !scanning.contains(checkout) else { return }
+        scanning.insert(checkout)
+        Task.detached(priority: .utility) {
+            let trees = read(checkout)
+            await MainActor.run {
+                scanning.remove(checkout)
+                let before = looked[checkout]?.trees.map(\.path) ?? []
+                looked[checkout] = (Date(), trees)
+                // A seat's folder is decided when its terminal config is
+                // built and then kept, so a worktree that turns up after
+                // that has to invalidate the config or it is never used.
+                if before != trees.map(\.path) {
+                    FlightCrewSessions.forgetConfigs()
+                }
+            }
+        }
+    }
+
+    /// Prime every repository Runway knows before anything asks.
+    static func prime(_ checkout: String?) {
+        guard let checkout else { return }
+        scan(checkout)
+    }
+
+    nonisolated private static func read(_ checkout: String) -> [Worktree] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git", "-C", checkout, "worktree", "list", "--porcelain"]
@@ -104,13 +144,11 @@ enum SeatDirectory {
             }
             if let path { trees.append(Worktree(path: path, branch: branch)) }
         }
-
-        looked[checkout] = (Date(), trees)
         return trees
     }
 
     /// Look again now: a crew that has just made its worktree should land in
-    /// it the next time its terminal opens, not ten seconds later.
+    /// it the next time its terminal opens, not half a minute later.
     static func refresh() {
         looked.removeAll()
     }
