@@ -21,33 +21,39 @@ final class FlightDrag {
 
     /// Each card's frame, straight from its own geometry rather than a
     /// preference pass, which lags a list that has just reordered.
-    @ObservationIgnored private var frames: [Int: CGRect] = [:]
-    /// Where this coordinate space sits in the window, so a window pointer
-    /// can be read in the list's own terms.
-    @ObservationIgnored private var spaceOrigin: CGPoint?
+    ///
+    /// Kept per lane. The open and the closed list are two scroll views at
+    /// the same place on screen, both full of cards, and both report. In one
+    /// shared map the closed lane's frames sat on top of the open lane's, so
+    /// the card you dropped landed next to a closed issue that is not even in
+    /// the lane, and the reorder fell through to "put it last".
+    @ObservationIgnored private var frames: [String: [Int: CGRect]] = [:]
+    /// Where each lane's coordinate space sits in the window, so a window
+    /// pointer can be read in that list's own terms.
+    @ObservationIgnored private var spaceOrigins: [String: CGPoint] = [:]
     @ObservationIgnored private var grabOffset: CGSize = .zero
     @ObservationIgnored private var lastTarget: Int?
 
     var isDragging: Bool { issue != nil }
 
-    func report(_ number: Int, frame: CGRect) {
-        frames[number] = frame
+    func report(_ number: Int, lane: String, frame: CGRect) {
+        frames[lane, default: [:]][number] = frame
     }
 
-    func forget(_ number: Int) {
-        frames.removeValue(forKey: number)
+    func forget(_ number: Int, lane: String) {
+        frames[lane]?.removeValue(forKey: number)
     }
 
-    func reportSpace(_ frame: CGRect) {
-        spaceOrigin = frame.origin
+    func reportSpace(_ frame: CGRect, lane: String) {
+        spaceOrigins[lane] = frame.origin
     }
 
     /// Where the mouse is, in this list's coordinates. Falls back to the
     /// gesture's own idea when the window cannot say.
-    func pointer(_ location: CGPoint) -> CGPoint {
+    func pointer(_ location: CGPoint, lane: String) -> CGPoint {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
               let content = window.contentView,
-              let origin = spaceOrigin else { return location }
+              let origin = spaceOrigins[lane] else { return location }
         let local = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         let inWindow = content.isFlipped
             ? local
@@ -58,8 +64,8 @@ final class FlightDrag {
     /// The grabbed card's frame, checked against the pointer that grabbed
     /// it. A frame that does not contain the pointer is stale, and starting
     /// from it puts the floating card a row away from the one grabbed.
-    func begin(_ number: Int, at pointer: CGPoint) {
-        guard let frame = frames[number] else { return }
+    func begin(_ number: Int, lane: String, at pointer: CGPoint) {
+        guard let frame = frames[lane]?[number] else { return }
         let grabbed = frame.contains(pointer)
             ? frame
             : CGRect(
@@ -84,8 +90,8 @@ final class FlightDrag {
 
     /// Where the dragged card would land: the first card, top to bottom,
     /// whose middle the pointer is above. Nil means the end of the list.
-    func insertion(at pointer: CGPoint, excluding moving: Int) -> Int? {
-        frames
+    func insertion(at pointer: CGPoint, excluding moving: Int, lane: String) -> Int? {
+        (frames[lane] ?? [:])
             .filter { $0.key != moving && !$0.value.isEmpty }
             .sorted { $0.value.minY < $1.value.minY }
             .first { pointer.y < $0.value.midY }?
@@ -127,6 +133,9 @@ struct FlightDragCard: View {
 struct DraggableFlight: ViewModifier {
     let enabled: Bool
     let issue: Int
+    /// Which list this card is in, so its frame cannot be mistaken for a
+    /// card of the other one.
+    let laneKey: String
     let lane: [Int]
     let repository: String
     let drag: FlightDrag
@@ -136,9 +145,9 @@ struct DraggableFlight: ViewModifier {
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .named(FlightDrag.space))
             } action: { frame in
-                drag.report(issue, frame: frame)
+                drag.report(issue, lane: laneKey, frame: frame)
             }
-            .onDisappear { drag.forget(issue) }
+            .onDisappear { drag.forget(issue, lane: laneKey) }
             // Simultaneous: the card already has a tap that picks the
             // flight, and a plain gesture loses to it.
             .simultaneousGesture(enabled ? reorder : nil)
@@ -147,7 +156,7 @@ struct DraggableFlight: ViewModifier {
     private var reorder: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(FlightDrag.space))
             .onChanged { value in
-                let now = drag.pointer(value.location)
+                let now = drag.pointer(value.location, lane: laneKey)
                 if drag.issue == nil {
                     // Where the drag started, so the grab is checked against
                     // the card the pointer was actually on.
@@ -155,12 +164,12 @@ struct DraggableFlight: ViewModifier {
                         x: now.x - value.translation.width,
                         y: now.y - value.translation.height
                     )
-                    drag.begin(issue, at: start)
+                    drag.begin(issue, lane: laneKey, at: start)
                 }
                 guard drag.issue == issue, !repository.isEmpty else { return }
                 drag.move(to: now)
 
-                let before = drag.insertion(at: now, excluding: issue)
+                let before = drag.insertion(at: now, excluding: issue, lane: laneKey)
                 guard drag.shouldMove(to: before) else { return }
                 var next = lane.filter { $0 != issue }
                 if let before, let at = next.firstIndex(of: before) {

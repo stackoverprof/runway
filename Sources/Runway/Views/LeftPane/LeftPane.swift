@@ -539,6 +539,7 @@ struct LeftPane: View {
             DraggableFlight(
                 enabled: lane == .open,
                 issue: issue.number,
+                laneKey: lane.rawValue,
                 lane: numbers,
                 repository: assignedIssues.repository ?? "",
                 drag: flightDrag
@@ -589,7 +590,7 @@ struct LeftPane: View {
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
             } action: { frame in
-                flightDrag.reportSpace(frame)
+                flightDrag.reportSpace(frame, lane: lane.rawValue)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
