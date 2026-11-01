@@ -33,6 +33,22 @@ final class FlightDrag {
     @ObservationIgnored private var spaceOrigins: [String: CGPoint] = [:]
     @ObservationIgnored private var grabOffset: CGSize = .zero
     @ObservationIgnored private var lastTarget: Int?
+    /// The frame the card was picked up from, the fallback landing spot when
+    /// the lane cannot say where it ended up.
+    @ObservationIgnored private var startingFrame: CGRect = .zero
+    @ObservationIgnored private var landingStartedAt: Date?
+
+    /// True from the moment the mouse is released until the floating card has
+    /// glided into its slot. The list is already in its final order by then;
+    /// only the card is still travelling.
+    private(set) var isLanding = false
+
+    /// A landing whose completion never arrived would block every later drag,
+    /// so the next drag is allowed to clear it.
+    var isStuckLanding: Bool {
+        guard isLanding, let landingStartedAt else { return false }
+        return Date().timeIntervalSince(landingStartedAt) > 1
+    }
 
     var isDragging: Bool { issue != nil }
 
@@ -81,6 +97,7 @@ final class FlightDrag {
             width: pointer.x - grabbed.minX,
             height: pointer.y - grabbed.minY
         )
+        startingFrame = grabbed
         lastTarget = nil
     }
 
@@ -106,10 +123,36 @@ final class FlightDrag {
         return true
     }
 
-    func end() {
+    /// Hold the card where it is and stop the list reacting to it. Called the
+    /// instant the mouse comes up, before the glide.
+    func prepareLanding() {
+        isLanding = true
+        landingStartedAt = Date()
+        lastTarget = nil
+    }
+
+    /// Where the card should come to rest: the slot the list has just made
+    /// for it. Read after the reorder has been laid out, never before.
+    func landingFrame(lane: String) -> CGRect {
+        guard let issue, let frame = frames[lane]?[issue], !frame.isEmpty else {
+            return startingFrame
+        }
+        return frame
+    }
+
+    /// Animated, so the card travels the last few points instead of blinking
+    /// out here and in again there.
+    func land(at origin: CGPoint) {
+        self.origin = origin
+    }
+
+    func reset() {
         issue = nil
         lastTarget = nil
         size = .zero
+        startingFrame = .zero
+        landingStartedAt = nil
+        isLanding = false
     }
 }
 
@@ -156,6 +199,10 @@ struct DraggableFlight: ViewModifier {
     private var reorder: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named(FlightDrag.space))
             .onChanged { value in
+                // A landing that never reported completion must not wedge the
+                // board; the next grab clears it.
+                if drag.isStuckLanding { drag.reset() }
+                guard !drag.isLanding else { return }
                 let now = drag.pointer(value.location, lane: laneKey)
                 if drag.issue == nil {
                     // Where the drag started, so the grab is checked against
@@ -183,7 +230,24 @@ struct DraggableFlight: ViewModifier {
                 }
             }
             .onEnded { _ in
-                withAnimation(.easeInOut(duration: 0.18)) { drag.end() }
+                guard drag.issue == issue, !drag.isLanding else {
+                    drag.reset()
+                    return
+                }
+                drag.prepareLanding()
+                // Next turn of the loop: the list has just been reordered, and
+                // the slot's frame is only right once that layout has run.
+                DispatchQueue.main.async {
+                    let destination = drag.landingFrame(lane: laneKey)
+                    withAnimation(
+                        .spring(response: 0.28, dampingFraction: 0.88),
+                        completionCriteria: .removed
+                    ) {
+                        drag.land(at: destination.origin)
+                    } completion: {
+                        drag.reset()
+                    }
+                }
             }
     }
 }

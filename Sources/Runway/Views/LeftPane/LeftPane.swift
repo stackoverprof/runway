@@ -532,6 +532,9 @@ struct LeftPane: View {
             }
         )
         .opacity(flightDrag.issue == issue.number ? 0 : 1)
+        // No fade. The card in the list appears the moment the floating one
+        // is let go, so the two never overlap and never both go missing.
+        .animation(nil, value: flightDrag.issue)
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.18)) { FlightRoster.fly(issue, ws: ws, reveal: false) }
         }
