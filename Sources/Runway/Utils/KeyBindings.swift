@@ -67,7 +67,7 @@ struct KeyChord: Codable, Equatable {
 enum AppAction: String, CaseIterable {
     case closeWindow, repoPicker, quickTerminal, palette
     case nextFlight, previousFlight
-    case nextCrew, previousCrew
+    case nextCrew, previousCrew, toggleCrew
     case nextSection, previousSection
     case leaveTerminal
 
@@ -81,6 +81,7 @@ enum AppAction: String, CaseIterable {
         case .previousFlight:  return "Previous flight"
         case .nextCrew:        return "Next crew"
         case .previousCrew:    return "Previous crew"
+        case .toggleCrew:      return "Stand the crew up or down"
         case .nextSection:     return "Next section"
         case .previousSection: return "Previous section"
         case .leaveTerminal:   return "Leave the terminal"
@@ -93,7 +94,7 @@ enum AppAction: String, CaseIterable {
         case .closeWindow, .repoPicker, .palette: return "Window"
         case .quickTerminal, .leaveTerminal:      return "Terminals"
         case .nextFlight, .previousFlight:        return "Flights"
-        case .nextCrew, .previousCrew:            return "Crews"
+        case .nextCrew, .previousCrew, .toggleCrew: return "Crews"
         case .nextSection, .previousSection:      return "Sections"
         }
     }
@@ -110,6 +111,8 @@ enum AppAction: String, CaseIterable {
             return KeyChord(keyCode: 126, modifiers: [.command, .option, .shift])            // ⌘⌥⇧↑
         case .nextCrew:
             return KeyChord(keyCode: 125, modifiers: [.command, .option, .shift])            // ⌘⌥⇧↓
+        case .toggleCrew:
+            return KeyChord(keyCode: 36, modifiers: [.command, .control])                    // ⌘⌃↩
         case .previousSection: return KeyChord(keyCode: 123, modifiers: [.command, .option]) // ⌘⌥←
         case .nextSection:     return KeyChord(keyCode: 124, modifiers: [.command, .option]) // ⌘⌥→
         case .leaveTerminal:   return KeyChord(keyCode: 53, modifiers: [.command])           // ⌘esc

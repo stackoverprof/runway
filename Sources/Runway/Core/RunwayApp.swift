@@ -259,6 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .previousFlight:  FlightRoster.step(by: -1, in: issues, ws: ws)
         case .nextCrew:        FlightCrews.step(by: 1, in: issues, ws: ws)
         case .previousCrew:    FlightCrews.step(by: -1, in: issues, ws: ws)
+        case .toggleCrew:      FlightCrews.toggle(in: issues, ws: ws)
         case .nextSection:     ws.cycleSection(by: 1)
         case .previousSection: ws.cycleSection(by: -1)
         case .leaveTerminal:   leaveTerminal(ws, in: ev.window)

@@ -39,6 +39,26 @@ enum FlightCrews {
         ws.readingCrew = crew.number
     }
 
+    /// Stand the crew being read up, or down if it is already up. The crew
+    /// is not lost when it stands down: the card stays, and the next press
+    /// brings it back with its session intact.
+    static func toggle(in issues: AssignedIssues, ws: Workspace) {
+        let crews = all(in: issues, flight: ws.flightNumber)
+        guard let number = ws.readingCrew,
+              let crew = crews.first(where: { $0.number == number }) else {
+            // Nothing is being read, so the first crew is what you meant.
+            step(by: 1, in: issues, ws: ws)
+            return
+        }
+        let repository = repository(of: crew, in: issues)
+        if CrewDeck.shared.isUp(repository, crew.number) {
+            CrewDeck.shared.standDown(repository, crew.number, title: crew.title)
+            ws.readingCrew = nil
+        } else {
+            CrewDeck.shared.bringUp(repository, crew.number, title: crew.title)
+        }
+    }
+
     /// Step to the crew before or after the one being read. With none read,
     /// a step forward starts at the first.
     static func step(by delta: Int, in issues: AssignedIssues, ws: Workspace) {

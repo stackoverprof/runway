@@ -114,6 +114,19 @@ struct CommandPalette: View {
             group: "Command",
             chord: KeyBindings.shared.chord(for: .quickTerminal).display
         ) { ws.toggleQuick() })
+        if let number = ws.readingCrew,
+           let crew = FlightCrews.all(in: issues, flight: ws.flightNumber)
+               .first(where: { $0.number == number }) {
+            let up = CrewDeck.shared.isUp(FlightCrews.repository(of: crew, in: issues), crew.number)
+            items.append(PaletteItem(
+                id: "toggle-crew",
+                icon: up ? "pause.fill" : "play.fill",
+                title: up ? "Stand down \(crew.title)" : "Bring up \(crew.title)",
+                detail: GitHubNumber.reference(crew.number),
+                group: "Command",
+                chord: KeyBindings.shared.chord(for: .toggleCrew).display
+            ) { FlightCrews.toggle(in: issues, ws: ws) })
+        }
         items.append(PaletteItem(
             id: "landed-crews",
             icon: "chevron.down",
