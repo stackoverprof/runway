@@ -27,17 +27,16 @@ struct AssignedIssueCard: View {
         .background(
             ZStack {
                 RunwayCard.fill(hovering: hovering, selected: isFlying)
-                // A little daylight on the left end, falling away by the
-                // time it reaches the title. The flap tiles are the darkest
-                // thing on the card, so lifting the paper right behind them
-                // is what makes the number read first; lifting the whole
-                // card would only move the problem.
+                // A little daylight behind the flaps and no further. The
+                // tiles are the darkest thing on the card, so the paper
+                // right behind them is where the contrast has to come
+                // from; a wash that carried on under the title lit half
+                // the card and stopped being a highlight.
                 LinearGradient(
                     stops: [
-                        .init(color: .white.opacity(0.055), location: 0),
-                        .init(color: .white.opacity(0.032), location: 0.18),
-                        .init(color: .white.opacity(0.010), location: 0.38),
-                        .init(color: .clear, location: 0.58),
+                        .init(color: .white.opacity(0.05), location: 0),
+                        .init(color: .white.opacity(0.034), location: 0.11),
+                        .init(color: .clear, location: 0.26),
                     ],
                     startPoint: .leading,
                     endPoint: .trailing
@@ -55,7 +54,9 @@ struct AssignedIssueCard: View {
         )
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
-        .offset(y: hovering ? -1 : 0)
+        // No lift on hover. The paper already goes a shade lighter, and a
+        // card that also jumps a point makes a list twitch as the pointer
+        // runs down it.
         .animation(.easeOut(duration: 0.15), value: hovering)
         .onHover { hovering = $0 }
         .contextMenu {
