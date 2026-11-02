@@ -43,6 +43,14 @@ struct AssignedIssueCard: View {
                 )
             }
             .clipShape(ticket, style: FillStyle(eoFill: true))
+            // And then the card's own bounds, which is the overflow-hidden
+            // this needed all along. Even-odd counts a point that is inside
+            // the notch circle but outside the card as *inside* the shape:
+            // one crossing, not two. So each bite also painted a half disc
+            // of card colour out into the gap, and the pair at a join met
+            // as a full oval. Clipping to the rounded rect after the
+            // even-odd clip throws that half away and leaves a bite.
+            .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
         )
         // The hairline follows the bite round.
         //
@@ -57,6 +65,7 @@ struct AssignedIssueCard: View {
             ticket
                 .stroke(RunwayCard.border(hovering: hovering, selected: isFlying), lineWidth: 2)
                 .clipShape(ticket, style: FillStyle(eoFill: true))
+                .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
         )
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
