@@ -25,8 +25,25 @@ struct AssignedIssueCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: RunwayCard.radius)
-                .fill(RunwayCard.fill(hovering: hovering, selected: isFlying))
+            ZStack {
+                RunwayCard.fill(hovering: hovering, selected: isFlying)
+                // A little daylight on the left end, falling away by the
+                // time it reaches the title. The flap tiles are the darkest
+                // thing on the card, so lifting the paper right behind them
+                // is what makes the number read first; lifting the whole
+                // card would only move the problem.
+                LinearGradient(
+                    stops: [
+                        .init(color: .white.opacity(0.055), location: 0),
+                        .init(color: .white.opacity(0.032), location: 0.18),
+                        .init(color: .white.opacity(0.010), location: 0.38),
+                        .init(color: .clear, location: 0.58),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
         )
         // The same hairline every other card in Runway wears. It was left
         // off while the ticket had notches, because a border ran through the
