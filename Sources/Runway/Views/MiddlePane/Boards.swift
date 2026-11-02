@@ -277,49 +277,61 @@ struct FlapNumber: View {
 
 /// One tile of a split-flap board.
 ///
-/// The shading is behind the digit, never over it. An overlay across the
-/// whole tile darkened the middle of the glyph as well as the card, and 3,
-/// 5, 6 and 8 went muddy exactly where they need their crossbar. So the
-/// face carries the fold, the digit stays pure white, and the seam is a
-/// single black hairline across the middle. No edge and no top lip: those
-/// read as a bump, and a flap board is flat.
+/// Two tones meeting at the middle, darker than the card they sit on, and
+/// the fold drawn *behind* the digit. Every earlier try put the line over
+/// the glyph, and a black rule through the waist of a 3, a 5, a 6 or an 8
+/// is exactly where those digits carry their meaning. Here the fold is part
+/// of the tile's back and the digit wears a soft halo in the lower tone, so
+/// the line visibly stops at each stroke and picks up on the far side, the
+/// way it does on a real board.
 struct FlapTile: View {
     let digit: Character
     var size: CGFloat = 11.5
+
+    /// The two halves. A hard step at the middle, no blur: the fold is an
+    /// edge, not a gradient.
+    static let upper = Color(red: 0.063, green: 0.067, blue: 0.075)  // #101113
+    static let lower = Color(red: 0.020, green: 0.020, blue: 0.024)  // #050506
+    /// The lip of the lower flap catching the light, one point under the
+    /// seam. Without it the two halves read as one dark rectangle with a
+    /// scratch across it.
+    static let lit = Color(red: 0.110, green: 0.114, blue: 0.125)    // #1c1d20
 
     var body: some View {
         Text(String(digit))
             .font(.mono(size, .semibold))
             .foregroundStyle(.white)
+            // The halo that eats the fold where a stroke crosses it. Three
+            // passes, one wide and two tight, so the lines stop cleanly
+            // without the digit growing a visible outline. It has to be the
+            // lower tone exactly, or it shows as a smudge round the glyph.
+            .shadow(color: Self.lower, radius: 2)
+            .shadow(color: Self.lower, radius: 1)
+            .shadow(color: Self.lower, radius: 1)
             .frame(width: size * 1.14)
             .padding(.vertical, size * 0.26)
-            .background(FlapFace.face)
-            // The seam. One point, across the digit too, the way the two
-            // halves of a real flap meet.
-            //
-            // Nothing else: a black edge round each tile and a lit top lip
-            // made every digit look like a key standing proud of the card,
-            // a row of bumps rather than a board. The gradient alone is
-            // enough fold, and the tiles sit 2 points apart.
-            .overlay {
-                Rectangle().fill(Color.black.opacity(0.9)).frame(height: 1)
+            .background {
+                // All of it behind the text, which is what SwiftUI gives for
+                // free: a background is a background, so there is no z-index
+                // to get wrong and nothing to isolate.
+                ZStack(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Self.upper
+                        Self.lower
+                    }
+                    GeometryReader { geo in
+                        let middle = (geo.size.height / 2).rounded()
+                        Rectangle().fill(Color.black)
+                            .frame(height: 1)
+                            .offset(y: middle)
+                        Rectangle().fill(Self.lit)
+                            .frame(height: 1)
+                            .offset(y: middle + 1)
+                    }
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
-}
-
-/// The fold shading, held once so the card and the header cannot drift.
-@MainActor
-enum FlapFace {
-    static let face = LinearGradient(
-        stops: [
-            .init(color: Color(red: 0.149, green: 0.153, blue: 0.165), location: 0),    // #26272a
-            .init(color: Color(red: 0.102, green: 0.106, blue: 0.114), location: 0.49), // #1a1b1d
-            .init(color: Color(red: 0.059, green: 0.063, blue: 0.067), location: 0.51), // #0f1011
-            .init(color: Color(red: 0.102, green: 0.106, blue: 0.114), location: 1),    // #1a1b1d
-        ],
-        startPoint: .top, endPoint: .bottom
-    )
 }
 
 /// One seat in the pilot/copilot switch: a dot, a word, and a pill when it
