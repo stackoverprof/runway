@@ -24,11 +24,18 @@ struct AssignedIssueCard: View {
             stub
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(paper))
-        // No border at all, the way the sheet draws it. A hairline looks
-        // harmless until it runs through the notches: it closes the bite
-        // back up and the pair at a card join reads as a bead on a string.
-        // The flight on screen is told apart by its lighter paper instead.
+        .background(
+            RoundedRectangle(cornerRadius: RunwayCard.radius)
+                .fill(RunwayCard.fill(hovering: hovering, selected: isFlying))
+        )
+        // The same hairline every other card in Runway wears. It was left
+        // off while the ticket had notches, because a border ran through the
+        // bite and closed it back up; the notches are gone, so the ticket
+        // can look like the rest of the window again.
+        .overlay(
+            RoundedRectangle(cornerRadius: RunwayCard.radius)
+                .stroke(RunwayCard.border(hovering: hovering, selected: isFlying), lineWidth: 1)
+        )
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
         .offset(y: hovering ? -1 : 0)
@@ -65,9 +72,6 @@ struct AssignedIssueCard: View {
     /// The sheet's own palette. Named here so the card reads as the design
     /// and not as a pile of literals.
     private enum Paper {
-        static let base = Color(red: 0.094, green: 0.098, blue: 0.106)   // #18191b
-        static let hover = Color(red: 0.125, green: 0.129, blue: 0.141)  // #202124
-        static let flying = Color(red: 0.16, green: 0.165, blue: 0.18)
         static let tile = Color(red: 0.055, green: 0.059, blue: 0.063)   // #0e0f10
         static let line = Color(red: 0.18, green: 0.188, blue: 0.2)      // #2e3033
         static let fill = Color(red: 0.275, green: 0.282, blue: 0.298)   // #46484c
@@ -79,34 +83,20 @@ struct AssignedIssueCard: View {
         static let mile = Color(red: 0.416, green: 0.424, blue: 0.439)   // #6a6c70
     }
 
+    /// What the plane cuts its gap out of: the card's own fill, so the notch
+    /// in the mile bar is invisible rather than a grey smudge.
     private var paper: Color {
-        isFlying ? Paper.flying : (hovering ? Paper.hover : Paper.base)
+        RunwayCard.fill(hovering: hovering, selected: isFlying)
     }
 
-    /// The split-flap board: one tile a digit.
-    ///
-    /// The seam is not a drawn line. Each tile's own face darkens into the
-    /// middle and back out, and a second gradient lies over the digit as
-    /// well, so the number reads as curving into the fold the way an open
-    /// book's gutter does. A 1-point black rule did the same job at a
-    /// distance and looked like a scratch up close.
+    /// The split-flap board: one tile a digit, shaded behind the glyph so
+    /// the digit itself stays clean. `FlapTile` holds the look, shared with
+    /// the pane's header.
     private var flaps: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(String(issue.number).enumerated()), id: \.offset) { _, digit in
-                Text(String(digit))
-                    .font(.mono(11.5, .semibold))
-                    .foregroundStyle(Paper.ink)
-                    .frame(width: 13)
-                    .padding(.vertical, 3)
-                    .background(FlapFace.face)
-                    .overlay(FlapFace.fold)
-                    .clipShape(RoundedRectangle(cornerRadius: 2.5))
-            }
-        }
-        .padding(.leading, 11)
-        .padding(.vertical, 11)
+        FlapNumber(number: issue.number, size: 11.5)
+            .padding(.leading, 11)
+            .padding(.vertical, 11)
     }
-
 
     private var destination: some View {
         VStack(alignment: .leading, spacing: 2) {

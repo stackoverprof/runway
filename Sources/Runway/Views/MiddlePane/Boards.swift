@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The departures-board look, as the pieces every tab is built from.
@@ -37,10 +38,14 @@ enum Board {
     static let veilBand = Color.white.opacity(0.022)
     static let veilHover = Color.white.opacity(0.075)
     static let veilDay = Color.black.opacity(0.22)
-    /// The face you are on is the dark one. On glass, lighter reads as
-    /// "raised, not yet pressed"; the open face is the one you have cut
-    /// down to, so it sits below the rest of the strip.
-    static let veilActive = Color.black.opacity(0.45)
+    /// The strip along the floor of the box is darker than the body above
+    /// it, the whole strip and not only the open face: it is the base the
+    /// board stands on, and a lighter band under a dark board reads as a
+    /// shelf pushed in front of it.
+    static let veilFloor = Color.black.opacity(0.34)
+    /// Darker again for the face you are on, which is the one you have cut
+    /// down to.
+    static let veilActive = Color.black.opacity(0.30)
     static let veilTint = Color.black.opacity(0.42)
 
     static let radius: CGFloat = 10
@@ -262,18 +267,45 @@ struct FlapNumber: View {
     var size: CGFloat = 11.5
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 3) {
             ForEach(Array(String(number).enumerated()), id: \.offset) { _, digit in
-                Text(String(digit))
-                    .font(.mono(size, .semibold))
-                    .foregroundStyle(Board.ink)
-                    .frame(width: size * 1.14)
-                    .padding(.vertical, size * 0.26)
-                    .background(FlapFace.face)
-                    .overlay(FlapFace.fold)
-                    .clipShape(RoundedRectangle(cornerRadius: 2.5))
+                FlapTile(digit: digit, size: size)
             }
         }
+    }
+}
+
+/// One tile of a split-flap board.
+///
+/// The shading is behind the digit, never over it. An overlay across the
+/// whole tile darkened the middle of the glyph as well as the card, and 3,
+/// 5, 6 and 8 went muddy exactly where they need their crossbar. So the
+/// face carries the fold, the digit stays pure white, and the seam is a
+/// single black hairline across the middle.
+struct FlapTile: View {
+    let digit: Character
+    var size: CGFloat = 11.5
+
+    var body: some View {
+        Text(String(digit))
+            .font(.mono(size, .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size * 1.14)
+            .padding(.vertical, size * 0.26)
+            .background(FlapFace.face)
+            // The lip of the upper flap catching the light.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+            }
+            // The seam. One point, across the digit too, the way the two
+            // halves of a real flap meet.
+            .overlay {
+                Rectangle().fill(Color.black.opacity(0.9)).frame(height: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            // A black edge, and 3 points between tiles so two edges never
+            // merge into one thick rule.
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black, lineWidth: 1))
     }
 }
 
@@ -282,22 +314,10 @@ struct FlapNumber: View {
 enum FlapFace {
     static let face = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 0),
-            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.46),
-            .init(color: Color(red: 0.031, green: 0.035, blue: 0.039), location: 0.50),
-            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.54),
-            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 1),
-        ],
-        startPoint: .top, endPoint: .bottom
-    )
-
-    static let fold = LinearGradient(
-        stops: [
-            .init(color: .clear, location: 0.28),
-            .init(color: .black.opacity(0.5), location: 0.47),
-            .init(color: .black.opacity(0.7), location: 0.50),
-            .init(color: .black.opacity(0.5), location: 0.53),
-            .init(color: .clear, location: 0.72),
+            .init(color: Color(red: 0.149, green: 0.153, blue: 0.165), location: 0),    // #26272a
+            .init(color: Color(red: 0.102, green: 0.106, blue: 0.114), location: 0.49), // #1a1b1d
+            .init(color: Color(red: 0.059, green: 0.063, blue: 0.067), location: 0.51), // #0f1011
+            .init(color: Color(red: 0.102, green: 0.106, blue: 0.114), location: 1),    // #1a1b1d
         ],
         startPoint: .top, endPoint: .bottom
     )
@@ -372,22 +392,21 @@ struct SplitHandle: View {
             .focusable()
             .focused($focused)
             // Arrow keys yes, system focus ring no: a blue rectangle across
-            // the whole pane is louder than the handle it marks. The bar
-            // lights up instead, the same way it does on hover.
+            // the whole pane is louder than the handle it marks.
             .focusEffectDisabled()
             .onKeyPress(.upArrow) { onStep(-16); return .handled }
             .onKeyPress(.downArrow) { onStep(16); return .handled }
             .help("Drag to resize the terminal, double-click to reset")
     }
 
-    /// Lit only while the pointer is on it or you are dragging it. Focus
-    /// is deliberately left out: clicking the handle gives it focus and
-    /// keeps it, so a focused handle stayed bright long after the pointer
-    /// had gone and read as a control stuck on.
+    /// Lit only while the pointer is on it or you are dragging it. Focus is
+    /// deliberately left out: clicking the handle gives it focus and keeps
+    /// it, so a focused handle stayed bright long after the pointer had gone
+    /// and read as a control stuck on.
     private var lit: Bool { hovering || dragging }
 }
 
-/// One face in the strip at the foot of the pane.
+/// One face in the strip along the floor of the box.
 struct SectionTab: View {
     let title: String
     let count: Int?

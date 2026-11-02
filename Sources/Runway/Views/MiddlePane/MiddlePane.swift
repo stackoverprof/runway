@@ -539,7 +539,7 @@ struct MiddlePane: View {
                 }
             }
         }
-        .background(Board.veilBar)
+        .background(Board.veilFloor)
     }
 
     /// What each face is holding, so you know before you open it.

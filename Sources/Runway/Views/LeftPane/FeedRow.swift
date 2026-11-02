@@ -79,7 +79,7 @@ struct FeedRow: View {
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
                     .allowsHitTesting(false)
                 }
             }
@@ -205,28 +205,28 @@ struct FeedRow: View {
                 ? Color(red: 0.048, green: 0.027, blue: 0.112)
                 : Color(red: 0.039, green: 0.022, blue: 0.090)
         }
-        return Color(white: hovering ? 0.09 : 0.075)
+        return RunwayCard.fill(hovering: hovering)
     }
 
     private var cardBorderColor: Color {
         if case .prMerged = event.kind {
             return Self.purple.opacity(hovering ? 0.22 : 0.10)
         } else {
-            return Color.white.opacity(hovering ? 0.16 : 0.06)
+            return RunwayCard.border(hovering: hovering)
         }
     }
 
     private var cardBackground: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10).fill(cardBackgroundColor)
+            RoundedRectangle(cornerRadius: RunwayCard.radius).fill(cardBackgroundColor)
             if case .prMerged = event.kind {
                 MergeCardDecorations()
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
             }
         }
     }
 
     private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1)
+        RoundedRectangle(cornerRadius: RunwayCard.radius).stroke(cardBorderColor, lineWidth: 1)
     }
 }
