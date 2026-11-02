@@ -58,16 +58,22 @@ struct MiddlePane: View {
             // the card is bracketed in its own colour. It sits on the card,
             // behind the box, now that the strip is the box's floor.
             .background(alignment: .bottom) {
+                // A long ramp, not a band. At 110 points the colour only
+                // showed under the strip and stopped at a visible line
+                // halfway up the box; it climbs most of the board now and
+                // arrives at nothing, so the foot reads as lit rather than
+                // as a second surface.
                 LinearGradient(
-                    colors: [
-                        Color.clear,
-                        flightStatus.color.opacity(0.07),
-                        flightStatus.color.opacity(0.20),
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: flightStatus.color.opacity(0.045), location: 0.42),
+                        .init(color: flightStatus.color.opacity(0.11), location: 0.72),
+                        .init(color: flightStatus.color.opacity(0.26), location: 1),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 110)
+                .frame(height: 320)
                 .allowsHitTesting(false)
             }
             .background(Self.card)
