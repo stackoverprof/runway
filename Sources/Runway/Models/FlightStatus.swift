@@ -28,8 +28,11 @@ enum FlightStatus: String {
         }
     }
 
-    /// How far along the flight is: how many steps of its checklist are
+    /// How far along the flight is: how many transits of its checklist are
     /// ticked out of how many there are.
+    ///
+    /// A step of the checklist is a transit. Not a leg, not a stop, not a
+    /// mile: one word, used everywhere the count is printed.
     ///
     /// The checklist, not the crews. Progress is what the pilot actually
     /// keeps: it covers work that is nobody's crew, a merge, a deploy, a
@@ -41,7 +44,7 @@ enum FlightStatus: String {
     /// The closing line is the pilot's own and is not work, so it never
     /// counts. A flight with no checklist at all falls back to its crews,
     /// which is better than printing nothing.
-    static func miles(of issue: AssignedIssue) -> (done: Int, total: Int) {
+    static func transits(of issue: AssignedIssue) -> (done: Int, total: Int) {
         let work = IssueBody.steps("Progress", in: issue.body).filter { !$0.isLanding }
         if work.isEmpty, issue.isFlight { return (issue.landedLegs, issue.legs.count) }
         return (work.filter(\.done).count, work.count)
@@ -49,7 +52,7 @@ enum FlightStatus: String {
 
     static func of(_ issue: AssignedIssue) -> FlightStatus {
         if issue.isClosed { return .landed }
-        let flown = miles(of: issue)
+        let flown = transits(of: issue)
         return flown.done > 0 ? .onAir : .scheduled
     }
 

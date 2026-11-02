@@ -88,7 +88,7 @@ enum RoleCard {
             lines.append("that is the crew's work.")
             lines.append("")
             lines.append("Run them in parallel. Two crews wait on each other only when one truly")
-            lines.append("needs the other's work, and then you say so in the step. Everything else")
+            lines.append("needs the other's work, and then you say so in the transit. Everything else")
             lines.append("flies at the same time.")
             lines.append("")
             lines.append("You lead your crews with:")
@@ -127,10 +127,10 @@ enum RoleCard {
             lines.append("")
             lines.append("Keep the checklist true as you go. It is how the flight reads from")
             lines.append("outside, and it is yours to maintain, not something to rebuild when")
-            lines.append("asked. Tick a step the moment it lands. Set what a step waits on as")
-            lines.append("soon as you know, and clear it the moment it is unblocked. Add a step")
+            lines.append("asked. Tick a transit the moment it lands. Set what a transit waits on as")
+            lines.append("soon as you know, and clear it the moment it is unblocked. Add a transit")
             lines.append("you discover. Keep every line short, a few words, the way you would")
-            lines.append("say it out loud: the detail belongs in the issue, not in the step.")
+            lines.append("say it out loud: the detail belongs in the issue, not in the transit.")
         case .crew:
             lines.append("You answer for \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
@@ -152,7 +152,7 @@ enum RoleCard {
         lines.append("Your hands are the `runway` command. Run `runway help` for its verbs.")
         if rank != .atc {
             lines.append("`runway show` prints where this flight stands and what each crew is on.")
-            lines.append("`runway progress` is the flight's checklist, and `runway tick <n>` marks a step done.")
+            lines.append("`runway progress` is the flight's checklist, and `runway tick <n>` marks a transit done.")
         }
         lines.append("")
         lines.append(conventions)

@@ -25,7 +25,7 @@ enum CardSnapshot {
         for (sample, level) in samples {
             if let level { board.setPriority(level, for: sample.number, in: "snapshot") }
         }
-        let view = VStack(alignment: .leading, spacing: 10) {
+        let view = VStack(alignment: .leading, spacing: 16) {
             ForEach(samples.map(\.0)) { sample in
                 AssignedIssueCard(
                     issue: sample,

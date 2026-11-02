@@ -22,7 +22,7 @@ struct MiddlePane: View {
     /// How many pulls the board is showing; the rest are behind the button
     /// at its foot.
     @State private var pullsShown = 13
-    /// The slow pulse the boarding stop wears. One timer for the pane, not
+    /// The slow pulse the boarding transit wears. One timer for the pane, not
     /// one per row.
     @State private var blink = false
     /// Flights whose seats stay mounted, oldest first.
@@ -182,7 +182,7 @@ struct MiddlePane: View {
                 Spacer(minLength: 0)
             }
 
-            legsBar
+            transitBar
                 .padding(.top, 5)
         }
         .padding(.horizontal, 14)
@@ -230,9 +230,12 @@ struct MiddlePane: View {
         return (FlightPriority.label(level), FlightPriority.color(level))
     }
 
-    /// The flight as a route: one segment a leg, filling teal as each lands,
-    /// a ring at the gate, and the count at the end.
-    private var legsBar: some View {
+    /// The flight as a route: one segment a transit, filling teal as each
+    /// lands, a ring at the gate, and the count at the end.
+    ///
+    /// A step of the checklist is a transit, everywhere it is named: not a
+    /// leg, not a stop, not a mile. One word for one thing.
+    private var transitBar: some View {
         let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
             .filter { !$0.isLanding }
         let landed = flight?.isClosed == true
@@ -261,7 +264,7 @@ struct MiddlePane: View {
                 .background(Circle().fill(landed ? trail : Color.clear))
                 .frame(width: 7, height: 7)
 
-            Text(verbatim: steps.isEmpty ? "NO LEGS" : "\(flown)/\(steps.count) LEGS")
+            Text(verbatim: steps.isEmpty ? "NO TRANSITS" : "\(flown)/\(steps.count) TRANSITS")
                 .font(.mono(8))
                 .tracking(1.4)
                 .foregroundStyle(Board.dim)
@@ -618,8 +621,8 @@ struct MiddlePane: View {
 
     private static let paneTop = "flight.pane.top"
 
-    /// The legs as a departures board: a number, the stop, and where it
-    /// stands. The first unfinished one is BOARDING and blinks; the rest are
+    /// The transits as a departures board: a number, the transit, and where
+    /// it stands. The first unfinished one is BOARDING and blinks; the rest are
     /// SCHEDULED; the ones behind it are LANDED. Remarks, which is what the
     /// issue says done looks like, sit at the foot of the same board.
     private var issueSection: some View {
@@ -628,7 +631,7 @@ struct MiddlePane: View {
         let boarding = steps.firstIndex { !$0.done }
         let cleared = acceptance.filter(\.done).count
         return BoardSheet {
-            BoardColumns(names: ["No", "Stop", "Status"], widths: [34, nil, 92])
+            BoardColumns(names: ["No", "Transit", "Status"], widths: [34, nil, 92])
 
             if steps.isEmpty {
                 boardNote("The pilot has not written a checklist for this flight yet.")
@@ -710,7 +713,7 @@ struct MiddlePane: View {
         }
     }
 
-    /// One stop on the board.
+    /// One transit on the board.
     private func stepRow(_ step: IssueBody.Step, number: Int, boarding: Bool) -> some View {
         let word = step.done ? "LANDED" : (boarding ? "BOARDING" : "SCHEDULED")
         let ink = step.done ? Board.purple : (boarding ? Board.teal : Board.faint)

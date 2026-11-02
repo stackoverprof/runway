@@ -71,9 +71,9 @@ struct CommandPalette: View {
     /// numbers for one flight is worse than any of them being wrong.
     private func detail(for flight: AssignedIssue) -> String {
         let reference = GitHubNumber.reference(flight.number)
-        let flown = FlightStatus.miles(of: flight)
+        let flown = FlightStatus.transits(of: flight)
         guard flown.total > 0 else { return reference }
-        return "\(reference) · \(flown.done)/\(flown.total) done"
+        return "\(reference) · \(flown.done)/\(flown.total) transits"
     }
 
     private var crews: [PaletteItem] {

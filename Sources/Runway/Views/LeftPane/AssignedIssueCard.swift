@@ -42,15 +42,21 @@ struct AssignedIssueCard: View {
                     endPoint: .trailing
                 )
             }
-            .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
+            .clipShape(ticket, style: FillStyle(eoFill: true))
         )
-        // The same hairline every other card in Runway wears. It was left
-        // off while the ticket had notches, because a border ran through the
-        // bite and closed it back up; the notches are gone, so the ticket
-        // can look like the rest of the window again.
+        // The hairline follows the bite round.
+        //
+        // Stroked at two points and clipped by the same shape: the half of
+        // the line that falls outside the card is cut, and so is the half
+        // inside each notch, which leaves one point of border everywhere
+        // including round the curve. Stroking the plain rounded rect
+        // instead drew a straight line across the mouth of each notch and
+        // closed it back up, which is what made the pair at a card join
+        // read as a bead on a string.
         .overlay(
-            RoundedRectangle(cornerRadius: RunwayCard.radius)
-                .stroke(RunwayCard.border(hovering: hovering, selected: isFlying), lineWidth: 1)
+            ticket
+                .stroke(RunwayCard.border(hovering: hovering, selected: isFlying), lineWidth: 2)
+                .clipShape(ticket, style: FillStyle(eoFill: true))
         )
         .overlay(alignment: .leading) { perforation }
         .contentShape(Rectangle())
@@ -97,12 +103,10 @@ struct AssignedIssueCard: View {
         static let ink = Color(red: 0.945, green: 0.945, blue: 0.933)    // #f1f1ee
         static let muted = Color(red: 0.541, green: 0.549, blue: 0.565)  // #8a8c90
         static let faint = Color(red: 0.333, green: 0.341, blue: 0.357)  // #55575b
-        /// The miles count, pitched to the bar it sits on rather than the title.
-        static let mile = Color(red: 0.416, green: 0.424, blue: 0.439)   // #6a6c70
     }
 
     /// What the plane cuts its gap out of: the card's own fill, so the notch
-    /// in the mile bar is invisible rather than a grey smudge.
+    /// in the transit bar is invisible rather than a grey smudge.
     private var paper: Color {
         RunwayCard.fill(hovering: hovering, selected: isFlying)
     }
@@ -152,6 +156,18 @@ struct AssignedIssueCard: View {
         .padding(.horizontal, 11)
     }
 
+    /// The card with its two bites taken out: the stub tears off along the
+    /// perforation, so the card is notched where the line meets each edge.
+    private var ticket: TicketShape {
+        TicketShape(
+            stub: Self.stubWidth,
+            notch: Self.notch,
+            corner: RunwayCard.radius
+        )
+    }
+
+    private static let notch: CGFloat = 4
+
     /// The dashed tear line.
     ///
     /// No bite at its ends, whatever the sheet draws. A notch is a half
@@ -164,8 +180,9 @@ struct AssignedIssueCard: View {
         GeometryReader { geo in
             Path { path in
                 let x = geo.size.width - Self.stubWidth
-                path.move(to: CGPoint(x: x, y: 6))
-                path.addLine(to: CGPoint(x: x, y: geo.size.height - 6))
+                let clear = Self.notch + 4
+                path.move(to: CGPoint(x: x, y: clear))
+                path.addLine(to: CGPoint(x: x, y: geo.size.height - clear))
             }
             .stroke(Paper.line.opacity(0.9), style: StrokeStyle(lineWidth: 1, dash: [2.5, 3]))
         }
@@ -177,7 +194,7 @@ struct AssignedIssueCard: View {
     private var status: FlightStatus { FlightStatus.of(issue) }
 
     private var stub: some View {
-        let flown = FlightStatus.miles(of: issue)
+        let flown = FlightStatus.transits(of: issue)
         return VStack(spacing: 5) {
             Text(status.label)
                 .font(.mono(8.5))
@@ -199,7 +216,7 @@ struct AssignedIssueCard: View {
                         .font(.system(size: 13))
                         .foregroundStyle(stubColour)
                 case .onAir:
-                    mileBar(flown)
+                    transitBar(flown)
                 }
             }
             .frame(height: 14)
@@ -221,7 +238,7 @@ struct AssignedIssueCard: View {
     /// How far down the runway it is. The bar is grey on purpose: the status
     /// word above it already carries the colour, and two of them read as two
     /// different facts.
-    private func mileBar(_ flown: (done: Int, total: Int)) -> some View {
+    private func transitBar(_ flown: (done: Int, total: Int)) -> some View {
         let share = flown.total > 0 ? Double(flown.done) / Double(flown.total) : 0
         let width: CGFloat = 46
         return ZStack(alignment: .leading) {
@@ -264,4 +281,33 @@ struct AssignedIssueCard: View {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
+}
+
+
+/// A ticket: a rounded card with a round bite out of each long edge, where
+/// the perforation meets it.
+///
+/// The bites are holes, not drawn shapes. The path is the card plus two
+/// whole circles centred on the top and bottom edges, filled even-odd, so
+/// the circles punch through rather than paint. Filling it any other way
+/// would stack a second colour over the card and the "hole" would be a
+/// grey disc.
+struct TicketShape: Shape {
+    /// Width of the stub, measured from the right edge: the perforation
+    /// sits at its left side.
+    var stub: CGFloat
+    var notch: CGFloat
+    var corner: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(roundedRect: rect, cornerRadius: corner)
+        let x = rect.maxX - stub
+        path.addEllipse(in: CGRect(
+            x: x - notch, y: rect.minY - notch, width: notch * 2, height: notch * 2
+        ))
+        path.addEllipse(in: CGRect(
+            x: x - notch, y: rect.maxY - notch, width: notch * 2, height: notch * 2
+        ))
+        return path
+    }
 }

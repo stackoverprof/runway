@@ -571,7 +571,12 @@ struct LeftPane: View {
     private func issueList(_ issues: [AssignedIssue], lane: RunwayIssueTab) -> some View {
         ScrollViewReader { scroll in
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
+            // 16, not 10. Each card bites a half circle out of its top and
+            // bottom edge at the perforation, so two cards face each other
+            // across the gap; at 10 points the two bites closed into one
+            // dark bead and the column of them read as a dotted line down
+            // the list. The wider gap lets each notch belong to its card.
+            LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(issues) { issue in
                     issueCard(issue, lane: lane, among: issues.map(\.number))
                 }

@@ -622,7 +622,7 @@ extension AgentControl {
             steps.append((False, args.step))
             save_steps(repo, number, steps)
             note("step_added", issue=int(number), repository=repo, step=args.step)
-            print("#%s step %d: %s" % (number, len(steps), args.step))
+            print("#%s transit %d: %s" % (number, len(steps), args.step))
 
 
         def cmd_progress_mark(args, done):
@@ -640,7 +640,7 @@ extension AgentControl {
                 repository=repo,
                 step=steps[index][1],
             )
-            print("#%s step %d %s" % (number, args.step, "ticked" if done else "unticked"))
+            print("#%s transit %d %s" % (number, args.step, "ticked" if done else "unticked"))
 
 
         def cmd_progress_needs(args):
@@ -666,7 +666,7 @@ extension AgentControl {
                 step=steps[index][1],
                 needs=said,
             )
-            print("#%s step %d: %s" % (number, args.step, steps[index][1]))
+            print("#%s transit %d: %s" % (number, args.step, steps[index][1]))
 
 
         def cmd_progress_set(args):
@@ -947,20 +947,20 @@ extension AgentControl {
             progress.add_argument("--flight", default="", help="defaults to your own flight or crew")
             progress_verbs = progress.add_subparsers(dest="action")
             progress.set_defaults(run=cmd_progress)
-            progress_add = progress_verbs.add_parser("add", help="add a step")
+            progress_add = progress_verbs.add_parser("add", help="add a transit")
             progress_add.add_argument("step")
             progress_add.add_argument("--flight", default="")
             progress_add.set_defaults(run=cmd_progress_add)
-            progress_tick = progress_verbs.add_parser("tick", help="tick a step by its number")
+            progress_tick = progress_verbs.add_parser("tick", help="tick a transit by its number")
             progress_tick.add_argument("step", type=int)
             progress_tick.add_argument("--flight", default="")
             progress_tick.set_defaults(run=lambda args: cmd_progress_mark(args, True))
-            progress_untick = progress_verbs.add_parser("untick", help="untick a step")
+            progress_untick = progress_verbs.add_parser("untick", help="untick a transit")
             progress_untick.add_argument("step", type=int)
             progress_untick.add_argument("--flight", default="")
             progress_untick.set_defaults(run=lambda args: cmd_progress_mark(args, False))
             progress_needs = progress_verbs.add_parser(
-                "needs", help="say what a step is waiting on, or clear it"
+                "needs", help="say what a transit is waiting on, or clear it"
             )
             progress_needs.add_argument("step", type=int)
             progress_needs.add_argument(
