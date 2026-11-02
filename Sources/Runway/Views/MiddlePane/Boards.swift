@@ -267,7 +267,7 @@ struct FlapNumber: View {
     var size: CGFloat = 11.5
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             ForEach(Array(String(number).enumerated()), id: \.offset) { _, digit in
                 FlapTile(digit: digit, size: size)
             }
@@ -281,7 +281,8 @@ struct FlapNumber: View {
 /// whole tile darkened the middle of the glyph as well as the card, and 3,
 /// 5, 6 and 8 went muddy exactly where they need their crossbar. So the
 /// face carries the fold, the digit stays pure white, and the seam is a
-/// single black hairline across the middle.
+/// single black hairline across the middle. No edge and no top lip: those
+/// read as a bump, and a flap board is flat.
 struct FlapTile: View {
     let digit: Character
     var size: CGFloat = 11.5
@@ -293,19 +294,17 @@ struct FlapTile: View {
             .frame(width: size * 1.14)
             .padding(.vertical, size * 0.26)
             .background(FlapFace.face)
-            // The lip of the upper flap catching the light.
-            .overlay(alignment: .top) {
-                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-            }
             // The seam. One point, across the digit too, the way the two
             // halves of a real flap meet.
+            //
+            // Nothing else: a black edge round each tile and a lit top lip
+            // made every digit look like a key standing proud of the card,
+            // a row of bumps rather than a board. The gradient alone is
+            // enough fold, and the tiles sit 2 points apart.
             .overlay {
                 Rectangle().fill(Color.black.opacity(0.9)).frame(height: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
-            // A black edge, and 3 points between tiles so two edges never
-            // merge into one thick rule.
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black, lineWidth: 1))
     }
 }
 
