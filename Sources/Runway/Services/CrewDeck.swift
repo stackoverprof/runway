@@ -21,7 +21,14 @@ final class CrewDeck {
         RunwayStorage.supportDir.appendingPathComponent("crew-deck.json")
     }
 
-    private init() { reload(force: true) }
+    private init() {
+        reload(force: true)
+        // A fresh open starts with every crew stood down. Crews were up at
+        // the last quit only because the app was running them then, and
+        // starting them all at once is what made launch slow. You bring a
+        // crew up when you want it.
+        if !up.isEmpty { write([]) }
+    }
 
     static func seat(_ repository: String, _ number: Int) -> String {
         "\(repository)#\(number)"

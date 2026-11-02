@@ -180,6 +180,12 @@ struct RightPane: View {
     }
 
     private var offScreenCrews: [DeckSeat] {
+        // A crew on the deck but off screen gets no terminal yet. One is
+        // created only by the view that shows it, once, when its flight is
+        // opened. Mounting one per deck crew on every pass started a process
+        // per crew inside a view update, which froze the app on each pause,
+        // and two views sharing one session blanked the visible crew.
+        return []
         guard let fallback = issues.repository else { return [] }
         let onScreen = Set(crews.map(\.number))
         var seats: [DeckSeat] = []

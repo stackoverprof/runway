@@ -357,15 +357,9 @@ struct MiddlePane: View {
     private var mounted: [Int] {
         var list = visited
         if let number = ws.flightNumber, !list.contains(number) { list.append(number) }
-        // Pilots held up from outside the window. An agent that wants to
-        // brief seven flights cannot click seven cards, so `runway pilot up`
-        // puts them here and their seats start behind whatever is on screen.
-        if let repository = issues.repository {
-            for number in PilotDeck.shared.flights(in: repository)
-            where !list.contains(number) && issues.issue(number) != nil {
-                list.append(number)
-            }
-        }
+        // A pilot held up on the deck starts when its flight is opened, not
+        // behind the pane. Starting every deck pilot during one view pass is
+        // what froze the app on a fresh open and on every pause.
         return list
     }
 
