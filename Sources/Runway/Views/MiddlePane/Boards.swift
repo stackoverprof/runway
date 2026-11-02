@@ -29,6 +29,16 @@ enum Board {
     static let amber = Color(red: 0.890, green: 0.702, blue: 0.255)   // #e3b341
     static let seatLive = Color(red: 0.373, green: 0.812, blue: 0.478) // #5fcf7a
 
+    /// The frosted box lets the card's own grey and the flight's colour
+    /// through, so every surface drawn on it has to be a veil rather than a
+    /// colour. A solid bar or a solid band would punch an opaque rectangle
+    /// through the glass and the frost would stop at it.
+    static let veilBar = Color.white.opacity(0.055)
+    static let veilBand = Color.white.opacity(0.022)
+    static let veilHover = Color.white.opacity(0.075)
+    static let veilDay = Color.black.opacity(0.22)
+    static let veilTint = Color.black.opacity(0.42)
+
     static let radius: CGFloat = 10
     static let gutter: CGFloat = 12
 }
@@ -62,7 +72,14 @@ struct BoardBox<Content: View, Tabs: View>: View {
                 .overlay(alignment: .top) { Rectangle().fill(Board.rule).frame(height: 1) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Board.sheet)
+        // Frosted, not solid. The card's grey and the wash of the flight's
+        // colour carry on behind the box instead of stopping at its edge,
+        // which is what made a long empty board read as a black hole in the
+        // middle of the pane. A dark veil over the material keeps the type
+        // on it as legible as it was on black.
+        .background(Board.veilTint)
+        .background(.ultraThinMaterial)
+        .environment(\.colorScheme, .dark)
         .clipShape(RoundedRectangle(cornerRadius: Board.radius))
         .overlay(
             RoundedRectangle(cornerRadius: Board.radius)
@@ -94,7 +111,7 @@ struct BoardBar<Trailing: View>: View {
         .padding(.horizontal, Board.gutter)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Board.bar)
+        .background(Board.veilBar)
     }
 }
 
@@ -142,7 +159,7 @@ struct BoardColumns: View {
         }
         .padding(.horizontal, Board.gutter)
         .padding(.vertical, 6)
-        .background(Board.bar)
+        .background(Board.veilBar)
         .overlay(alignment: .bottom) { Rectangle().fill(Board.row).frame(height: 1) }
     }
 }
@@ -161,7 +178,7 @@ struct BoardRow<Content: View>: View {
             .padding(.horizontal, Board.gutter)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering && action != nil ? Board.hover : (index.isMultiple(of: 2) ? Color.clear : Board.alt))
+            .background(hovering && action != nil ? Board.veilHover : (index.isMultiple(of: 2) ? Color.clear : Board.veilBand))
             .overlay(alignment: .top) {
                 if ruled, index > 0 { Rectangle().fill(Board.row).frame(height: 1) }
             }
@@ -197,7 +214,7 @@ struct BoardMore: View {
             .foregroundStyle(hovering ? Board.ink : Board.muted)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
-            .background(hovering ? Board.hover : Color.clear)
+            .background(hovering ? Board.veilHover : Color.clear)
             .overlay(alignment: .top) { Rectangle().fill(Board.row).frame(height: 1) }
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
@@ -389,7 +406,7 @@ struct SectionTab: View {
         .foregroundStyle(active ? Board.ink : (hovering ? Board.muted : Board.dim))
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .background(active ? Color(red: 0.071, green: 0.075, blue: 0.082) : Color.clear)
+        .background(active ? Board.veilHover : Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(active ? Board.ink : Color.clear)

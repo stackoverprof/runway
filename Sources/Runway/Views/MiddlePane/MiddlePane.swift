@@ -539,7 +539,7 @@ struct MiddlePane: View {
                 }
             }
         }
-        .background(Board.bar)
+        .background(Board.veilBar)
     }
 
     /// What each face is holding, so you know before you open it.
@@ -1030,7 +1030,7 @@ struct MiddlePane: View {
                     .padding(.horizontal, Board.gutter)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Board.bar)
+                    .background(Board.veilBar)
 
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 118), spacing: 10)],
@@ -1103,7 +1103,7 @@ struct MiddlePane: View {
                             .padding(.horizontal, Board.gutter)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(red: 0.031, green: 0.035, blue: 0.039))
+                            .background(Board.veilDay)
                             .overlay(alignment: .top) { Rectangle().fill(Board.row).frame(height: 1) }
                             .overlay(alignment: .bottom) { Rectangle().fill(Board.row).frame(height: 1) }
                     }
