@@ -35,6 +35,9 @@ enum SettingsKey {
     static let seatIdleMinutes = "runway.seatIdleMinutes"
     static let seatsKeptAlive = "runway.seatsKeptAlive"
     static let pilotTerminalPadding = "runway.pilotTerminalPadding"
+    /// How much of the pilot pane the terminal takes, as a fraction. Set by
+    /// dragging the handle, remembered across launches.
+    static let terminalShare = "runway.terminalShare"
 
     /// The command every agent starts with. Runway flies Claude, so that is
     /// the default; turning it off leaves a plain shell.

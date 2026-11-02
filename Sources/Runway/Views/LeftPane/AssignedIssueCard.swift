@@ -98,8 +98,8 @@ struct AssignedIssueCard: View {
                     .foregroundStyle(Paper.ink)
                     .frame(width: 13)
                     .padding(.vertical, 3)
-                    .background(Self.flapFace)
-                    .overlay(Self.flapFold)
+                    .background(FlapFace.face)
+                    .overlay(FlapFace.fold)
                     .clipShape(RoundedRectangle(cornerRadius: 2.5))
             }
         }
@@ -107,29 +107,6 @@ struct AssignedIssueCard: View {
         .padding(.vertical, 11)
     }
 
-    /// The tile's own face: light at the edges, nearly black at the seam.
-    private static let flapFace = LinearGradient(
-        stops: [
-            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 0),    // #1d1e21
-            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.46), // #121315
-            .init(color: Color(red: 0.031, green: 0.035, blue: 0.039), location: 0.50), // #08090a
-            .init(color: Color(red: 0.071, green: 0.075, blue: 0.082), location: 0.54),
-            .init(color: Color(red: 0.114, green: 0.118, blue: 0.129), location: 1),
-        ],
-        startPoint: .top, endPoint: .bottom
-    )
-
-    /// The same shadow again, this time over the digit.
-    private static let flapFold = LinearGradient(
-        stops: [
-            .init(color: .clear, location: 0.28),
-            .init(color: .black.opacity(0.5), location: 0.47),
-            .init(color: .black.opacity(0.7), location: 0.50),
-            .init(color: .black.opacity(0.5), location: 0.53),
-            .init(color: .clear, location: 0.72),
-        ],
-        startPoint: .top, endPoint: .bottom
-    )
 
     private var destination: some View {
         VStack(alignment: .leading, spacing: 2) {

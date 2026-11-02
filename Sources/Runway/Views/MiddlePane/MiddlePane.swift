@@ -15,9 +15,16 @@ struct MiddlePane: View {
     /// Whether the pointer is on the close button, which is the only time it
     /// shows its colour.
     @State private var crewTab: PilotSeat = .pilot
-    /// How much of the pane the terminal takes, as a fraction.
-    @State private var terminalShare: CGFloat = 0.52
-    @State private var dragStartShare: CGFloat?
+    /// How much of the pane the terminal takes, as a fraction. Remembered,
+    /// because where you set the split is a preference, not a session.
+    @AppStorage(SettingsKey.terminalShare) private var storedShare = 0.52
+    @State private var dragShare: CGFloat?
+    /// How many pulls the board is showing; the rest are behind the button
+    /// at its foot.
+    @State private var pullsShown = 13
+    /// The slow pulse the boarding stop wears. One timer for the pane, not
+    /// one per row.
+    @State private var blink = false
     /// Flights whose seats stay mounted, oldest first.
     @State private var visited: [Int] = []
 
@@ -29,7 +36,9 @@ struct MiddlePane: View {
 
     var body: some View {
         GeometryReader { geo in
-            let terminalHeight = max(140, min(geo.size.height - 180, geo.size.height * terminalShare))
+            // The terminal keeps at least 120 points, and the boards under
+            // it never fall below 160, whatever the window is doing.
+            let terminalHeight = max(120, min(geo.size.height - 160, geo.size.height * terminalShare))
 
             if flight == nil {
                 nothingFlying
@@ -78,6 +87,14 @@ struct MiddlePane: View {
             noteOpened(number)
         }
         .onDisappear { noteLeft(ws.flightNumber) }
+        .task {
+            // The board's own blink, a step either side of a second and a
+            // half, the way a departures board flips.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                blink.toggle()
+            }
+        }
     }
 
     private var nothingFlying: some View {
@@ -103,34 +120,55 @@ struct MiddlePane: View {
         )
     }
 
+    /// The flight's own board header: its number in flap tiles, its name in
+    /// caps, where it stands at the far end, and the repository and class
+    /// under it.
     private var flightHeader: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Text("FLIGHT")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.3))
+            HStack(spacing: 10) {
+                FlapNumber(number: flight?.number ?? 0)
+                Text((flight?.title ?? "").uppercased())
+                    .font(.mono(14, .medium))
                     .tracking(0.8)
-                Text(verbatim: GitHubNumber.reference(flight?.number ?? 0))
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Runway.teal.opacity(0.9))
+                    .foregroundStyle(Board.ink)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
-                statusChip(flightStatus)
+                Text(flightStatus.label)
+                    .font(.mono(8.5))
+                    .tracking(1.6)
+                    .foregroundStyle(statusInk)
+                    .fixedSize()
             }
 
-            Text(flight?.title ?? "")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.94))
-                .lineLimit(2)
+            HStack(spacing: 14) {
+                Text(shortRepository.uppercased())
+                    .font(.mono(8.5))
+                    .tracking(1.5)
+                    .foregroundStyle(Board.dim)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text("CLASS")
+                        .font(.mono(8.5))
+                        .tracking(1.5)
+                        .foregroundStyle(Board.dim)
+                    Text(headerPriority.label)
+                        .font(.mono(8.5, .semibold))
+                        .tracking(1.5)
+                        .foregroundStyle(headerPriority.colour)
+                }
+                Spacer(minLength: 0)
+            }
 
             legsBar
+                .padding(.top, 5)
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // The card's head wears the flight's own state and fades back into
-        // the grey, so where a flight stands reads from across the room and
-        // not only from its chip.
+        // Left as it was: the card's head wears the flight's own state and
+        // fades back into the grey.
         .background(
             LinearGradient(
                 colors: [
@@ -145,113 +183,85 @@ struct MiddlePane: View {
         )
     }
 
-    /// The flight as a route: the legs behind it flown in green, the aircraft
-    /// where it is now, the legs ahead in grey.
+    /// Just the clone's name, the way the cards print it.
+    private var shortRepository: String {
+        let full = issues.repository ?? ""
+        return full.split(separator: "/").last.map(String.init) ?? full
+    }
+
+    /// The board's three, rather than the chip's: grey waiting, teal in the
+    /// air, purple once down.
+    private var statusInk: Color {
+        switch flightStatus {
+        case .scheduled: Board.muted
+        case .onAir: Board.teal
+        case .landed: Board.purple
+        }
+    }
+
+    /// The gate class, read from the same board the cards read.
+    private var headerPriority: (label: String, colour: Color) {
+        guard let flight, let repository = issues.repository,
+              let level = FlightBoard.shared.priority(flight.number, in: repository) else {
+            return ("P-", Board.faint)
+        }
+        return (FlightPriority.label(level), FlightPriority.color(level))
+    }
+
+    /// The flight as a route: one segment a leg, filling teal as each lands,
+    /// a ring at the gate, and the count at the end.
     private var legsBar: some View {
-        // The route is the checklist, not the crew count. Progress is what
-        // the pilot actually keeps: it covers work that is nobody's crew,
-        // like a merge or a word to a teammate, and it changes as the work
-        // changes. Counting crews measured only how the work was filed.
         let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
             .filter { !$0.isLanding }
         let landed = flight?.isClosed == true
         let flown = landed ? steps.count : steps.filter(\.done).count
-        let trail = landed ? Runway.purple : Runway.green
-        return HStack(spacing: 4) {
-            Circle()
-                .fill(trail.opacity(0.9))
-                .frame(width: 5, height: 5)
-
-            // A route reads left to right: what is flown, then the aircraft,
-            // then what is ahead. Colouring each segment by its own crew put
-            // a landed crew wherever it happened to sit in the list, so the
-            // bar showed green behind grey. Position says it, not identity.
-            ForEach(0..<steps.count, id: \.self) { index in
-                if index == flown {
-                    Image(systemName: "airplane")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Runway.teal)
-                }
-                legSegment(done: index < flown, colour: trail)
-            }
+        let trail = landed ? Board.purple : Board.teal
+        return HStack(spacing: 8) {
+            Image(systemName: "airplane")
+                .font(.system(size: 10))
+                .foregroundStyle(trail)
 
             if steps.isEmpty {
-                Capsule()
-                    .fill(landed ? trail : Color.white.opacity(0.14))
-                    .frame(height: 3)
-            }
-
-            if landed || (!steps.isEmpty && flown == steps.count) {
-                Image(systemName: "airplane.arrival")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(trail)
+                Capsule().fill(Board.line).frame(height: 3)
+            } else {
+                ForEach(0..<steps.count, id: \.self) { index in
+                    Capsule()
+                        .fill(Board.line)
+                        .frame(height: 3)
+                        .overlay(alignment: .leading) {
+                            if index < flown { Capsule().fill(trail) }
+                        }
+                }
             }
 
             Circle()
-                .fill(landed ? trail.opacity(0.9) : Color.clear)
-                .overlay(
-                    Circle().strokeBorder(
-                        landed ? Color.clear : Color.white.opacity(0.28),
-                        lineWidth: 1
-                    )
-                )
-                .frame(width: 5, height: 5)
+                .strokeBorder(landed ? trail : Board.faint, lineWidth: 1.5)
+                .background(Circle().fill(landed ? trail : Color.clear))
+                .frame(width: 7, height: 7)
 
-            Text(steps.isEmpty ? "no checklist yet" : "\(flown)/\(steps.count) steps")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.32))
+            Text(steps.isEmpty ? "NO LEGS" : "\(flown)/\(steps.count) LEGS")
+                .font(.mono(8))
+                .tracking(1.4)
+                .foregroundStyle(Board.dim)
                 .fixedSize()
-                .padding(.leading, 2)
         }
-    }
-
-    private func legSegment(done: Bool, colour: Color) -> some View {
-        Capsule()
-            .fill(done ? colour : Color.white.opacity(0.14))
-            .frame(height: 3)
-    }
-
-    private func statusChip(_ status: FlightStatus) -> some View {
-        Text(status.label)
-            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-            .foregroundStyle(status.color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(status.color.opacity(0.12)))
     }
 
     // MARK: Pilot and copilot
 
+    /// Pilot or copilot, as two plain options rather than a boxed control.
+    /// A dot before each says what that seat is doing; the one you are
+    /// reading wears a pill.
     private var seatStrip: some View {
         HStack(spacing: 4) {
             ForEach(PilotSeat.allCases) { seat in
-                Button {
+                SeatButton(
+                    title: seat.rawValue,
+                    active: crewTab == seat,
+                    dot: seatColour(seat)
+                ) {
                     withAnimation(.easeInOut(duration: 0.15)) { crewTab = seat }
-                } label: {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(seatColour(seat))
-                            .frame(width: 5, height: 5)
-                        Text(seat.rawValue)
-                            .font(.system(
-                                size: 10.5,
-                                weight: crewTab == seat ? .semibold : .medium,
-                                design: .monospaced
-                            ))
-                    }
-                    .foregroundStyle(
-                        crewTab == seat ? Color.white.opacity(0.88) : Color.white.opacity(0.4)
-                    )
-                    .padding(.horizontal, 10)
-                    .frame(height: 22)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(crewTab == seat ? Color.white.opacity(0.08) : .clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
             }
         }
         .padding(.leading, 190)
@@ -260,9 +270,6 @@ struct MiddlePane: View {
         .padding(.bottom, 20)
         // A patch of black around the buttons, not a band across the top: it
         // fades away downwards and leftwards into whatever the agent printed.
-        // It takes no clicks and no drops of its own: it covers a wide strip
-        // of the terminal, and a file dropped onto that strip has to reach
-        // the terminal underneath.
         .background(
             LinearGradient(
                 colors: [Color.black, Color.black, Color.black.opacity(0)],
@@ -292,7 +299,7 @@ struct MiddlePane: View {
     /// What the seat is doing: green while it works, amber when it wants you.
     private func seatColour(_ seat: PilotSeat) -> Color {
         guard let flight, let repository = issues.repository else {
-            return Color.white.opacity(0.22)
+            return Color(red: 0.227, green: 0.235, blue: 0.251)
         }
         let id = FlightCrewSessions.boxID(
             rank: seat == .pilot ? .pilot : .copilot,
@@ -300,9 +307,9 @@ struct MiddlePane: View {
             issue: flight.number
         )
         switch ws.agentStates[id] ?? .idle {
-        case .needsAction: return Runway.amber
-        case .running: return Runway.green
-        default: return Color.white.opacity(0.22)
+        case .needsAction: return Board.amber
+        case .running: return Board.seatLive
+        default: return Color(red: 0.227, green: 0.235, blue: 0.251)   // #3a3c40
         }
     }
 
@@ -459,86 +466,116 @@ struct MiddlePane: View {
     }
 
     /// Drag to give the terminal more of the pane, or less.
+    /// The gap between the terminal and the boards is the handle. A short
+    /// grey bar marks it, and it brightens while the pointer is on it or
+    /// while you are dragging. Double-click puts the terminal back to its
+    /// default height; the arrow keys move it once it has focus.
     private func sectionDivider(in height: CGFloat) -> some View {
-        // No line: the black of the terminal already ends where the card
-        // resumes. The band is still here to drag.
-        Color.clear
-            .frame(height: 14)
-            .contentShape(Rectangle())
-        .onHover { hovering in
-            if hovering { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
-        }
-        .gesture(
-            // Global, not local: a local drag measures against the divider
-            // itself, and the divider moves as you drag it, so the reading
-            // feeds back into the next frame and the pane shakes.
-            DragGesture(coordinateSpace: .global)
-                .onChanged { value in
-                    let start = dragStartShare ?? terminalShare
-                    dragStartShare = start
-                    guard height > 0 else { return }
-                    terminalShare = min(max(start + value.translation.height / height, 0.2), 0.8)
+        SplitHandle(
+            dragging: dragShare != nil,
+            onDrag: { translation, phase in
+                guard height > 0 else { return }
+                switch phase {
+                case .changed:
+                    let start = dragShare ?? terminalShare
+                    dragShare = start
+                    storedShare = Double(clampShare(start + translation / height))
+                case .ended:
+                    dragShare = nil
                 }
-                .onEnded { _ in dragStartShare = nil }
+            },
+            onReset: {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    storedShare = Double(Self.defaultShare)
+                }
+            },
+            onStep: { delta in
+                guard height > 0 else { return }
+                storedShare = Double(clampShare(terminalShare + delta / height))
+            }
         )
     }
 
+    /// The terminal keeps at least 120 points and leaves the boards at
+    /// least 160, whatever the window is doing.
+    private func clampShare(_ value: CGFloat) -> CGFloat {
+        min(max(value, 0.18), 0.82)
+    }
+
+    static let defaultShare: CGFloat = 0.52
+
+    private var terminalShare: CGFloat { clampShare(CGFloat(storedShare)) }
+
     // MARK: Sections
 
+    /// The four faces, as a board strip: letter-spaced caps, a count beside
+    /// the ones that have one, and a rule under the face you are on.
     private var sectionStrip: some View {
         HStack(spacing: 0) {
-            ForEach(FlightSection.allCases) { tab in
-                Button {
+            ForEach(Array(FlightSection.allCases.enumerated()), id: \.element.id) { index, tab in
+                SectionTab(
+                    title: tab.rawValue,
+                    count: sectionCount(tab),
+                    active: ws.flightSection == tab,
+                    first: index == 0
+                ) {
                     withAnimation(.easeInOut(duration: 0.15)) { ws.flightSection = tab }
-                } label: {
-                    Text(tab.rawValue)
-                        .font(.system(
-                            size: 10,
-                            weight: ws.flightSection == tab ? .semibold : .medium,
-                            design: .monospaced
-                        ))
-                        .foregroundStyle(
-                            ws.flightSection == tab ? Color.white.opacity(0.88) : Color.white.opacity(0.38)
-                        )
-                        .padding(.vertical, 5)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(ws.flightSection == tab ? Color.white.opacity(0.08) : .clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
             }
         }
-        .padding(2)
-        // Frosted, not solid: the strip floats over the card's own colour
-        // and lets the wash behind it through instead of punching a grey
-        // rectangle through the middle of it.
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 1))
-        .environment(\.colorScheme, .dark)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Board.sheet))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Board.rule, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    /// What each face is holding, so you know before you open it.
+    private func sectionCount(_ tab: FlightSection) -> Int? {
+        switch tab {
+        case .issue: return nil
+        case .pulls:
+            let count = flightPulls.count
+            return count > 0 ? count : nil
+        case .slides:
+            let count = slideSets.reduce(0) { $0 + $1.slides.count }
+            return count > 0 ? count : nil
+        case .thread:
+            let count = IssueBody.conversation("Situation Development", in: flight?.body ?? "").count
+            return count > 0 ? count : nil
+        }
     }
 
     @ViewBuilder
     private var sectionBody: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                switch ws.flightSection {
-                case .issue: issueSection
-                case .pulls: pullsSection
-                case .slides: slidesSection
-                case .thread: threadSection
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // An anchor at the very top, so switching face starts you
+                    // at the top of the new one rather than halfway down it.
+                    // Outside the spaced stack, or its spacing becomes a gap
+                    // above the first board and the handle sits off centre.
+                    Color.clear.frame(height: 0).id(Self.paneTop)
+                    VStack(alignment: .leading, spacing: 12) {
+                        switch ws.flightSection {
+                        case .issue: issueSection
+                        case .pulls: pullsSection
+                        case .slides: slidesSection
+                        case .thread: threadSection
+                        }
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 16)
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 16)
+            .contentMargins(.vertical, 0, for: .scrollContent)
+            .scrollIndicators(.automatic)
+            .onChange(of: ws.flightSection) {
+                scroll.scrollTo(Self.paneTop, anchor: .top)
+            }
         }
-        .contentMargins(.vertical, 0, for: .scrollContent)
-        .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) { sectionBar }
     }
+
+    private static let paneTop = "flight.pane.top"
 
     /// Which part of the flight you are reading, floating at the foot of the
     /// card. It sits here rather than above the content because it is the
@@ -587,114 +624,141 @@ struct MiddlePane: View {
         }
     }
 
-    /// The legs, what each waits on, and what only you can answer.
+    /// The legs as a departures board: a number, the stop, and where it
+    /// stands. The first unfinished one is BOARDING and blinks; the rest are
+    /// SCHEDULED; the ones behind it are LANDED. Remarks, which is what the
+    /// issue says done looks like, sit at the foot of the same board.
     private var issueSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionLabel("PROGRESS")
-            // The pilot's own checklist, kept in the issue body. Read down
-            // the page, the way a checklist is written: the sideways strip
-            // cut every step after the third in half and hid the rest.
-            let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
+        let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
+        let acceptance = IssueBody.steps("Acceptance", in: flight?.body ?? "")
+        let boarding = steps.firstIndex { !$0.done }
+        let cleared = acceptance.filter(\.done).count
+        return BoardSheet {
+            BoardColumns(names: ["No", "Stop", "Status"], widths: [34, nil, 92])
+
             if steps.isEmpty {
-                Text("The pilot has not written a checklist for this flight yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.white.opacity(0.3))
+                boardNote("The pilot has not written a checklist for this flight yet.")
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                        stepCard(step, number: index + 1)
+                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                    BoardRow(index: index, ruled: index > 0, action: { copyStep(step) }) {
+                        stepRow(step, number: index + 1, boarding: index == boarding)
                     }
+                    .contextMenu {
+                        Button("Copy step") { copyStep(step) }
+                        if step.needs != nil {
+                            Button("Copy what it waits on") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(step.needs ?? "", forType: .string)
+                            }
+                        }
+                    }
+                    .help("Copy this step")
                 }
             }
 
-            sectionLabel("ACCEPTANCE")
-            let acceptance = IssueBody.steps("Acceptance", in: flight?.body ?? "")
-            VStack(alignment: .leading, spacing: 5) {
+            // Remarks is part of the same board, under a rule, the way a
+            // flight sheet carries its notes under the stops.
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("REMARKS")
+                        .font(.mono(7))
+                        .tracking(1.8)
+                        .foregroundStyle(Board.faint)
+                    Spacer(minLength: 8)
+                    if !acceptance.isEmpty {
+                        Text("\(cleared)/\(acceptance.count)")
+                            .font(.mono(7))
+                            .tracking(1.4)
+                            .foregroundStyle(Board.faint)
+                    }
+                }
+                .padding(.bottom, 2)
+
                 if acceptance.isEmpty {
                     Text("This issue says nothing about what done looks like.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Color.white.opacity(0.3))
+                        .font(.mono(9.5))
+                        .foregroundStyle(Board.dim)
+                        .padding(.vertical, 8)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(acceptance) { line in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: line.done ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 9))
-                            .foregroundStyle(
-                                line.done ? Runway.green.opacity(0.8) : Color.white.opacity(0.22)
+
+                ForEach(Array(acceptance.enumerated()), id: \.element.id) { index, line in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(line.done ? Board.purple : Color.clear)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 2)
+                                    .strokeBorder(line.done ? Board.purple : Board.faint, lineWidth: 1.5)
                             )
-                        MarkdownText(text: line.text)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.white.opacity(line.done ? 0.45 : 0.72))
+                            .frame(width: 11, height: 11)
+                            .offset(y: 1)
+                        MarkdownText(text: line.text.uppercased())
+                            .font(.mono(9.5))
+                            .foregroundStyle(line.done ? Board.muted : Board.text)
                             .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 10)
+                        Text(line.done ? "CLEARED" : "PENDING")
+                            .font(.mono(7.5))
+                            .tracking(1.4)
+                            .foregroundStyle(line.done ? Board.purple : Board.faint)
+                            .fixedSize()
+                    }
+                    .padding(.vertical, 8)
+                    .overlay(alignment: .top) {
+                        if index > 0 { Rectangle().fill(Board.row).frame(height: 1) }
                     }
                 }
             }
-
+            .padding(.horizontal, Board.gutter)
+            .padding(.top, 9)
+            .padding(.bottom, 6)
+            .overlay(alignment: .top) { Rectangle().fill(Board.rule).frame(height: 1) }
         }
     }
 
+    /// One stop on the board.
+    private func stepRow(_ step: IssueBody.Step, number: Int, boarding: Bool) -> some View {
+        let word = step.done ? "LANDED" : (boarding ? "BOARDING" : "SCHEDULED")
+        let ink = step.done ? Board.purple : (boarding ? Board.teal : Board.faint)
+        return HStack(alignment: .top, spacing: 10) {
+            Text(String(format: "%02d", number))
+                .font(.mono(9))
+                .foregroundStyle(Board.dim)
+                .frame(width: 34, alignment: .leading)
 
-    private func stepCard(_ step: IssueBody.Step, number: Int) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 10))
-                .foregroundStyle(step.done ? Runway.green : Color.white.opacity(0.25))
-                .padding(.top, 1)
-            Text("\(number)")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.32))
-                .padding(.top, 1)
-
-            MarkdownText(text: step.label)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(step.done ? 0.45 : 0.85))
-                .strikethrough(step.done, color: Color.white.opacity(0.3))
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 12)
-
-            // The blocker belongs to the step, and sits at the far end of
-            // its row: what the step is comes first, what it waits on last.
-            if let needs = step.needs, !step.done {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    MarkdownText(text: needs, tint: AgentState.needsAction.color)
-                        .font(.system(size: 10))
-                        .multilineTextAlignment(.trailing)
+            VStack(alignment: .leading, spacing: 3) {
+                MarkdownText(text: step.label.uppercased())
+                    .font(.mono(10.5))
+                    .foregroundStyle(step.done ? Board.muted : Board.ink)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let needs = step.needs, !step.done {
+                    MarkdownText(text: needs, tint: Board.amber)
+                        .font(.mono(8.5))
+                        .foregroundStyle(Board.amber.opacity(0.9))
                         .fixedSize(horizontal: false, vertical: true)
-                    // The mark sits at the very end of the row, so the eye
-                    // runs off the edge rather than stopping at a glyph.
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 8.5))
-                }
-                .foregroundStyle(AgentState.needsAction.color.opacity(0.85))
-            }
-        }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(copiedStep == step.text ? 0.09 : 0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(step.done ? 0.06 : 0.11), lineWidth: 1)
-        )
-        // One step, not the whole checklist. A card is the smallest thing
-        // worth quoting into Slack or a message to a crew.
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture { copyStep(step) }
-        .pointerCursor()
-        .help("Copy this step")
-        .contextMenu {
-            Button("Copy step") { copyStep(step) }
-            if step.needs != nil {
-                Button("Copy what it waits on") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(step.needs ?? "", forType: .string)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(word)
+                .font(.mono(8))
+                .tracking(1.4)
+                .foregroundStyle(ink)
+                .frame(width: 92, alignment: .trailing)
+                .opacity(boarding && blink ? 0.4 : 1)
         }
+    }
+
+    /// A line of plain words where a board would otherwise be empty.
+    private func boardNote(_ text: String) -> some View {
+        Text(text)
+            .font(.mono(9.5))
+            .foregroundStyle(Board.dim)
+            .padding(.horizontal, Board.gutter)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Copy one step's own words, and flash the card so the copy is visible.
@@ -708,22 +772,100 @@ struct MiddlePane: View {
         }
     }
 
-    /// Every PR of the flight, drawn the way the Pulls tab draws them.
+    /// Every PR of the flight as a board: its number, its title on one
+    /// line, the branch under it, and where it stands at the end. A bracket
+    /// tag in the title, like [MERGE AFTER WEEKEND], is pulled out of the
+    /// sentence and shown in amber, because it is an instruction and not
+    /// part of the name.
     private var pullsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if flightPulls.isEmpty {
-                sectionLabel("PULL REQUESTS")
-                Text("No pull request names this flight or its crews yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.white.opacity(0.3))
+        let all = flightPulls
+        let shown = Array(all.prefix(pullsShown))
+        let merged = all.filter(\.isMerged).count
+        return BoardSheet {
+            BoardBar(title: "Pull requests", dot: merged > 0 ? Board.purple : Board.muted) {
+                BoardTally(text: "Showing \(shown.count) of \(all.count)")
+            }
+            if all.isEmpty {
+                boardNote("No pull request names this flight or its crews yet.")
             } else {
-                PullRequestList(
-                    pullRequests: flightPulls,
-                    scope: "flight-\(flight?.number ?? 0)"
-                )
+                BoardColumns(names: ["No", "Pull", "Status"], widths: [52, nil, 62])
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, pull in
+                    BoardRow(index: index, ruled: index > 0, action: {
+                        NSWorkspace.shared.open(pull.url)
+                    }) {
+                        pullRow(pull)
+                    }
+                }
+                if shown.count < all.count {
+                    BoardMore(title: "Load \(all.count - shown.count) more") {
+                        pullsShown += 20
+                    }
+                }
             }
         }
     }
+
+    private func pullRow(_ pull: RepositoryPullRequest) -> some View {
+        let parsed = Self.tagged(pull.title)
+        return HStack(alignment: .top, spacing: 10) {
+            Text("#\(pull.number)")
+                .font(.mono(9))
+                .foregroundStyle(Board.purple)
+                .frame(width: 52, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if let tag = parsed.tag {
+                        Text(tag)
+                            .font(.mono(8.5))
+                            .tracking(0.8)
+                            .foregroundStyle(Board.amber)
+                            .fixedSize()
+                    }
+                    Text(parsed.title)
+                        .font(.mono(10))
+                        .foregroundStyle(Board.ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text("\(pull.headRefName) → \(pull.baseRefName)")
+                    .font(.mono(8.5))
+                    .foregroundStyle(Board.faint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(stateLabel(pull))
+                    .font(.mono(7.5, .medium))
+                    .tracking(1.4)
+                    .foregroundStyle(stateColour(pull))
+                Text(Self.shortDay.string(from: pull.timeframeDate))
+                    .font(.mono(8))
+                    .foregroundStyle(Board.dim)
+            }
+            .frame(width: 62, alignment: .trailing)
+        }
+        .help(pull.title)
+    }
+
+    /// A leading `[LIKE THIS]` is an instruction, not part of the name.
+    static func tagged(_ title: String) -> (tag: String?, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("["), let close = trimmed.firstIndex(of: "]") else {
+            return (nil, trimmed)
+        }
+        let tag = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+        let rest = trimmed[trimmed.index(after: close)...].trimmingCharacters(in: .whitespaces)
+        return (tag.uppercased(), rest.isEmpty ? trimmed : rest)
+    }
+
+    static let shortDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM"
+        return formatter
+    }()
 
     /// The pull requests of this flight, found two ways.
     ///
@@ -817,63 +959,71 @@ struct MiddlePane: View {
         return sets
     }
 
+    /// One board per walkthrough: its name and issue in the bar, a button to
+    /// its folder, and the real slides underneath.
     private var slidesSection: some View {
         let sets = slideSets
-        return VStack(alignment: .leading, spacing: 14) {
-            sectionLabel("WALKTHROUGH")
-
+        return VStack(alignment: .leading, spacing: 12) {
             if sets.isEmpty {
-                Text("No walkthrough slides for this flight or its crews yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.white.opacity(0.3))
+                BoardSheet {
+                    BoardBar("Walkthrough")
+                    boardNote("No walkthrough slides for this flight or its crews yet.")
+                }
             }
 
             ForEach(sets) { set in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Text(set.title)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.68))
+                BoardSheet {
+                    HStack(spacing: 8) {
+                        Text(set.title.uppercased())
+                            .font(.mono(7.5, .semibold))
+                            .tracking(1.6)
+                            .foregroundStyle(Board.ink)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(verbatim: GitHubNumber.reference(set.issue))
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color.white.opacity(0.3))
-                        Spacer(minLength: 8)
-                        Button {
-                            NSWorkspace.shared.open(set.slides[0].deletingLastPathComponent())
-                        } label: {
-                            Text("Open folder")
-                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Runway.teal.opacity(0.85))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(Runway.teal.opacity(0.1)))
-                                .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                    }
-
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 104), spacing: 8)],
-                        spacing: 8
-                    ) {
-                        ForEach(set.slides, id: \.self) { slide in
-                            Button {
-                                NSWorkspace.shared.open(slide)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    slideThumbnail(slide)
-                                    Text(slide.deletingPathExtension().lastPathComponent)
-                                        .font(.system(size: 9, design: .monospaced))
-                                        .foregroundStyle(Color.white.opacity(0.4))
-                                        .lineLimit(1)
+                            .font(.mono(7.5))
+                            .tracking(1)
+                            .foregroundStyle(Board.teal)
+                            .fixedSize()
+                            .onTapGesture {
+                                if let flight, set.issue == flight.number {
+                                    NSWorkspace.shared.open(flight.url)
+                                } else if let crew = flight?.legs.first(where: { $0.number == set.issue }) {
+                                    NSWorkspace.shared.open(crew.url)
                                 }
                             }
-                            .buttonStyle(.plain)
                             .pointerCursor()
+                        Spacer(minLength: 8)
+                        BoardAction(title: "Open folder") {
+                            NSWorkspace.shared.open(set.slides[0].deletingLastPathComponent())
                         }
                     }
+                    .padding(.horizontal, Board.gutter)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Board.bar)
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 118), spacing: 10)],
+                        spacing: 10
+                    ) {
+                        ForEach(set.slides, id: \.self) { slide in
+                            VStack(alignment: .leading, spacing: 5) {
+                                slideThumbnail(slide)
+                                Text(slide.deletingPathExtension().lastPathComponent)
+                                    .font(.mono(8))
+                                    .foregroundStyle(Board.dim)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { NSWorkspace.shared.open(slide) }
+                            .pointerCursor()
+                            .help(slide.lastPathComponent)
+                        }
+                    }
+                    .padding(.horizontal, Board.gutter)
+                    .padding(.vertical, 12)
                 }
             }
         }
@@ -883,120 +1033,95 @@ struct MiddlePane: View {
         SlideThumbnail(slide: slide)
     }
 
+    /// Two boards: where this flight is talked about, and the log of what
+    /// was said. The log reads as a sheet, a sticky day bar over each day's
+    /// entries and the speaker in a column of its own.
     private var threadSection: some View {
         let entries = IssueBody.conversation("Situation Development", in: flight?.body ?? "")
         let home = IssueBody.homeThread("Situation Development", in: flight?.body ?? "")
         let channels = IssueBody.channels("Situation Development", in: flight?.body ?? "")
-        return VStack(alignment: .leading, spacing: 10) {
-            // A flight gathered from several crews speaks in several places.
-            // One chip each, rather than a paragraph crammed into a button.
+        return VStack(alignment: .leading, spacing: 12) {
             if !channels.isEmpty {
-                sectionLabel("CHANNELS")
-                FlowRow(spacing: 6) {
-                    ForEach(channels) { channel in
-                        channelChip(channel, fallback: home)
+                BoardSheet {
+                    BoardBar(title: "Channels") {
+                        BoardTally(text: "\(channels.count)")
                     }
+                    FlowRow(spacing: 6) {
+                        ForEach(channels) { channel in
+                            channelChip(channel, fallback: home)
+                        }
+                    }
+                    .padding(.horizontal, Board.gutter)
+                    .padding(.vertical, 10)
                 }
-                .padding(.bottom, 4)
             }
 
-            sectionLabel("SITUATION")
+            BoardSheet {
+                BoardBar(title: "Situation") {
+                    BoardTally(text: entries.isEmpty ? "" : "\(entries.count)")
+                }
 
-            if entries.isEmpty {
-                Text("This issue keeps no conversation log yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.white.opacity(0.3))
-            }
+                if entries.isEmpty {
+                    boardNote("This issue keeps no conversation log yet.")
+                }
 
-            // One rail down the whole log, not a segment per entry. The
-            // segments left a gap at every row boundary, which read as a
-            // broken line rather than a thread.
-            VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     if let day = entry.day, day != entries[safe: index - 1]?.day {
-                        HStack(spacing: 9) {
-                            Rectangle()
-                                .fill(Color.white.opacity(index > 0 ? 0.08 : 0))
-                                .frame(width: 1, height: 22)
-                                .frame(width: 5)
-                            Text(day)
-                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.32))
-                                .tracking(0.6)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(day.uppercased())
+                            .font(.mono(7.5))
+                            .tracking(1.8)
+                            .foregroundStyle(Board.dim)
+                            .padding(.horizontal, Board.gutter)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(red: 0.031, green: 0.035, blue: 0.039))
+                            .overlay(alignment: .top) { Rectangle().fill(Board.row).frame(height: 1) }
+                            .overlay(alignment: .bottom) { Rectangle().fill(Board.row).frame(height: 1) }
                     }
 
-                    HStack(alignment: .top, spacing: 9) {
-                        VStack(spacing: 0) {
-                            // The 5 points above a dot are rail too, for
-                            // every entry but the first. Leaving them blank
-                            // is what broke the line under each name.
-                            Rectangle()
-                                .fill(Color.white.opacity(index > 0 ? 0.08 : 0))
-                                .frame(width: 1, height: 5)
-                            Circle()
-                                .fill(Color.white.opacity(0.28))
-                                .frame(width: 5, height: 5)
-                            if index < entries.count - 1 {
-                                Rectangle()
-                                    .fill(Color.white.opacity(0.08))
-                                    .frame(width: 1)
-                                    .frame(maxHeight: .infinity)
-                            }
-                        }
-                        .frame(width: 5)
-
-                        VStack(alignment: .leading, spacing: 3) {
-                            Button {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(entry.who.uppercased())
+                            .font(.mono(8))
+                            .tracking(1.2)
+                            .foregroundStyle(whoInk(entry.who))
+                            .frame(width: 58, alignment: .leading)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
                                 if let link = entry.link { NSWorkspace.shared.open(link) }
-                            } label: {
-                                Text(entry.who)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Runway.teal.opacity(0.85))
                             }
-                            .buttonStyle(.plain)
                             .pointerCursor()
-                            MarkdownText(text: entry.said)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Color.white.opacity(0.78))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.bottom, index < entries.count - 1 ? 10 : 0)
-
-                        Spacer(minLength: 0)
+                        MarkdownText(text: entry.said, tint: Board.teal)
+                            .font(.mono(9.5))
+                            .foregroundStyle(Board.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding(.horizontal, Board.gutter)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
         }
+    }
+
+    /// Who said it: the bots in amber, Erbin in teal, everyone else grey.
+    private func whoInk(_ who: String) -> Color {
+        let name = who.lowercased()
+        if name.contains("sentry") || name.contains("bot") || name.contains("github") {
+            return Board.amber
+        }
+        if name.contains("erbin") { return Board.teal }
+        return Board.muted
     }
 
     /// One channel, as a chip that opens it.
     private func channelChip(_ channel: IssueBody.Channel, fallback: URL?) -> some View {
-        Button {
+        ChannelChip(name: channel.name) {
             if let link = channel.link ?? fallback { NSWorkspace.shared.open(link) }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 8.5, weight: .semibold))
-                Text(channel.name)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(Runway.teal.opacity(0.85))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(Runway.teal.opacity(0.1)))
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("Open \(channel.name)")
     }
-
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
@@ -1055,6 +1180,7 @@ enum CheckState {
 private struct SlideThumbnail: View {
     let slide: URL
     @State private var image: NSImage?
+    @State private var shimmer = false
 
     var body: some View {
         Group {
@@ -1063,19 +1189,27 @@ private struct SlideThumbnail: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else {
-                Color(white: 0.08)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.white.opacity(0.16))
-                    )
+                // A shimmer rather than a placeholder glyph: a grid of empty
+                // frames reads as broken, a moving one reads as loading.
+                LinearGradient(
+                    colors: [Board.hover, Color(red: 0.106, green: 0.110, blue: 0.122), Board.hover],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .opacity(shimmer ? 1 : 0.55)
+                .animation(
+                    .easeInOut(duration: 0.7).repeatForever(autoreverses: true),
+                    value: shimmer
+                )
+                .onAppear { shimmer = true }
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .aspectRatio(16.0 / 11.0, contentMode: .fit)
+        .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Board.rule, lineWidth: 1)
         )
         .task(id: slide) {
             image = await SlideThumbnails.shared.thumbnail(for: slide)
