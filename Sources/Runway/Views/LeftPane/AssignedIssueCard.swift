@@ -252,7 +252,13 @@ struct AssignedIssueCard: View {
         let width: CGFloat = 46
         return ZStack(alignment: .leading) {
             Capsule().fill(Paper.line).frame(width: width, height: 2.5)
-            Capsule().fill(Paper.fill).frame(width: width * share, height: 2.5)
+            // The fill stops just short of the plane rather than under it.
+            // A capsule's rounded tip reached past the black outline on a
+            // long bar and showed as a pixel of grey in the gap the plane
+            // is supposed to have cut.
+            Capsule()
+                .fill(Paper.fill)
+                .frame(width: max(0, width * share - 3), height: 2.5)
             // The plane sits at the tip of the fill and cuts its own gap in
             // the bar: the same shape twice, the lower one in the card's
             // colour and a size wider.

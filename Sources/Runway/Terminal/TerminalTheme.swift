@@ -21,11 +21,15 @@ enum RunwayTerminal {
     static let bodyNSColor = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
 
     /// Path to Runway's private Ghostty theme file.
+    ///
+    /// In this build's own state folder, like everything else. It was
+    /// hardcoded to `Runway/`, so a side-by-side build wrote its theme into
+    /// the other one's folder: change the terminal font in one and the
+    /// other picked it up on its next launch, which is exactly what the
+    /// per-build folder exists to prevent.
     static let themeFilePath: String = {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        return (base ?? URL(fileURLWithPath: NSTemporaryDirectory()))
-            .appendingPathComponent("Runway/runway-terminal-theme").path
+        RunwayStorage.supportDir
+            .appendingPathComponent("runway-terminal-theme").path
     }()
 
     /// Writes the theme file from the current settings. Idempotent; call once at
