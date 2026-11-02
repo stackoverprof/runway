@@ -34,18 +34,40 @@ enum Board {
 }
 
 /// One sheet: a bar, then whatever is stacked under it.
+///
+/// No border and no corners of its own. The pane is a single black box and
+/// every board is a section inside it, told apart by its own bar rather than
+/// by a frame: boxes inside a box read as clutter, and the outer one has to
+/// hold the floor whether there are three rows on it or thirty.
 struct BoardSheet<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) { content }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Board.radius).fill(Board.sheet))
-            .overlay(
-                RoundedRectangle(cornerRadius: Board.radius)
-                    .stroke(Board.rule, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: Board.radius))
+    }
+}
+
+/// The one box: everything you read about a flight, with the four faces
+/// anchored along its floor.
+struct BoardBox<Content: View, Tabs: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var tabs: Tabs
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            tabs
+                .overlay(alignment: .top) { Rectangle().fill(Board.rule).frame(height: 1) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Board.sheet)
+        .clipShape(RoundedRectangle(cornerRadius: Board.radius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Board.radius)
+                .stroke(Board.rule, lineWidth: 1)
+        )
     }
 }
 
@@ -337,7 +359,11 @@ struct SplitHandle: View {
             .help("Drag to resize the terminal, double-click to reset")
     }
 
-    private var lit: Bool { hovering || dragging || focused }
+    /// Lit only while the pointer is on it or you are dragging it. Focus
+    /// is deliberately left out: clicking the handle gives it focus and
+    /// keeps it, so a focused handle stayed bright long after the pointer
+    /// had gone and read as a control stuck on.
+    private var lit: Bool { hovering || dragging }
 }
 
 /// One face in the strip at the foot of the pane.
@@ -355,7 +381,7 @@ struct SectionTab: View {
                 .font(.mono(8.5, active ? .semibold : .regular))
                 .tracking(1.4)
             if let count {
-                Text("\(count)")
+                Text(verbatim: "\(count)")
                     .font(.mono(7.5))
                     .foregroundStyle(active ? Board.muted : Board.faint)
             }
@@ -363,7 +389,7 @@ struct SectionTab: View {
         .foregroundStyle(active ? Board.ink : (hovering ? Board.muted : Board.dim))
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .background(active ? Color(red: 0.078, green: 0.082, blue: 0.090) : Color.clear)
+        .background(active ? Color(red: 0.071, green: 0.075, blue: 0.082) : Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(active ? Board.ink : Color.clear)

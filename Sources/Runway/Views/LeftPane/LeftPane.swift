@@ -319,7 +319,7 @@ struct LeftPane: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Color.white.opacity(0.4))
                         } else {
-                            Text("+\(overflow.count) others")
+                            Text(verbatim: "+\(overflow.count) others")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Color.white.opacity(0.4))
                             HStack(spacing: -6) {
@@ -487,7 +487,7 @@ struct LeftPane: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text(tab.rawValue)
-                        Text("\(tab == .open ? assignedIssues.open.count : assignedIssues.closed.count)")
+                        Text(verbatim: "\(tab == .open ? assignedIssues.open.count : assignedIssues.closed.count)")
                             .foregroundStyle(Color.white.opacity(0.35))
                     }
                     .font(.system(size: 10.5, weight: ws.runwayIssueTab == tab ? .semibold : .medium))
@@ -704,7 +704,7 @@ struct LeftPane: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small).scaleEffect(0.55)
                         .frame(width: 10, height: 10)
-                    Text("NEWEST \(PullRequests.firstPaintCount) · STILL READING THIS REPOSITORY'S HISTORY")
+                    Text(verbatim: "NEWEST \(PullRequests.firstPaintCount) · STILL READING THIS REPOSITORY'S HISTORY")
                         .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.28))
                 }
@@ -896,7 +896,7 @@ struct LeftPane: View {
 
     private func prCount(_ label: String, _ count: Int, color: Color) -> some View {
         VStack(alignment: .trailing, spacing: 1) {
-            Text("\(count)")
+            Text(verbatim: "\(count)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(color.opacity(0.88))
             Text(label)

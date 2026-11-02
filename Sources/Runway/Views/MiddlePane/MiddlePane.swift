@@ -54,6 +54,22 @@ struct MiddlePane: View {
                 sectionBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            // The foot wears the flight's state the way the head does, so
+            // the card is bracketed in its own colour. It sits on the card,
+            // behind the box, now that the strip is the box's floor.
+            .background(alignment: .bottom) {
+                LinearGradient(
+                    colors: [
+                        Color.clear,
+                        flightStatus.color.opacity(0.07),
+                        flightStatus.color.opacity(0.20),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 110)
+                .allowsHitTesting(false)
+            }
             .background(Self.card)
             .clipShape(RoundedRectangle(cornerRadius: 13))
             .overlay(
@@ -239,7 +255,7 @@ struct MiddlePane: View {
                 .background(Circle().fill(landed ? trail : Color.clear))
                 .frame(width: 7, height: 7)
 
-            Text(steps.isEmpty ? "NO LEGS" : "\(flown)/\(steps.count) LEGS")
+            Text(verbatim: steps.isEmpty ? "NO LEGS" : "\(flown)/\(steps.count) LEGS")
                 .font(.mono(8))
                 .tracking(1.4)
                 .foregroundStyle(Board.dim)
@@ -523,9 +539,7 @@ struct MiddlePane: View {
                 }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 9).fill(Board.sheet))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Board.rule, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .background(Board.bar)
     }
 
     /// What each face is holding, so you know before you open it.
@@ -544,85 +558,59 @@ struct MiddlePane: View {
         }
     }
 
+    /// The one box under the terminal: whatever face you are on, scrolling,
+    /// with the four faces anchored along its floor. It takes the rest of
+    /// the card whether the face has three rows or thirty, so the strip
+    /// never floats up the pane behind a short board.
     @ViewBuilder
     private var sectionBody: some View {
-        ScrollViewReader { scroll in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // An anchor at the very top, so switching face starts you
-                    // at the top of the new one rather than halfway down it.
-                    // Outside the spaced stack, or its spacing becomes a gap
-                    // above the first board and the handle sits off centre.
-                    Color.clear.frame(height: 0).id(Self.paneTop)
-                    VStack(alignment: .leading, spacing: 12) {
-                        switch ws.flightSection {
-                        case .issue: issueSection
-                        case .pulls: pullsSection
-                        case .slides: slidesSection
-                        case .thread: threadSection
+        BoardBox {
+            ScrollViewReader { scroll in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // An anchor at the very top, so switching face starts
+                        // you at the top of the new one rather than halfway
+                        // down it. Outside the spaced stack, or its spacing
+                        // becomes a gap above the first board.
+                        Color.clear.frame(height: 0).id(Self.paneTop)
+                        VStack(alignment: .leading, spacing: 14) {
+                            switch ws.flightSection {
+                            case .issue: issueSection
+                            case .pulls: pullsSection
+                            case .slides: slidesSection
+                            case .thread: threadSection
+                            }
                         }
                     }
+                    .padding(.bottom, 18)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 16)
+                .contentMargins(.vertical, 0, for: .scrollContent)
+                .scrollIndicators(.automatic)
+                .onChange(of: ws.flightSection) {
+                    scroll.scrollTo(Self.paneTop, anchor: .top)
+                }
             }
-            .contentMargins(.vertical, 0, for: .scrollContent)
-            .scrollIndicators(.automatic)
-            .onChange(of: ws.flightSection) {
-                scroll.scrollTo(Self.paneTop, anchor: .top)
-            }
+            // What runs off the bottom fades into the floor rather than
+            // being cut off at the strip's edge.
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.93),
+                        .init(color: .black.opacity(0), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        } tabs: {
+            sectionStrip
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { sectionBar }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
     }
 
     private static let paneTop = "flight.pane.top"
-
-    /// Which part of the flight you are reading, floating at the foot of the
-    /// card. It sits here rather than above the content because it is the
-    /// thing you reach for most, and the content runs under it into a fade
-    /// rather than stopping at a line.
-    ///
-    /// The two buttons that used to live here are gone: opening the issue on
-    /// GitHub is a click on its number, and closing a flight is the pilot's
-    /// own call now, not a button on the pane.
-    @ViewBuilder
-    private var sectionBar: some View {
-        if flight != nil {
-            sectionStrip
-            .padding(.horizontal, 12)
-            .padding(.top, 28)
-            .padding(.bottom, 10)
-            // No bar, no line: the strip floats, and what scrolls under it
-            // fades into the card rather than being cut off by an edge.
-            .background(
-                ZStack {
-                    LinearGradient(
-                        colors: [
-                            Self.card.opacity(0),
-                            Self.card.opacity(0.75),
-                            Self.card,
-                            Self.card,
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    // The foot wears the flight's state the way the head
-                    // does, so the card is bracketed in its own colour
-                    // rather than coloured at one end and grey at the other.
-                    LinearGradient(
-                        colors: [
-                            Color.clear,
-                            flightStatus.color.opacity(0.07),
-                            flightStatus.color.opacity(0.20),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-                .allowsHitTesting(false)
-            )
-        }
-    }
 
     /// The legs as a departures board: a number, the stop, and where it
     /// stands. The first unfinished one is BOARDING and blinks; the rest are
@@ -666,7 +654,7 @@ struct MiddlePane: View {
                         .foregroundStyle(Board.faint)
                     Spacer(minLength: 8)
                     if !acceptance.isEmpty {
-                        Text("\(cleared)/\(acceptance.count)")
+                        Text(verbatim: "\(cleared)/\(acceptance.count)")
                             .font(.mono(7))
                             .tracking(1.4)
                             .foregroundStyle(Board.faint)
@@ -772,45 +760,86 @@ struct MiddlePane: View {
         }
     }
 
-    /// Every PR of the flight as a board: its number, its title on one
-    /// line, the branch under it, and where it stands at the end. A bracket
-    /// tag in the title, like [MERGE AFTER WEEKEND], is pulled out of the
-    /// sentence and shown in amber, because it is an instruction and not
-    /// part of the name.
+    /// Every PR of the flight, in three boards: draft, open, then closed.
+    /// Each row is its number, its title on one line, the branch under it,
+    /// and where it stands at the end. A bracket tag in the title, like
+    /// [MERGE AFTER WEEKEND], is pulled out of the sentence and shown in
+    /// amber, because it is an instruction and not part of the name.
     private var pullsSection: some View {
         let all = flightPulls
-        let shown = Array(all.prefix(pullsShown))
-        let merged = all.filter(\.isMerged).count
-        return BoardSheet {
-            BoardBar(title: "Pull requests", dot: merged > 0 ? Board.purple : Board.muted) {
-                BoardTally(text: "Showing \(shown.count) of \(all.count)")
-            }
+        let groups = Self.grouped(all)
+        return VStack(alignment: .leading, spacing: 14) {
             if all.isEmpty {
-                boardNote("No pull request names this flight or its crews yet.")
-            } else {
-                BoardColumns(names: ["No", "Pull", "Status"], widths: [52, nil, 62])
-                ForEach(Array(shown.enumerated()), id: \.element.id) { index, pull in
-                    BoardRow(index: index, ruled: index > 0, action: {
-                        NSWorkspace.shared.open(pull.url)
-                    }) {
-                        pullRow(pull)
-                    }
+                BoardSheet {
+                    BoardBar("Pull requests")
+                    boardNote("No pull request names this flight or its crews yet.")
                 }
-                if shown.count < all.count {
-                    BoardMore(title: "Load \(all.count - shown.count) more") {
-                        pullsShown += 20
+            }
+            ForEach(groups) { group in
+                BoardSheet {
+                    BoardBar(title: group.name, dot: group.colour) {
+                        BoardTally(
+                            text: group.capped
+                                ? "Showing \(min(pullsShown, group.pulls.count)) of \(group.pulls.count)"
+                                : "\(group.pulls.count)"
+                        )
+                    }
+                    BoardColumns(names: ["No", "Pull", "Status"], widths: [52, nil, 62])
+                    let shown = group.capped ? Array(group.pulls.prefix(pullsShown)) : group.pulls
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, pull in
+                        BoardRow(index: index, ruled: index > 0, action: {
+                            NSWorkspace.shared.open(pull.url)
+                        }) {
+                            pullRow(pull)
+                        }
+                    }
+                    if shown.count < group.pulls.count {
+                        BoardMore(title: "Load \(group.pulls.count - shown.count) more") {
+                            pullsShown += 20
+                        }
                     }
                 }
             }
         }
     }
 
+    /// Draft, then open, then everything that is finished with.
+    ///
+    /// Reading one long list of pulls meant hunting for the three that still
+    /// want something from you among thirty that merged weeks ago. The order
+    /// is the order you act in. Only the closed pile is capped, because it
+    /// is the only one that grows without end.
+    private struct PullGroup: Identifiable {
+        let name: String
+        let colour: Color
+        let pulls: [RepositoryPullRequest]
+        let capped: Bool
+        var id: String { name }
+    }
+
+    private static func grouped(_ all: [RepositoryPullRequest]) -> [PullGroup] {
+        let draft = all.filter { $0.isOpen && $0.isDraft }
+        let open = all.filter { $0.isOpen && !$0.isDraft }
+        let closed = all.filter { !$0.isOpen }
+        return [
+            PullGroup(name: "Draft", colour: Board.amber, pulls: draft, capped: false),
+            PullGroup(name: "Open", colour: Board.teal, pulls: open, capped: false),
+            PullGroup(name: "Closed", colour: Board.purple, pulls: closed, capped: true),
+        ].filter { !$0.pulls.isEmpty }
+    }
+
     private func pullRow(_ pull: RepositoryPullRequest) -> some View {
         let parsed = Self.tagged(pull.title)
         return HStack(alignment: .top, spacing: 10) {
-            Text("#\(pull.number)")
+            // Verbatim: an interpolated Int is a localized number, and the
+            // pane printed #17.416 for pull 17416.
+            // The number wears the pull's own state, the same colour as the
+            // word at the other end of the row, so a row reads from either
+            // side. Purple for everything was a merged board's colour worn
+            // by an open PR.
+            Text(verbatim: "#\(pull.number)")
                 .font(.mono(9))
-                .foregroundStyle(Board.purple)
+                .foregroundStyle(stateColour(pull))
                 .frame(width: 52, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -828,7 +857,7 @@ struct MiddlePane: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                Text("\(pull.headRefName) → \(pull.baseRefName)")
+                Text(verbatim: "\(pull.headRefName) → \(pull.baseRefName)")
                     .font(.mono(8.5))
                     .foregroundStyle(Board.faint)
                     .lineLimit(1)

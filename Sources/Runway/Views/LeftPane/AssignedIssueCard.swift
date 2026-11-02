@@ -189,7 +189,7 @@ struct AssignedIssueCard: View {
                         .font(.system(size: 11))
                         .foregroundStyle(stubColour)
                 case .onAir:
-                    Text("\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
+                    Text(verbatim: "\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
                         .font(.mono(8.5))
                         .tracking(0.4)
                         .foregroundStyle(Paper.mile)

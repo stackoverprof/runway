@@ -162,12 +162,12 @@ struct FeedRow: View {
                     Image(systemName: "arrow.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.white.opacity(0.3))
                     Chip(base, tint: Self.gray)
                     if let a = adds, let d = dels {
-                        Text("+\(a)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.4, green: 0.78, blue: 0.45).opacity(0.65))
-                        Text("-\(d)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.95, green: 0.36, blue: 0.32).opacity(0.65))
+                        Text(verbatim: "+\(a)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.4, green: 0.78, blue: 0.45).opacity(0.65))
+                        Text(verbatim: "-\(d)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color(red: 0.95, green: 0.36, blue: 0.32).opacity(0.65))
                     }
                     if let c = commits {
                         Text("•").font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.2))
-                        Text("\(c) commit\(c == 1 ? "" : "s")").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
+                        Text(verbatim: "\(c) commit\(c == 1 ? "" : "s")").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.4))
                     }
                     if let dur = duration {
                         Text("•").font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.2))

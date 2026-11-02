@@ -56,12 +56,12 @@ struct PullRequestList: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
                     Circle().fill(color).frame(width: 5, height: 5)
-                    Text("\(title)  \(items.reduce(0) { $0 + $1.pullRequests.count })")
+                    Text(verbatim: "\(title)  \(items.reduce(0) { $0 + $1.pullRequests.count })")
                         .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Color.white.opacity(0.32))
                     Spacer()
                     if remaining > 0 {
-                        Text("SHOWING \(shown)")
+                        Text(verbatim: "SHOWING \(shown)")
                             .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.20))
                     }
@@ -79,9 +79,9 @@ struct PullRequestList: View {
                         }
                     } label: {
                         HStack {
-                            Text("Show next \(min(pageSize, remaining))")
+                            Text(verbatim: "Show next \(min(pageSize, remaining))")
                             Spacer()
-                            Text("\(remaining) remaining")
+                            Text(verbatim: "\(remaining) remaining")
                                 .foregroundStyle(Color.white.opacity(0.24))
                         }
                         .font(.system(size: 8.5, weight: .medium, design: .monospaced))
@@ -199,7 +199,7 @@ struct PullRequestList: View {
             Image(systemName: "square.stack.3d.up.fill")
                 .font(.system(size: 8.5, weight: .semibold))
                 .foregroundStyle(color.opacity(0.82))
-            Text("STACK OF \(stack.count)")
+            Text(verbatim: "STACK OF \(stack.count)")
                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                 .foregroundStyle(Color.white.opacity(0.55))
             Text("on \(stack[stack.count - 1].baseRefName)")
@@ -241,7 +241,7 @@ struct PullRequestList: View {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 7.5, weight: .semibold))
                     .foregroundStyle(color.opacity(0.7))
-                Text("STACK OF \(stack.count)")
+                Text(verbatim: "STACK OF \(stack.count)")
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color.white.opacity(0.45))
                 Text("· on \(stack[stack.count - 1].baseRefName)")

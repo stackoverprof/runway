@@ -464,7 +464,7 @@ struct QuickTerminal: View {
                             Button {
                                 selectTab(tab.root)
                             } label: {
-                                Text("\(index + 1)")
+                                Text(verbatim: "\(index + 1)")
                                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                                     .foregroundStyle(
                                         tab.root == selectedRoot
