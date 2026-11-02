@@ -66,10 +66,14 @@ struct CommandPalette: View {
         }
     }
 
+    /// The same figure the card and the route bar print, which is the
+    /// checklist and not the crew list. Three places quoting two different
+    /// numbers for one flight is worse than any of them being wrong.
     private func detail(for flight: AssignedIssue) -> String {
         let reference = GitHubNumber.reference(flight.number)
-        guard flight.isFlight else { return reference }
-        return "\(reference) · \(flight.landedLegs)/\(flight.legs.count) landed"
+        let flown = FlightStatus.miles(of: flight)
+        guard flown.total > 0 else { return reference }
+        return "\(reference) · \(flown.done)/\(flown.total) done"
     }
 
     private var crews: [PaletteItem] {

@@ -28,14 +28,22 @@ enum FlightStatus: String {
         }
     }
 
-    /// How far along the flight is, in the terms the card prints: how many
-    /// legs are down out of how many there are.
+    /// How far along the flight is: how many steps of its checklist are
+    /// ticked out of how many there are.
     ///
-    /// Crews first, because a flight with crews is measured by them, and the
-    /// checklist second for a flight that has none.
+    /// The checklist, not the crews. Progress is what the pilot actually
+    /// keeps: it covers work that is nobody's crew, a merge, a deploy, a
+    /// word to a teammate, and it changes as the work changes. Counting
+    /// crews measured only how the work happened to be filed, so the card
+    /// and the route bar in the pane told two different stories about the
+    /// same flight.
+    ///
+    /// The closing line is the pilot's own and is not work, so it never
+    /// counts. A flight with no checklist at all falls back to its crews,
+    /// which is better than printing nothing.
     static func miles(of issue: AssignedIssue) -> (done: Int, total: Int) {
-        if issue.isFlight { return (issue.landedLegs, issue.legs.count) }
         let work = IssueBody.steps("Progress", in: issue.body).filter { !$0.isLanding }
+        if work.isEmpty, issue.isFlight { return (issue.landedLegs, issue.legs.count) }
         return (work.filter(\.done).count, work.count)
     }
 
