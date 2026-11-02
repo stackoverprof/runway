@@ -15,6 +15,10 @@ struct AssignedIssueCard: View {
     /// Open or close the issue from the card. Absent means no state menu.
     var onSetClosed: ((Bool) -> Void)?
     @State private var hovering = false
+    /// Lit while the pointer is on the class, so it reads as something you
+    /// can click rather than a label.
+    @State private var classHovering = false
+    @State private var classMenu = PriorityMenu()
     private let board = FlightBoard.shared
 
     var body: some View {
@@ -283,12 +287,27 @@ struct AssignedIssueCard: View {
         return HStack(spacing: 3) {
             Text("Class")
                 .font(.mono(8.5))
-                .foregroundStyle(Paper.muted)
+                .foregroundStyle(classHovering ? Paper.ink : Paper.muted)
             Text(level.map(FlightPriority.label) ?? "P-")
                 .font(.mono(8.5, .semibold))
                 .foregroundStyle(level.map { FlightPriority.color($0) } ?? Paper.faint)
         }
         .fixedSize()
+        // A click on the class opens the list, which is the one thing you
+        // ever want to do to it. Not a SwiftUI Menu: that draws its own
+        // control chrome on the card, and the headless render of the board
+        // came out with a yellow prohibitory badge where the class should
+        // be. An NSMenu at the pointer is plain text until you click it.
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onHover { classHovering = $0 }
+        .pointerCursor()
+        .help("Set this flight's class")
+        .onTapGesture {
+            classMenu.show(current: level) { chosen in
+                board.setPriority(chosen, for: issue.number, in: boardKey)
+            }
+        }
     }
 
     private func copy(_ value: String) {
@@ -324,5 +343,47 @@ struct TicketShape: Shape {
             x: x - notch, y: rect.maxY - notch, width: notch * 2, height: notch * 2
         ))
         return path
+    }
+}
+
+
+/// The class list, as a plain AppKit menu at the pointer.
+///
+/// SwiftUI's `Menu` would do this in one line, but it brings a control's
+/// chrome with it and the class has to read as part of the sentence under
+/// the title. This keeps the label as type and only shows a menu on the
+/// click.
+@MainActor
+final class PriorityMenu: NSObject {
+    private var pick: ((Int?) -> Void)?
+
+    /// `current` is ticked, and "None" clears it.
+    func show(current: Int?, pick: @escaping (Int?) -> Void) {
+        self.pick = pick
+        let menu = NSMenu()
+        for level in FlightPriority.all {
+            let item = NSMenuItem(
+                title: FlightPriority.label(level),
+                action: #selector(choose(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = level
+            item.state = current == level ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let none = NSMenuItem(title: "None", action: #selector(choose(_:)), keyEquivalent: "")
+        none.target = self
+        none.tag = 0
+        none.state = current == nil ? .on : .off
+        menu.addItem(none)
+        // No view, so the point is in screen coordinates, which is where
+        // the mouse already is.
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func choose(_ sender: NSMenuItem) {
+        pick?(sender.tag == 0 ? nil : sender.tag)
     }
 }
