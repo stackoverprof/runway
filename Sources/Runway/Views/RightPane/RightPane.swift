@@ -71,8 +71,9 @@ struct RightPane: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(Runway.purple.opacity(0.7))
                     .frame(width: 15, height: 15)
-                Text(showLanded ? "Hide \(count) landed" : "Show \(count) landed")
-                    .font(.system(size: 10.5, weight: .medium))
+                Text(verbatim: showLanded ? "Hide \(count) landed" : "Show \(count) landed")
+                    .font(.mono(9.5, .medium))
+                    .tracking(0.4)
                     .foregroundStyle(Color.white.opacity(0.42))
                 Spacer(minLength: 0)
             }
@@ -148,7 +149,76 @@ struct RightPane: View {
         .overlay {
             if crews.isEmpty { noCrews }
         }
+        // Crews stood up on a flight that is not the one on screen. Behind
+        // everything, at nothing, but mounted: a terminal has to be in the
+        // view tree to exist at all.
+        .background(offScreenCrewSeats)
         .background(Color.black)
+    }
+
+    /// Crews stood up from outside the window, on some other flight.
+    ///
+    /// `runway crew up` writes the deck, but the pane only ever mounted the
+    /// crews of the flight you were looking at, so a crew an agent started
+    /// was marked up and never got a terminal: the deck said yes and nothing
+    /// happened. The same hole the pilots had, on the other rank. Now every
+    /// crew on the deck keeps a seat, on screen or not.
+    private var offScreenCrewSeats: some View {
+        ZStack {
+            ForEach(offScreenCrews, id: \.crew.number) { entry in
+                deckCrewTerminal(entry.crew, repository: entry.repository, flight: entry.flight)
+            }
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
+    }
+
+    private struct DeckSeat {
+        let crew: IssueLeg
+        let repository: String
+        let flight: Int
+    }
+
+    private var offScreenCrews: [DeckSeat] {
+        guard let fallback = issues.repository else { return [] }
+        let onScreen = Set(crews.map(\.number))
+        var seats: [DeckSeat] = []
+        for flight in issues.issues where flight.parent == nil {
+            for leg in flight.legs where !onScreen.contains(leg.number) {
+                let repository = leg.repository ?? fallback
+                guard deck.isUp(repository, leg.number) else { continue }
+                seats.append(DeckSeat(crew: leg, repository: repository, flight: flight.number))
+            }
+        }
+        return seats
+    }
+
+    @ViewBuilder
+    private func deckCrewTerminal(_ crew: IssueLeg, repository: String, flight: Int) -> some View {
+        TerminalSurfaceView(
+            boxID: FlightCrewSessions.boxID(
+                rank: .crew,
+                repository: repository,
+                issue: crew.number
+            ),
+            workspace: ws,
+            isVisible: false,
+            config: FlightCrewSessions.config(
+                rank: .crew,
+                repository: repository,
+                issue: crew.number,
+                title: crew.title,
+                flight: flight,
+                reportsTo: FlightCrewSessions.sessionName(
+                    rank: .pilot,
+                    repository: repository,
+                    issue: flight,
+                    title: ""
+                )
+            )
+        )
+        .id("deck-crew-\(repository)-\(crew.number)")
+        .background(RunwayTerminal.body)
     }
 
     /// Any click in the window that did not land on this pane clears the
@@ -174,7 +244,7 @@ struct RightPane: View {
                 .font(.system(size: 16))
                 .foregroundStyle(Color.white.opacity(0.14))
             Text(ws.flightNumber == nil ? "No flight picked" : "This flight has no crews yet")
-                .font(.system(size: 12))
+                .font(.mono(10.5))
                 .foregroundStyle(Color.white.opacity(0.28))
         }
     }
@@ -216,7 +286,7 @@ struct RightPane: View {
                 help: "Copy issue title and number"
             ) {
                 Text(crew.title)
-                    .font(.system(size: 11))
+                    .font(.mono(10))
                     .foregroundStyle(Color.white.opacity(0.4))
                     .strikethrough(color: Color.white.opacity(0.22))
                     .lineLimit(1)
@@ -226,7 +296,7 @@ struct RightPane: View {
 
             copyButton(GitHubNumber.reference(crew.number), help: "Copy issue number") {
                 Text(verbatim: GitHubNumber.reference(crew.number))
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.mono(8.5, .semibold))
                     .foregroundStyle(Color.white.opacity(0.26))
             }
         }
@@ -253,7 +323,8 @@ struct RightPane: View {
             VStack(alignment: .leading, spacing: 3) {
                 copyButton(crewSubtitle(crew), help: "Copy issue number") {
                     Text(verbatim: crewSubtitle(crew))
-                        .font(.system(size: 11))
+                        .font(.mono(9.5))
+                        .tracking(0.3)
                         .foregroundStyle(Color.white.opacity(0.42))
                 }
                 copyButton(
@@ -261,7 +332,7 @@ struct RightPane: View {
                     help: "Copy issue title and number"
                 ) {
                     Text(crew.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.mono(11.5, .medium))
                         .foregroundStyle(Color.white.opacity(0.72))
                         .lineLimit(1)
                 }
@@ -374,7 +445,7 @@ struct RightPane: View {
                     help: "Copy issue title and number"
                 ) {
                     Text(crew.title)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.mono(10.5, .semibold))
                         .foregroundStyle(Color.white.opacity(0.9))
                         .lineLimit(1)
                 }
@@ -383,7 +454,8 @@ struct RightPane: View {
 
                 if crew.isClosed {
                     Text("LANDED")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.mono(7.5, .bold))
+                        .tracking(1)
                         .foregroundStyle(Runway.purple.opacity(0.85))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -392,7 +464,7 @@ struct RightPane: View {
 
                 copyButton(GitHubNumber.reference(crew.number), help: "Copy issue number") {
                     Text(verbatim: GitHubNumber.reference(crew.number))
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .font(.mono(9, .semibold))
                         .foregroundStyle(Color.white.opacity(0.4))
                 }
             }

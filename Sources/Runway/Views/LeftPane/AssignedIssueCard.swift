@@ -178,36 +178,34 @@ struct AssignedIssueCard: View {
 
     private var stub: some View {
         let flown = FlightStatus.miles(of: issue)
-        return VStack(spacing: 3) {
+        return VStack(spacing: 5) {
             Text(status.label)
                 .font(.mono(8.5))
                 .tracking(1.1)
                 .foregroundStyle(stubColour)
 
-            // One fixed slot, whatever it holds, so every card is the same
-            // height whether it is flying or standing.
-            VStack(spacing: 0) {
+            // One slot, one line each, whatever the flight is doing: a
+            // word, then either a plane or a bar. A stacked count pushed
+            // the bar down on a flying card only, so three cards in a row
+            // had their marks at three different heights.
+            ZStack {
                 switch status {
                 case .scheduled:
                     Image(systemName: "airplane.departure")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .foregroundStyle(stubColour)
                 case .landed:
                     Image(systemName: "airplane.arrival")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .foregroundStyle(stubColour)
                 case .onAir:
-                    Text(verbatim: "\(flown.done) \(flown.done == 1 ? "Mile" : "Miles")")
-                        .font(.mono(8.5))
-                        .tracking(0.4)
-                        .foregroundStyle(Paper.mile)
-                    mileBar(flown).padding(.top, 2)
+                    mileBar(flown)
                 }
             }
-            .frame(height: 24)
+            .frame(height: 14)
         }
         .frame(width: Self.stubWidth)
-        .padding(.vertical, 7)
+        .padding(.vertical, 9)
     }
 
     /// The sheet's own three: grey while it waits, teal in the air, purple
