@@ -768,35 +768,38 @@ struct MiddlePane: View {
     private var pullsSection: some View {
         let all = flightPulls
         let groups = Self.grouped(all)
-        return VStack(alignment: .leading, spacing: 14) {
+        return BoardSheet {
             if all.isEmpty {
-                BoardSheet {
-                    BoardBar("Pull requests")
-                    boardNote("No pull request names this flight or its crews yet.")
-                }
+                BoardBar("Pull requests")
+                boardNote("No pull request names this flight or its crews yet.")
             }
-            ForEach(groups) { group in
-                BoardSheet {
-                    BoardBar(title: group.name, dot: group.colour) {
-                        BoardTally(
-                            text: group.capped
-                                ? "Showing \(min(pullsShown, group.pulls.count)) of \(group.pulls.count)"
-                                : "\(group.pulls.count)"
-                        )
+            // One continuous board, not one board a group. A group is a bar
+            // across the rows, the way a day is a bar across the log: with a
+            // gap between them the last row of a group grew a floor of empty
+            // sheet under it and read as a taller row than the rest.
+            ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
+                BoardBar(title: group.name, dot: group.colour) {
+                    BoardTally(
+                        text: group.capped
+                            ? "Showing \(min(pullsShown, group.pulls.count)) of \(group.pulls.count)"
+                            : "\(group.pulls.count)"
+                    )
+                }
+                .overlay(alignment: .top) {
+                    if groupIndex > 0 { Rectangle().fill(Board.row).frame(height: 1) }
+                }
+                BoardColumns(names: ["No", "Pull", "Status"], widths: [52, nil, 62])
+                let shown = group.capped ? Array(group.pulls.prefix(pullsShown)) : group.pulls
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, pull in
+                    BoardRow(index: index, ruled: index > 0, action: {
+                        NSWorkspace.shared.open(pull.url)
+                    }) {
+                        pullRow(pull)
                     }
-                    BoardColumns(names: ["No", "Pull", "Status"], widths: [52, nil, 62])
-                    let shown = group.capped ? Array(group.pulls.prefix(pullsShown)) : group.pulls
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, pull in
-                        BoardRow(index: index, ruled: index > 0, action: {
-                            NSWorkspace.shared.open(pull.url)
-                        }) {
-                            pullRow(pull)
-                        }
-                    }
-                    if shown.count < group.pulls.count {
-                        BoardMore(title: "Load \(group.pulls.count - shown.count) more") {
-                            pullsShown += 20
-                        }
+                }
+                if shown.count < group.pulls.count {
+                    BoardMore(title: "Load \(group.pulls.count - shown.count) more") {
+                        pullsShown += 20
                     }
                 }
             }

@@ -37,6 +37,10 @@ enum Board {
     static let veilBand = Color.white.opacity(0.022)
     static let veilHover = Color.white.opacity(0.075)
     static let veilDay = Color.black.opacity(0.22)
+    /// The face you are on is the dark one. On glass, lighter reads as
+    /// "raised, not yet pressed"; the open face is the one you have cut
+    /// down to, so it sits below the rest of the strip.
+    static let veilActive = Color.black.opacity(0.45)
     static let veilTint = Color.black.opacity(0.42)
 
     static let radius: CGFloat = 10
@@ -406,7 +410,7 @@ struct SectionTab: View {
         .foregroundStyle(active ? Board.ink : (hovering ? Board.muted : Board.dim))
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .background(active ? Board.veilHover : Color.clear)
+        .background(active ? Board.veilActive : Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(active ? Board.ink : Color.clear)
