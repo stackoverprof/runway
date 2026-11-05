@@ -52,12 +52,14 @@ final class FlightDrag {
 
     var isDragging: Bool { issue != nil }
 
+    /// Frames are never forgotten. Forgetting on disappear is what kept
+    /// breaking drag: SwiftUI fires disappear/appear on a card whose geometry
+    /// does not change (lazy lists, tab switches, rebuilds), the frame was
+    /// wiped and never re-reported, and the card could not be picked up.
+    /// Stale frames are harmless instead: `insertion` only looks at cards
+    /// that are in the lane right now, and `begin` uses the card's own frame.
     func report(_ number: Int, lane: String, frame: CGRect) {
         frames[lane, default: [:]][number] = frame
-    }
-
-    func forget(_ number: Int, lane: String) {
-        frames[lane]?.removeValue(forKey: number)
     }
 
     func reportSpace(_ frame: CGRect, lane: String) {
@@ -80,8 +82,12 @@ final class FlightDrag {
     /// The grabbed card's frame, checked against the pointer that grabbed
     /// it. A frame that does not contain the pointer is stale, and starting
     /// from it puts the floating card a row away from the one grabbed.
-    func begin(_ number: Int, lane: String, at pointer: CGPoint) {
-        guard let frame = frames[lane]?[number] else { return }
+
+    func begin(_ number: Int, lane: String, at pointer: CGPoint, own: CGRect?) {
+        // The card's own last frame comes first: it is held by the card
+        // itself, so no shared bookkeeping can lose it.
+        guard let frame = own.flatMap({ $0.isEmpty ? nil : $0 }) ?? frames[lane]?[number] else { return }
+        frames[lane, default: [:]][number] = frame
         let grabbed = frame.contains(pointer)
             ? frame
             : CGRect(
@@ -107,9 +113,10 @@ final class FlightDrag {
 
     /// Where the dragged card would land: the first card, top to bottom,
     /// whose middle the pointer is above. Nil means the end of the list.
-    func insertion(at pointer: CGPoint, excluding moving: Int, lane: String) -> Int? {
-        (frames[lane] ?? [:])
-            .filter { $0.key != moving && !$0.value.isEmpty }
+    func insertion(at pointer: CGPoint, excluding moving: Int, lane: String, among cards: [Int]) -> Int? {
+        let present = Set(cards)
+        return (frames[lane] ?? [:])
+            .filter { $0.key != moving && present.contains($0.key) && !$0.value.isEmpty }
             .sorted { $0.value.minY < $1.value.minY }
             .first { pointer.y < $0.value.midY }?
             .key
@@ -182,15 +189,17 @@ struct DraggableFlight: ViewModifier {
     let lane: [Int]
     let repository: String
     let drag: FlightDrag
+    /// This card's own last frame, kept by the card so a drag can always start.
+    @State private var ownFrame: CGRect?
 
     func body(content: Content) -> some View {
         content
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .named(FlightDrag.space))
             } action: { frame in
+                ownFrame = frame
                 drag.report(issue, lane: laneKey, frame: frame)
             }
-            .onDisappear { drag.forget(issue, lane: laneKey) }
             // Simultaneous: the card already has a tap that picks the
             // flight, and a plain gesture loses to it.
             .simultaneousGesture(enabled ? reorder : nil)
@@ -211,12 +220,12 @@ struct DraggableFlight: ViewModifier {
                         x: now.x - value.translation.width,
                         y: now.y - value.translation.height
                     )
-                    drag.begin(issue, lane: laneKey, at: start)
+                    drag.begin(issue, lane: laneKey, at: start, own: ownFrame)
                 }
                 guard drag.issue == issue, !repository.isEmpty else { return }
                 drag.move(to: now)
 
-                let before = drag.insertion(at: now, excluding: issue, lane: laneKey)
+                let before = drag.insertion(at: now, excluding: issue, lane: laneKey, among: lane)
                 guard drag.shouldMove(to: before) else { return }
                 var next = lane.filter { $0 != issue }
                 if let before, let at = next.firstIndex(of: before) {
@@ -226,7 +235,7 @@ struct DraggableFlight: ViewModifier {
                 }
                 guard next != lane else { return }
                 withAnimation(.easeInOut(duration: 0.16)) {
-                    FlightBoard.shared.setOrder(next, in: repository)
+                    FlightBoard.shared.reorder(next, moving: issue, in: repository)
                 }
             }
             .onEnded { _ in

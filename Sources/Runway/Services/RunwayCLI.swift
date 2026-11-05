@@ -24,7 +24,9 @@ extension AgentControl {
 
 
         def gh(args):
-            done = subprocess.run(["gh"] + args, capture_output=True, text=True)
+            # Straight to the real gh: runway shows its own writes on the board.
+            done = subprocess.run(["gh"] + args, capture_output=True, text=True,
+                                  env=dict(os.environ, RUNWAY_GH_DIRECT="1"))
             if done.returncode != 0:
                 sys.stderr.write((done.stderr or "gh failed").strip() + "\\n")
                 sys.exit(done.returncode)
@@ -183,6 +185,7 @@ extension AgentControl {
             url = gh(["issue", "create", "--repo", repo, "--title", title,
                       "--body", body or "", "--assignee", "@me"]).strip()
             number = url.rstrip("/").split("/")[-1]
+            show_state(repo, number, create={"title": title, "url": url, "body": body or ""})
             return int(number), url
 
 
@@ -192,7 +195,7 @@ extension AgentControl {
             gh(["issue", "edit", str(number), "--repo", repo, "--add-assignee", "@me"])
 
 
-        def adopt(repo, parent_number, child_number):
+        def adopt(repo, parent_number, child_number, title=None):
             mutation = \"\"\"
             mutation($parent: ID!, $child: ID!) {
               addSubIssue(input: {issueId: $parent, subIssueId: $child}) {
@@ -201,6 +204,8 @@ extension AgentControl {
             }
             \"\"\"
             graphql(mutation, parent=node_id(repo, parent_number), child=node_id(repo, child_number))
+            show_state(repo, child_number, parent=int(str(parent_number).lstrip("#")))
+            show_state(repo, parent_number, addLegs=[leg_of(repo, child_number, title)])
 
 
         def cmd_flight_create(args):
@@ -210,7 +215,7 @@ extension AgentControl {
             print("Flight #%d: %s" % (number, url))
             for title in args.crew or []:
                 crew_number, crew_url = create_issue(repo, title, "")
-                adopt(repo, number, crew_number)
+                adopt(repo, number, crew_number, title)
                 print("  crew #%d %s" % (crew_number, title))
             for existing in args.adopt or []:
                 adopt(repo, number, existing)
@@ -224,7 +229,7 @@ extension AgentControl {
             if not flight:
                 sys.exit("runway: which flight? Pass --flight <number>.")
             number, url = create_issue(repo, args.title, args.body)
-            adopt(repo, flight, number)
+            adopt(repo, flight, number, args.title)
             assign_me(repo, flight)
             print("Crew #%d on flight #%s: %s" % (number, flight, url))
             nudge()
@@ -515,6 +520,7 @@ extension AgentControl {
                 child = node_id(repo, int(str(issue).lstrip("#")))
                 graphql(mutation, parent=parent, child=child, after=after)
                 after = child
+            show_state(repo, flight, legOrder=[int(str(i).lstrip("#")) for i in args.issues])
             print("Flight #%s crews reordered, %d named" % (flight, len(args.issues)))
             nudge()
 
@@ -524,6 +530,17 @@ extension AgentControl {
             flight = args.flight or FLIGHT
             if not flight:
                 sys.exit("runway: which flight? Pass --flight <number>.")
+            # A released issue still assigned to the user turns up on his
+            # board as a flight of its own. That is almost never meant: a
+            # handover keeps the crew on the flight. So releasing takes a
+            # stated reason that the work is not this flight's.
+            if not getattr(args, "not_this_flight", False):
+                sys.exit(
+                    "runway: not released. A crew handed to a teammate stays on the flight:\\n"
+                    "  runway progress needs <transit> \\"<who> has it\\"\\n"
+                    "Release only work that does not belong to this flight at all:\\n"
+                    "  runway crew release %s --not-this-flight" % args.issue
+                )
             mutation = \"\"\"
             mutation($parent: ID!, $child: ID!) {
               removeSubIssue(input: {issueId: $parent, subIssueId: $child}) {
@@ -532,6 +549,8 @@ extension AgentControl {
             }
             \"\"\"
             graphql(mutation, parent=node_id(repo, flight), child=node_id(repo, args.issue))
+            show_state(repo, args.issue, parent=0)
+            show_state(repo, flight, removeLegs=[int(str(args.issue).lstrip("#"))])
             print("Crew #%s leaves flight #%s" % (args.issue, flight))
             nudge()
 
@@ -543,13 +562,124 @@ extension AgentControl {
             return gh(["issue", "view", str(number), "--repo", repo, "--json", "body", "--jq", ".body"])
 
 
+        PENDING = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "pending-bodies",
+        )
+
+
+        def show_now(repo, number, body):
+            # The board shows this text at once, before GitHub echoes it.
+            try:
+                os.makedirs(PENDING, exist_ok=True)
+                name = "%s__%s.md" % (repo.lower().replace("/", "__"), str(number).lstrip("#"))
+                target = os.path.join(PENDING, name)
+                with open(target + ".tmp", "w") as handle:
+                    handle.write(body)
+                os.replace(target + ".tmp", target)
+            except Exception:
+                pass
+
+
         def write_body(repo, number, body):
             import tempfile
+            show_now(repo, number, body)
             with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
                 handle.write(body)
                 path = handle.name
             gh(["issue", "edit", str(number), "--repo", repo, "--body-file", path])
             os.unlink(path)
+
+
+        STATES = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "pending-states",
+        )
+
+
+        def show_state(repo, number, **patch):
+            # What a write just changed (open or closed, whose crew it is,
+            # which crews a flight has and in what order), shown on the board
+            # at once. GitHub's own reads lag the write by up to a minute, so
+            # without this a closed flight stayed teal long after it landed.
+            # The app lets go of it once GitHub agrees.
+            try:
+                os.makedirs(STATES, exist_ok=True)
+                name = "%s__%s.json" % (repo.lower().replace("/", "__"), str(number).lstrip("#"))
+                target = os.path.join(STATES, name)
+                current = {}
+                if os.path.exists(target):
+                    try:
+                        with open(target) as handle:
+                            current = json.load(handle)
+                    except Exception:
+                        current = {}
+                for key, value in patch.items():
+                    if key == "addLegs":
+                        numbers = [leg["number"] for leg in value]
+                        kept = [leg for leg in current.get("addLegs", []) if leg["number"] not in numbers]
+                        current["addLegs"] = kept + value
+                        current["removeLegs"] = [n for n in current.get("removeLegs", []) if n not in numbers]
+                    elif key == "removeLegs":
+                        current["removeLegs"] = sorted(set(current.get("removeLegs", [])) | set(value))
+                        current["addLegs"] = [leg for leg in current.get("addLegs", []) if leg["number"] not in value]
+                    else:
+                        current[key] = value
+                with open(target + ".tmp", "w") as handle:
+                    json.dump(current, handle)
+                os.replace(target + ".tmp", target)
+            except Exception:
+                pass
+
+
+        def leg_of(repo, number, title=None):
+            number = int(str(number).lstrip("#"))
+            leg = {"number": number, "url": "https://github.com/%s/issues/%d" % (repo, number)}
+            if title:
+                leg["title"] = title
+            return leg
+
+
+        LANDING = ("/close", "land it", "close it")
+
+
+        def tick_landing(repo, number):
+            # Closing IS the landing, so its line ticks with the close. A
+            # pilot that closed and forgot the box left a landed flight
+            # reading 7 of 8, so it is the verb's job, not the pilot's memory.
+            body = issue_body(repo, number)
+            head, section, tail = split_progress(body)
+            out, changed = [], False
+            for line in section:
+                text = line.strip()
+                bare = text[5:].strip()
+                if "(needs:" in bare.lower():
+                    bare = bare[:bare.lower().rindex("(needs:")].strip()
+                if text.startswith("- [ ]") and bare.lower() in LANDING:
+                    out.append(line.replace("- [ ]", "- [x]", 1))
+                    changed = True
+                else:
+                    out.append(line)
+            if changed:
+                write_body(repo, number, "\\n".join(head + out + tail))
+
+
+        def cmd_body(args):
+            # A whole new issue body, from a file or stdin. The way to edit an
+            # issue from a seat: the board shows it within a second, then
+            # GitHub gets it.
+            repo = repo_of(args)
+            number = str(args.number).lstrip("#")
+            if args.file:
+                with open(args.file) as handle:
+                    body = handle.read()
+            else:
+                body = sys.stdin.read()
+            if not body.strip():
+                sys.exit("runway: refusing to write an empty body to #%s" % number)
+            write_body(repo, number, body)
+            nudge()
+            print("#%s body written" % number)
 
 
         def split_progress(body):
@@ -570,6 +700,20 @@ extension AgentControl {
             return lines[:start + 1], lines[start + 1:end], lines[end:]
 
 
+        def in_flight_order(steps):
+            # The order it really happened: done first, in the order written,
+            # then what is left, the landing line last. The board shows the
+            # same order, so a number here is the number there.
+            def landing(text):
+                bare = text
+                if "(needs:" in bare.lower():
+                    bare = bare[:bare.lower().rindex("(needs:")]
+                return bare.strip().lower() in LANDING
+            return ([s for s in steps if s[0] and not landing(s[1])]
+                    + [s for s in steps if not s[0] and not landing(s[1])]
+                    + [s for s in steps if landing(s[1])])
+
+
         def steps_of(section):
             steps = []
             for line in section:
@@ -578,7 +722,7 @@ extension AgentControl {
                     steps.append((True, text[5:].strip()))
                 elif text.startswith("- [ ]"):
                     steps.append((False, text[5:].strip()))
-            return steps
+            return in_flight_order(steps)
 
 
         def rendered(steps):
@@ -586,6 +730,7 @@ extension AgentControl {
 
 
         def save_steps(repo, number, steps):
+            steps = in_flight_order(steps)
             body = issue_body(repo, number)
             head, section, tail = split_progress(body)
             if not head or not head[-1].strip().lower().startswith(PROGRESS_HEADING.lower()):
@@ -849,7 +994,9 @@ extension AgentControl {
             why = getattr(args, "why", None)
             if why:
                 gh(["issue", "comment", str(args.number), "--repo", repo, "--body", why])
+            tick_landing(repo, args.number)
             gh(["issue", "close", str(args.number), "--repo", repo])
+            show_state(repo, args.number, state="CLOSED")
             # A closed crew leaves the pane, so it leaves the deck with it.
             seats = read_deck()
             seats.discard("%s#%s" % (repo, args.number))
@@ -862,6 +1009,7 @@ extension AgentControl {
         def cmd_reopen(args):
             repo = repo_of(args)
             gh(["issue", "reopen", str(args.number), "--repo", repo])
+            show_state(repo, args.number, state="OPEN")
             note("issue_reopened", issue=int(str(args.number).lstrip("#")), repository=repo)
             print("#%s reopened" % args.number)
             nudge()
@@ -882,6 +1030,12 @@ extension AgentControl {
             listing.add_argument("--state", default="open", choices=["open", "closed", "all"])
             listing.add_argument("--json", action="store_true")
             listing.set_defaults(run=cmd_list)
+
+            body = verbs.add_parser("body", help="write an issue's whole body (from --file or stdin), shown on the board at once")
+            body.add_argument("number")
+            body.add_argument("--file", default="")
+            body.add_argument("--repo", default="")
+            body.set_defaults(run=cmd_body)
 
             show = verbs.add_parser("show", help="one flight and its crews")
             show.add_argument("number", nargs="?", default=FLIGHT,
@@ -926,6 +1080,8 @@ extension AgentControl {
             crew_release = crew_verbs.add_parser("release", help="let a crew go, without closing it")
             crew_release.add_argument("issue")
             crew_release.add_argument("--flight", default="")
+            crew_release.add_argument("--not-this-flight", action="store_true",
+                                      help="the work does not belong to this flight; a handover is not a reason")
             crew_release.set_defaults(run=cmd_crew_release)
 
             pilot = verbs.add_parser("pilot", help="the pilot of a flight")

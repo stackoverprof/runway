@@ -35,6 +35,29 @@ enum RoleCard {
             lines.append("of them, adopt it there as a crew rather than opening a flight of")
             lines.append("its own. Only work that is its own cluster gets its own flight.")
             lines.append("")
+            lines.append("Every new ticket is that decision: a crew under an existing flight, or")
+            lines.append("a flight of its own. Weigh it before you file, never by habit:")
+            lines.append("  Crew: it serves a flight's goal, shares its people, code or customer,")
+            lines.append("  and would land with it. Its pilot can carry it alongside the rest.")
+            lines.append("  Flight: it has its own gravity. Its own goal and its own idea of done,")
+            lines.append("  likely several pieces of work (crews) of its own, its own channel or")
+            lines.append("  stakeholder, and it would keep going after the nearest flight lands.")
+            lines.append("  A pilot asked to carry it would be flying two things at once.")
+            lines.append("When it is clear, file it and say in one line which way you went and")
+            lines.append("why (\"crew of Yuzu: same slot logic, lands with it\"). When it is")
+            lines.append("genuinely unclear, ask the user before filing, as one line with both")
+            lines.append("options: \"crew under Price Mismatch, or its own flight? ...\". A ticket")
+            lines.append("filed the wrong way costs more to move than the question costs to ask.")
+            lines.append("")
+            lines.append("A cluster often exists before its flight does: earlier issues named")
+            lines.append("after it (\"Yuzu: ...\"), many of them closed, under no flight. When you")
+            lines.append("make the flight for such a cluster, search for those first, open and")
+            lines.append("closed (`gh issue list --state all --search '\"Yuzu:\" in:title'`),")
+            lines.append("and adopt each one whose title starts with the cluster's name as a")
+            lines.append("crew, so the flight carries its history. Leave issues that only")
+            lines.append("mention the name inside another cluster's title (\"E2E: Yuzu smoke\")")
+            lines.append("where they are, and say which ones you adopted.")
+            lines.append("")
             lines.append("  runway list                      the flights in this repository")
             lines.append("  runway show <issue>              one flight and how its crews stand")
             lines.append("  runway flight create --title \"<cluster>\" --body \"...\"")
@@ -121,6 +144,13 @@ enum RoleCard {
             lines.append("line and move on with the rest. Closing is not one of them, not the")
             lines.append("crews and not the flight: when the checklist is clean, land it.")
             lines.append("")
+            lines.append("Handing a crew's work to a teammate does not take it off the flight.")
+            lines.append("The crew stays a sub-issue, its transit says who has it (needs: Anwar's")
+            lines.append("review), and it lands with the flight. `runway crew release` is only for")
+            lines.append("work that turns out not to belong to this flight at all: a released")
+            lines.append("issue still assigned to the user shows up on his board as a flight of")
+            lines.append("its own, which is clutter he has to clean up.")
+            lines.append("")
             lines.append("If a command of yours is refused, say so plainly in the same breath")
             lines.append("and hand over the exact line to run. Never present a refusal as a")
             lines.append("decision you were waiting on.")
@@ -131,6 +161,23 @@ enum RoleCard {
             lines.append("soon as you know, and clear it the moment it is unblocked. Add a transit")
             lines.append("you discover. Keep every line short, a few words, the way you would")
             lines.append("say it out loud: the detail belongs in the issue, not in the transit.")
+            lines.append("Runway shows each transit on ONE line and cuts the rest, so a transit")
+            lines.append("is at most about 45 characters (\"Kiosk OTA #17765\", not a status")
+            lines.append("report), and what it waits on is at most about 30 (\"Hákon's reply\").")
+            lines.append("Two things in one line are two transits. Never a semicolon in one.")
+            lines.append("")
+            lines.append("The same goes for `## Acceptance`, which Runway shows as REMARKS: what")
+            lines.append("done looks like for the whole flight. If the flight has none, write")
+            lines.append("2 to 5 short checkable lines from its Goal and Situation Development,")
+            lines.append("right before `## Progress`, without being asked. Reword a line when")
+            lines.append("the goal shifts, and tick one only when it is really met. Both sections")
+            lines.append("stay current all the time, not only when the user asks for progress.")
+            lines.append("")
+            lines.append("A transit is a step on the way to done (a merge, a deploy, a check")
+            lines.append("on production, a word to a teammate), not a list of your crews. When")
+            lines.append("a transit happens to be one crew's work, put that crew's number in it")
+            lines.append("(#17728) and Runway shows it as boarding while the crew is at work.")
+            lines.append("Never invent a marker for \"in progress\".")
         case .crew:
             lines.append("You answer for \(GitHubNumber.reference(issue)): \(title)")
             lines.append("Repository: \(repository)")
@@ -300,8 +347,18 @@ enum RoleCard {
     What you verified becomes square slides Erbin can drag into Slack, and
     they are saved on the issue too. The whole method, the layouts, the
     themes, the provenance rules and the traps, is in
-    `$RUNWAY_WALKTHROUGH/GUIDE.md`. Read it before the first one; it travels
-    with Runway, so there is nothing to install.
+    `$RUNWAY_WALKTHROUGH/GUIDE.md`, and how to take a shot while you verify
+    is in `$RUNWAY_WALKTHROUGH/CAPTURE.md`. Read both in full before you
+    take your first evidence shot or render anything, every session, even
+    when you think you know them: a slide made from memory is the wrong
+    shape. They travel with Runway, so there is nothing to install, and
+    they are the rules whether or not a `/walkthrough` skill exists.
+
+    Shots taken while verifying go in
+    `$RUNWAY_WALKTHROUGH_OUT/.work/captures/<YYYY-MM-DD>/` with a row in
+    that folder's `manifest.md`. Never in `$RUNWAY_WALKTHROUGH_OUT/<issue>/`:
+    that folder holds only slides `render.py` wrote, Runway shows it as the
+    issue's walkthrough, and a raw screenshot there reads as a finished slide.
 
       python3 -I $RUNWAY_WALKTHROUGH/render.py <spec.json>
       $RUNWAY_WALKTHROUGH/publish-to-issue.sh <issue> [repo]
@@ -336,9 +393,11 @@ enum RoleCard {
     up reading the same thing three times, and how a half-finished crew's
     note reaches a channel before anyone has checked it.
 
-    The pilot keeps that log current as the conversation moves: append one
-    `- [who](<permalink>): what happened.` line under the right day header,
-    oldest last, never rewriting an earlier line. Permalink or it did not
+    The pilot keeps that log current as the conversation moves: add one
+    `- [who](<permalink>): what happened.` line, NEWEST AT THE TOP. Today's
+    day header is the first one under the Channel line (add it there if it
+    is missing) and a new line goes first under it, above older lines. Never
+    add at the bottom, and never rewrite an earlier line. Permalink or it did not
     happen. The channel the flight belongs to is named on the first line of
     the section; never infer one from the subject, and ask if it is missing.
 
@@ -350,10 +409,21 @@ enum RoleCard {
     GitHub. Then answer in a few plain lines: where it is, the steps left, and
     anything only Erbin can unblock.
 
+    Write an issue's body with `runway body <n> --file <path>`, never with
+    `gh issue edit --body`: Runway shows the new text on the board at once,
+    while GitHub can take ten seconds or more to echo it, which looks like a
+    failed edit. Read the body, splice only your section, write it back.
+
     Write the same answer back into `## Progress`, which is a living checklist
     edited in place, not a log. Tick what landed, add what you found, reword
     what changed. Never delete a ticked line: it is how the issue got here. A
     step no longer needed becomes `- [x] ~~<line>~~ (dropped: <reason>)`.
+    Keep the list in the order it really happened, and reorder it whenever
+    reality moves: every ticked step on top in the order it was done, then
+    the next step, then the rest, `land it` last. A step done out of turn
+    moves up into the done block; never leave a ticked line below an
+    unticked one. (`runway progress` and `runway tick` keep this order for
+    you; a body written by hand has to keep it too.)
     Steps are actions in the order they happen, named concretely, with the PR
     as an explicit link `[#n](<url>)`. Stamp the `_Updated <Day, D Mon HH:MM>
     WIB_` line, and keep `- [ ] land it` last. Older issues end that
@@ -415,7 +485,10 @@ enum HouseRules {
     static let key = "runway.houseRules"
 
     static let fallback = """
-    - A branch is named <type>/<slug>-<issue>, the issue number last.
+    - A branch is named <type>/<flight>-<slug>-<issue>, the issue number last:
+      <flight> is the flight's short title in lowercase kebab-case, <issue> is
+      the crew's own number (the flight's when the pilot works without a crew).
+      e.g. fix/dashboard-orders-list-like-old-17885.
     - A pull request says "Part of #<issue>", never a closing keyword.
     - A crew works in its own worktree beside the main checkout, and removes it
       when its pull request merges.

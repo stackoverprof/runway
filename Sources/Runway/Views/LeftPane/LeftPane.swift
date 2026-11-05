@@ -12,6 +12,24 @@ struct LeftPane: View {
     @Bindable var ws: Workspace
     @Bindable var feed: GitHubFeed
     @Bindable var assignedIssues: AssignedIssues
+
+    /// "DASHBOARD" for a branch of that flight or any of its crews, as for the
+    /// pilot's own, from the issue number the branch ends in.
+    private func branchOwner(_ branch: String) -> String? {
+        guard let number = BranchIssue.number(in: branch) else { return nil }
+        let issues = assignedIssues.issues
+        func name(_ issue: AssignedIssue) -> String { issue.title.uppercased() }
+        if let issue = issues.first(where: { $0.number == number }) {
+            if let parent = issue.parent, let flight = issues.first(where: { $0.number == parent }) {
+                return name(flight)
+            }
+            return name(issue)
+        }
+        if let flight = issues.first(where: { $0.legs.contains { $0.number == number } }) {
+            return name(flight)
+        }
+        return nil
+    }
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
     @State private var pullRequests = PullRequests.shared
@@ -27,6 +45,8 @@ struct LeftPane: View {
     @State private var expandedPRAuthor: String?
     /// Dragging a flight to a new place, v2's way: one gesture, live frames.
     @State private var flightDrag = FlightDrag()
+    /// Read here so the lane re-sorts the moment Settings changes it.
+    @AppStorage(FlightSort.key) private var flightSort = FlightSort.free.rawValue
     /// Stacks fanned out, by their bottom PR.
     @FocusState private var focusedSearchTab: FeedTab?
     @AppStorage(SettingsKey.fireThreshold) private var fireThreshold = 5
@@ -517,6 +537,24 @@ struct LeftPane: View {
 
     /// One card. In the open lane it can be dragged to a new place.
     @ViewBuilder
+    private func pinnedNumbers(in issues: [AssignedIssue]) -> Set<Int> {
+        let key = assignedIssues.repository ?? ""
+        return Set(issues.map(\.number).filter { FlightBoard.shared.isPinned($0, in: key) })
+    }
+
+    /// The line between the pinned flights and the rest.
+    private var pinDivider: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 8))
+                .rotationEffect(.degrees(45))
+            Rectangle().frame(height: 1)
+        }
+        .foregroundStyle(Color.white.opacity(0.14))
+        .padding(.vertical, -4)
+        .accessibilityLabel("End of pinned flights")
+    }
+
     private func issueCard(
         _ issue: AssignedIssue,
         lane: RunwayIssueTab,
@@ -540,7 +578,11 @@ struct LeftPane: View {
         }
         .modifier(
             DraggableFlight(
-                enabled: lane == .open,
+                // Recent mode sorts itself; only pins can still be dragged.
+                enabled: lane == .open && (
+                    flightSort == FlightSort.free.rawValue
+                    || FlightBoard.shared.isPinned(issue.number, in: assignedIssues.repository ?? "")
+                ),
                 issue: issue.number,
                 laneKey: lane.rawValue,
                 lane: numbers,
@@ -575,8 +617,20 @@ struct LeftPane: View {
             // from merging, but the merging was the even-odd fill painting
             // a half disc out into the gap, not the gap being tight.
             LazyVStack(alignment: .leading, spacing: 10) {
+                // Pinned flights on top, a divider, then the rest. Each group
+                // drags within itself only: a card never crosses the line.
+                let pinned = lane == .open ? pinnedNumbers(in: issues) : []
                 ForEach(issues) { issue in
-                    issueCard(issue, lane: lane, among: issues.map(\.number))
+                    let isPinned = pinned.contains(issue.number)
+                    issueCard(
+                        issue,
+                        lane: lane,
+                        among: issues.map(\.number).filter { pinned.contains($0) == isPinned }
+                    )
+                    if isPinned, issue.number == issues.last(where: { pinned.contains($0.number) })?.number,
+                       issues.count > pinned.count {
+                        pinDivider
+                    }
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -883,7 +937,8 @@ struct LeftPane: View {
                 // to merge, even when the PRs above it are drafts.
                 PullRequestList(
                     pullRequests: developer.pullRequests,
-                    scope: developer.login.lowercased()
+                    scope: developer.login.lowercased(),
+                    owner: branchOwner
                 )
                 .padding(11)
                 .transition(.opacity.combined(with: .move(edge: .top)))

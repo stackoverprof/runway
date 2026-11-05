@@ -152,7 +152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installShortcutMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             nonisolated(unsafe) let ev = event
-            let handled: Bool = MainActor.assumeIsolated { AppDelegate.handleShortcut(ev) }
+            let handled: Bool = MainActor.assumeIsolated {
+                if let context = RunwayWindowRegistry.shared.context(for: ev.window) {
+                    FlightActivity.noteKey(ev, issues: context.issues)
+                }
+                return AppDelegate.handleShortcut(ev)
+            }
             return handled ? nil : event
         }
     }
@@ -312,6 +317,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// keyboard responder after Ghostty finishes its copy-on-select handling.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// Confirm before quitting (⌘Q, the menu, the Dock), as v2 did, so a
+    /// stray keystroke does not stop every pilot and crew at once. On by
+    /// default; Settings > General turns it off. `relaunch.sh` sends a plain
+    /// kill, which never asks.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let confirm = UserDefaults.standard.object(forKey: SettingsKey.confirmQuit) as? Bool ?? true
+        guard confirm else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Quit Runway?"
+        alert.informativeText = "Every pilot, copilot, crew and the ATC stop with it."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -8,8 +8,6 @@
 	<string>Runway</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
-	<key>RunwayStateFolder</key>
-	<string>Runway</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.runway.Runway</string>
 	<key>CFBundleName</key>
@@ -39,5 +37,7 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>RunwayStateFolder</key>
+	<string>Runway3</string>
 </dict>
 </plist>

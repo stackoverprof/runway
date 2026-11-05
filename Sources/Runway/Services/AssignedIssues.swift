@@ -198,6 +198,8 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
             }
             issues = Self.withCrews(fetched, from: crews, repository: repository)
             issues = Self.withParents(issues, from: landed)
+            applyPendingBodies(settling: true)
+            applyPendingStates(settling: true)
             hasSnapshot = true
             error = nil
             snapshots[repository] = Snapshot(issues: issues, fetchedAt: Date())
@@ -209,13 +211,89 @@ struct AssignedIssue: Codable, Identifiable, Sendable, Equatable {
         loadTask = nil
     }
 
-    /// Open or close an issue, then read the board back so the panes follow.
+    /// Show what an agent just wrote into an issue before GitHub echoes it
+    /// (see ``PendingBodies``). After a real fetch, an entry GitHub already
+    /// matches is let go instead.
+    func applyPendingBodies(settling: Bool = false) {
+        guard let repository else { return }
+        let pending = PendingBodies.shared.bodies(in: repository)
+        guard !pending.isEmpty else { return }
+        var next = issues
+        var changed = false
+        for index in next.indices {
+            guard let (body, at) = pending[next[index].number] else { continue }
+            if PendingBodies.same(next[index].body, body) {
+                if settling { PendingBodies.shared.settle(repository, next[index].number) }
+                continue
+            }
+            // GitHub holds an edit made after ours (someone wrote the issue
+            // some other way): theirs is the newer truth.
+            if settling, let updated = next[index].updatedAt, updated > at.addingTimeInterval(2) {
+                PendingBodies.shared.settle(repository, next[index].number)
+                continue
+            }
+            next[index].body = body
+            changed = true
+        }
+        if changed { issues = next }
+    }
+
+    /// Lay what a write just changed over the board (see ``PendingStates``):
+    /// open or closed, whose crew, which crews and their order, a new issue.
+    /// After a real fetch, a patch GitHub already agrees with is let go.
+    func applyPendingStates(settling: Bool = false) {
+        guard let repository else { return }
+        let pending = PendingStates.shared.patches(in: repository)
+        guard !pending.isEmpty else { return }
+        var next = issues
+        var changed = false
+        let fetched = Set(next.map(\.number))
+        for (number, entry) in pending where !fetched.contains(number) {
+            guard let created = entry.patch.create, let url = URL(string: created.url) else { continue }
+            next.append(AssignedIssue(
+                number: number, title: created.title, state: "OPEN",
+                createdAt: entry.at, updatedAt: entry.at, url: url, body: created.body ?? ""
+            ))
+            changed = true
+        }
+        var byNumber: [Int: AssignedIssue] = [:]
+        for issue in next { byNumber[issue.number] = issue }
+        for index in next.indices {
+            let number = next[index].number
+            if let entry = pending[number] {
+                if settling, fetched.contains(number), PendingStates.agrees(next[index], with: entry.patch) {
+                    PendingStates.shared.settle(repository, number)
+                } else if let laid = PendingStates.apply(entry.patch, at: entry.at, to: next[index], lookup: { byNumber[$0] }) {
+                    next[index] = laid
+                    changed = true
+                }
+            }
+            // A crew that just landed or took off reads that way on its flight too.
+            for leg in next[index].legs.indices where next[index].legs[leg].repository == nil {
+                guard let patch = pending[next[index].legs[leg].number]?.patch else { continue }
+                if let state = patch.state, next[index].legs[leg].state != state {
+                    next[index].legs[leg].state = state
+                    changed = true
+                }
+                if let title = patch.title, next[index].legs[leg].title != title {
+                    next[index].legs[leg].title = title
+                    changed = true
+                }
+            }
+        }
+        if changed { issues = next }
+    }
+
+    /// Open or close an issue. The board shows it at once; GitHub follows.
     func setClosed(_ closed: Bool, issue number: Int) async {
         guard let repository = loadedRepository else { return }
-        _ = await GH.query([
+        PendingStates.shared.record(.init(state: closed ? "CLOSED" : "OPEN"), repository: repository, number: number)
+        applyPendingStates()
+        let answer = await GH.query([
             "issue", closed ? "close" : "reopen", String(number),
             "--repo", repository,
         ], cacheFor: 0)
+        if answer == nil { PendingStates.shared.settle(repository, number) }
         snapshots[repository] = nil
         await revalidate(repository: repository)
     }

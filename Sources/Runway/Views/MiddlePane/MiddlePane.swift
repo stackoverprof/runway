@@ -107,6 +107,7 @@ struct MiddlePane: View {
             keepMounted(number)
             noteLeft(previous)
             noteOpened(number)
+            focusSeat(number)
         }
         .onDisappear { noteLeft(ws.flightNumber) }
         .task {
@@ -115,6 +116,30 @@ struct MiddlePane: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 800_000_000)
                 blink.toggle()
+            }
+        }
+    }
+
+    /// Opening a flight puts the keyboard in its seat, so you can type to
+    /// the pilot at once without clicking into the terminal first. The seat
+    /// may still be mounting, so it waits a moment for the view to arrive.
+    private func focusSeat(_ number: Int?) {
+        guard let number, let repository = issues.repository else { return }
+        let id = FlightCrewSessions.boxID(
+            rank: crewTab == .pilot ? .pilot : .copilot,
+            repository: repository,
+            issue: number
+        )
+        ws.setFocus(id)
+        Task { @MainActor in
+            for _ in 0..<40 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                guard ws.flightNumber == number else { return }
+                if let view = TerminalSessionPool.shared.mountedSession(id)?.view,
+                   let window = view.window, !view.isHidden {
+                    window.makeFirstResponder(view)
+                    return
+                }
             }
         }
     }
@@ -241,15 +266,19 @@ struct MiddlePane: View {
         let landed = flight?.isClosed == true
         let flown = landed ? steps.count : steps.filter(\.done).count
         let trail = landed ? Board.purple : Board.teal
+        // The plane flies at the head of its trail: after the last transit
+        // flown, so 11 of 21 puts it halfway down the route, not at the gate
+        // it left from.
+        let plane = Image(systemName: "airplane")
+            .font(.system(size: 10))
+            .foregroundStyle(trail)
         return HStack(spacing: 8) {
-            Image(systemName: "airplane")
-                .font(.system(size: 10))
-                .foregroundStyle(trail)
-
             if steps.isEmpty {
+                plane
                 Capsule().fill(Board.line).frame(height: 3)
             } else {
                 ForEach(0..<steps.count, id: \.self) { index in
+                    if index == flown { plane }
                     Capsule()
                         .fill(Board.line)
                         .frame(height: 3)
@@ -257,6 +286,7 @@ struct MiddlePane: View {
                             if index < flown { Capsule().fill(trail) }
                         }
                 }
+                if flown >= steps.count { plane }
             }
 
             Circle()
@@ -355,7 +385,9 @@ struct MiddlePane: View {
     /// rather than read from state, so the flight you are on is mounted on
     /// the very first pass, before any `onAppear` has run.
     private var mounted: [Int] {
-        var list = visited
+        // A dozing flight's pilot is let go; mounting it would start it again.
+        let dozing = FlightDozer.shared.dozing
+        var list = visited.filter { !dozing.contains($0) }
         if let number = ws.flightNumber, !list.contains(number) { list.append(number) }
         // A pilot held up on the deck starts when its flight is opened, not
         // behind the pane. Starting every deck pilot during one view pass is
@@ -385,6 +417,12 @@ struct MiddlePane: View {
                                 .padding(.vertical, CGFloat(max(0, pilotPadding - 2)))
                                 .opacity(showing && crewTab == seat ? 1 : 0)
                                 .allowsHitTesting(showing && crewTab == seat)
+                                // The seat on screen is the top of the stack.
+                                // Otherwise the hidden copilot, laid over the
+                                // pilot, was what SwiftUI found under a drop,
+                                // and it refused it: opacity and hit testing
+                                // do not take a view out of drop routing.
+                                .zIndex(showing && crewTab == seat ? 1 : 0)
                         }
                     }
                 }
@@ -570,18 +608,30 @@ struct MiddlePane: View {
         BoardBox {
             ScrollViewReader { scroll in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+                    // Lazy only for its pinned headers: the transit board's
+                    // column heads stick to the top while its rows scroll
+                    // under them, and leave with the last row, so Remarks
+                    // scrolls up clear of them.
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         // An anchor at the very top, so switching face starts
                         // you at the top of the new one rather than halfway
                         // down it. Outside the spaced stack, or its spacing
                         // becomes a gap above the first board.
-                        Color.clear.frame(height: 0).id(Self.paneTop)
-                        VStack(alignment: .leading, spacing: 14) {
-                            switch ws.flightSection {
-                            case .issue: issueSection
-                            case .pulls: pullsSection
-                            case .slides: slidesSection
-                            case .thread: threadSection
+                        // One point tall, not zero: a zero-height view is
+                        // sometimes skipped by scrollTo, which left the pane
+                        // where the last flight had it, first row under the
+                        // column heads.
+                        Color.clear.frame(height: 1).id(Self.paneTop).padding(.bottom, -1)
+                        if ws.flightSection == .issue {
+                            issueSection
+                        } else {
+                            VStack(alignment: .leading, spacing: 14) {
+                                switch ws.flightSection {
+                                case .issue: EmptyView()
+                                case .pulls: pullsSection
+                                case .slides: slidesSection
+                                case .thread: threadSection
+                                }
                             }
                         }
                     }
@@ -589,9 +639,17 @@ struct MiddlePane: View {
                 }
                 .contentMargins(.vertical, 0, for: .scrollContent)
                 .scrollIndicators(.automatic)
-                .onChange(of: ws.flightSection) {
-                    scroll.scrollTo(Self.paneTop, anchor: .top)
-                }
+                // A fresh scroll view for each flight and each face, so it
+                // always starts at the very top. Reusing one kept the offset
+                // the last board left behind, and a short board that could
+                // not scroll at all still sat with its first row under the
+                // column heads; scrolling back to a top marker did not
+                // reliably undo it.
+                .id("\(ws.flightNumber ?? 0)/\(ws.flightSection)")
+                // Open at the transit in play, not at the landed ones above
+                // it: on opening a flight, and whenever the work moves on.
+                .onAppear { scrollToBoarding(scroll) }
+                .onChange(of: firstOpenTransit) { scrollToBoarding(scroll) }
             }
             // What runs off the bottom fades into the floor rather than
             // being cut off at the strip's edge.
@@ -615,27 +673,64 @@ struct MiddlePane: View {
 
     private static let paneTop = "flight.pane.top"
 
+    /// How tall the pinned column heads are: 7pt type plus 6pt above and below.
+    private static let columnHeadHeight: CGFloat = 23
+
+    private static func transitAnchor(_ index: Int) -> String { "flight.transit.\(index)" }
+
+    /// The first transit not yet landed, which is where the board opens.
+    private var firstOpenTransit: Int? {
+        // In the board's own order, or the index points at another row.
+        IssueBody.inFlightOrder(IssueBody.steps("Progress", in: flight?.body ?? "")).firstIndex { !$0.done }
+    }
+
+    private func scrollToBoarding(_ scroll: ScrollViewProxy) {
+        guard ws.flightSection == .issue else { return }
+        // After this pass, once the rows for the new flight exist.
+        DispatchQueue.main.async {
+            // The first row needs no scroll: the board already starts there,
+            // and its anchor sits above the content, which scrolled the
+            // board the wrong way.
+            if let first = firstOpenTransit, first > 0 {
+                scroll.scrollTo(Self.transitAnchor(first), anchor: .top)
+            }
+        }
+    }
+
     /// The transits as a departures board: a number, the transit, and where
     /// it stands. The first unfinished one is BOARDING and blinks; the rest are
     /// SCHEDULED; the ones behind it are LANDED. Remarks, which is what the
     /// issue says done looks like, sit at the foot of the same board.
     private var issueSection: some View {
-        let steps = IssueBody.steps("Progress", in: flight?.body ?? "")
+        let steps = IssueBody.inFlightOrder(IssueBody.steps("Progress", in: flight?.body ?? ""))
         let acceptance = IssueBody.steps("Acceptance", in: flight?.body ?? "")
-        let boarding = steps.firstIndex { !$0.done }
+        let boarding = boardingTransits(steps)
         let cleared = acceptance.filter(\.done).count
-        return BoardSheet {
-            BoardColumns(names: ["No", "Transit", "Status"], widths: [34, nil, 92])
-
+        return Group {
+            Section {
             if steps.isEmpty {
                 boardNote("The pilot has not written a checklist for this flight yet.")
             } else {
                 ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                    BoardRow(index: index, ruled: index > 0, action: { copyStep(step) }) {
-                        stepRow(step, number: index + 1, boarding: index == boarding)
+                    BoardRow(index: index, ruled: index > 0, action: { copyStep(step, number: index + 1) }) {
+                        stepRow(step, number: index + 1, boarding: boarding.contains(index))
+                            // The same flash a crew card gives: the copy happened.
+                            .opacity(copiedStep == step.text ? 0.45 : 1)
+                            .animation(.easeOut(duration: 0.12), value: copiedStep)
+                    }
+                    // The scroll target sits a header's height above the row,
+                    // so scrolling to a transit puts it just under the column
+                    // heads, not behind them. Moved with an alignment guide:
+                    // a negative padding left the id on a wrapper still at the
+                    // row's top, which is why the row kept landing underneath.
+                    .background(alignment: .top) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.transitAnchor(index))
+                            .alignmentGuide(.top) { $0[.top] + Self.columnHeadHeight }
                     }
                     .contextMenu {
-                        Button("Copy step") { copyStep(step) }
+                        Button("Copy transit") { copyStep(step, number: index + 1) }
                         if step.needs != nil {
                             Button("Copy what it waits on") {
                                 NSPasteboard.general.clearContents()
@@ -645,6 +740,10 @@ struct MiddlePane: View {
                     }
                     .help("Copy this step")
                 }
+            }
+            } header: {
+                BoardColumns(names: ["No", "Transit", "Status"], widths: [34, nil, 92])
+                    .background(.ultraThickMaterial)
             }
 
             // Remarks is part of the same board, under a rule, the way a
@@ -700,11 +799,56 @@ struct MiddlePane: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Board.gutter)
             .padding(.top, 9)
             .padding(.bottom, 6)
             .overlay(alignment: .top) { Rectangle().fill(Board.rule).frame(height: 1) }
         }
+    }
+
+    /// Which transits are boarding.
+    ///
+    /// The first unfinished transit always is: the checklist is the flight's
+    /// path to done, and most transits are nobody's crew (a merge, a deploy,
+    /// a check on production). On top of that, any unfinished transit that
+    /// happens to be one crew's work boards while that crew is at work, so
+    /// crews running side by side do not read as one boarding and the rest
+    /// scheduled. Nothing here asks the checklist to be a list of crews.
+    private func boardingTransits(_ steps: [IssueBody.Step]) -> Set<Int> {
+        let legs = flight?.legs ?? []
+        var boarding: Set<Int> = []
+        for (index, step) in steps.enumerated() where !step.done {
+            guard let crew = crew(for: step, in: legs), crewIsAtWork(crew) else { continue }
+            boarding.insert(index)
+        }
+        if let first = steps.firstIndex(where: { !$0.done }) {
+            boarding.insert(first)
+        }
+        return boarding
+    }
+
+    /// The crew a transit stands for: the line names its number (#17728),
+    /// or it is worded as the crew's title after the flight's own name
+    /// ("POS coupon skips a line" for "Price Mismatch: POS coupon skips a
+    /// line").
+    private func crew(for step: IssueBody.Step, in legs: [IssueLeg]) -> IssueLeg? {
+        let said = step.label.trimmingCharacters(in: .whitespaces).lowercased()
+        for leg in legs where step.text.contains("#\(leg.number)") { return leg }
+        for leg in legs {
+            let short = leg.title.split(separator: ":", maxSplits: 1).last.map(String.init) ?? leg.title
+            if short.trimmingCharacters(in: .whitespaces).lowercased() == said { return leg }
+        }
+        return nil
+    }
+
+    /// Up on the deck, or its agent working this minute.
+    private func crewIsAtWork(_ crew: IssueLeg) -> Bool {
+        guard !crew.isClosed else { return false }
+        let repository = crew.repository ?? issues.repository ?? ""
+        if CrewDeck.shared.isUp(repository, crew.number) { return true }
+        let id = FlightCrewSessions.boxID(rank: .crew, repository: repository, issue: crew.number)
+        return ws.agentStates[id] == .running
     }
 
     /// One transit on the board.
@@ -721,13 +865,18 @@ struct MiddlePane: View {
                 MarkdownText(text: step.label.uppercased())
                     .font(.mono(10.5))
                     .foregroundStyle(step.done ? Board.muted : Board.ink)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // One line, always: a departures board row never wraps.
+                    // The whole text is on hover and in the copy.
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(step.label)
                 if let needs = step.needs, !step.done {
                     MarkdownText(text: needs, tint: Board.amber)
                         .font(.mono(8.5))
                         .foregroundStyle(Board.amber.opacity(0.9))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(needs)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -753,9 +902,15 @@ struct MiddlePane: View {
     }
 
     /// Copy one step's own words, and flash the card so the copy is visible.
-    private func copyStep(_ step: IssueBody.Step) {
+    /// Copy the whole row as it reads on the board: its number, the transit,
+    /// and what it waits on. `[01] FLATEY, OneSignal-free build, then Arnar
+    /// shuts its OneSignal`. The name alone dropped the part you actually
+    /// wanted to paste into a message.
+    private func copyStep(_ step: IssueBody.Step, number: Int) {
+        var line = "[\(String(format: "%02d", number))] \(step.label.uppercased())"
+        if let needs = step.needs, !needs.isEmpty { line += ", \(needs)" }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(step.label, forType: .string)
+        NSPasteboard.general.setString(line, forType: .string)
         copiedStep = step.text
         Task {
             try? await Task.sleep(nanoseconds: 450_000_000)
@@ -1072,7 +1227,7 @@ struct MiddlePane: View {
     /// was said. The log reads as a sheet, a sticky day bar over each day's
     /// entries and the speaker in a column of its own.
     private var threadSection: some View {
-        let entries = IssueBody.conversation("Situation Development", in: flight?.body ?? "")
+        let entries = IssueBody.newestFirst(IssueBody.conversation("Situation Development", in: flight?.body ?? ""))
         let home = IssueBody.homeThread("Situation Development", in: flight?.body ?? "")
         let channels = IssueBody.channels("Situation Development", in: flight?.body ?? "")
         return VStack(alignment: .leading, spacing: 12) {
@@ -1218,6 +1373,26 @@ private struct SlideThumbnail: View {
     @State private var shimmer = false
 
     var body: some View {
+        // The square is set by an empty frame and the content laid over it,
+        // so the shimmer and the slide are the same square. Sizing the
+        // content itself let the shimmer come out 16:11 while slides loaded
+        // square, and the grid jumped as each one arrived.
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay { content }
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Board.rule, lineWidth: 1)
+            )
+            .task(id: slide) {
+                image = await SlideThumbnails.shared.thumbnail(for: slide)
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             if let image {
                 Image(nsImage: image)
@@ -1238,16 +1413,6 @@ private struct SlideThumbnail: View {
                 )
                 .onAppear { shimmer = true }
             }
-        }
-        .aspectRatio(16.0 / 11.0, contentMode: .fit)
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Board.rule, lineWidth: 1)
-        )
-        .task(id: slide) {
-            image = await SlideThumbnails.shared.thumbnail(for: slide)
         }
     }
 }

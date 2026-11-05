@@ -5,8 +5,12 @@ import ServiceManagement
 /// tabs: how Runway itself starts and stops, and the stored state it can reset.
 struct GeneralSettings: View {
     @AppStorage(SettingsKey.confirmQuit) private var confirmQuit = true
+    @AppStorage(SettingsKey.agentModel) private var agentModel = ""
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var cacheCleared = false
+    @State private var restartingSessions = false
+    @State private var restartMessage: String?
+    @State private var fullscreenMessage: String?
 
     var body: some View {
         Form {
@@ -18,6 +22,54 @@ struct GeneralSettings: View {
                     }
                 Toggle("Confirm before quitting", isOn: $confirmQuit)
                     .pointerCursor()
+            }
+
+            Section("Agents") {
+                Button("Set idle sessions to fullscreen") {
+                    let result = AgentSessionRestarter.setAllIdleSessionsToFullscreen()
+                    fullscreenMessage = "Sent to \(result.sent); skipped \(result.busy) busy, \(result.promptOccupied) with prompt text, \(result.untracked) untracked."
+                }
+                .pointerCursor()
+                if let fullscreenMessage {
+                    Text(fullscreenMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Only idle Claude sessions with an empty prompt receive `/tui fullscreen`.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Claude model", selection: $agentModel) {
+                    Text("Claude default").tag("")
+                    Text("Sonnet").tag("sonnet")
+                    Text("Opus").tag("opus")
+                    Text("Haiku").tag("haiku")
+                }
+                .pointerCursor()
+
+                Button(restartButtonTitle) {
+                    restartingSessions = true
+                    restartMessage = nil
+                    Task { @MainActor in
+                        let count = await AgentSessionRestarter.restartAll(on: agentModel)
+                        restartMessage = "Restarted \(count) Claude session\(count == 1 ? "" : "s")."
+                        restartingSessions = false
+                    }
+                }
+                .disabled(restartingSessions)
+                .pointerCursor()
+                if restartingSessions {
+                    Text("Stopping and resuming the open Claude sessions…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let restartMessage {
+                    Text(restartMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Busy sessions are interrupted, then reopened on the same conversation with the selected model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Stored data") {
@@ -38,5 +90,11 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var restartButtonTitle: String {
+        agentModel.isEmpty
+            ? "Restart all sessions on Claude default"
+            : "Restart all sessions on \(agentModel.capitalized)"
     }
 }

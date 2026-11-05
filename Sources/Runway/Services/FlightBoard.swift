@@ -16,6 +16,19 @@ final class FlightBoard {
     private struct Repo: Codable {
         var order: [Int] = []
         var priority: [String: Int] = [:]
+        /// Pinned flights, in the order they were pinned. They sit above the
+        /// rest in either sort.
+        var pinned: [Int] = []
+
+        init() {}
+
+        // Spelled out so a board.json written before pins still loads.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            order = try c.decodeIfPresent([Int].self, forKey: .order) ?? []
+            priority = try c.decodeIfPresent([String: Int].self, forKey: .priority) ?? [:]
+            pinned = try c.decodeIfPresent([Int].self, forKey: .pinned) ?? []
+        }
     }
 
     private var repos: [String: Repo] = [:]
@@ -29,9 +42,52 @@ final class FlightBoard {
 
     // MARK: Order
 
+    /// The flights in the lane's order: pinned ones first, then the rest,
+    /// either as you dragged them (free) or by last activity (recent).
+    func ordered(_ flights: [AssignedIssue], in repository: String) -> [AssignedIssue] {
+        let sorted: [AssignedIssue]
+        switch FlightSort.current {
+        case .free: sorted = freeOrder(flights, in: repository)
+        case .priority:
+            // P1 first, unset last. Within one class, the flights in the air
+            // come first, furthest along first, then the scheduled ones; the
+            // newest issue breaks what is left.
+            let rank = { (flight: AssignedIssue) in self.priority(flight.number, in: repository) ?? 99 }
+            let along = { (flight: AssignedIssue) -> Double in
+                guard FlightStatus.of(flight) == .onAir else { return -1 }
+                let flown = FlightStatus.transits(of: flight)
+                return flown.total > 0 ? Double(flown.done) / Double(flown.total) : 0
+            }
+            sorted = flights
+                .map { ($0, rank($0), along($0)) }
+                .sorted {
+                    if $0.1 != $1.1 { return $0.1 < $1.1 }
+                    if $0.2 != $1.2 { return $0.2 > $1.2 }
+                    return $0.0.number > $1.0.number
+                }
+                .map(\.0)
+        case .number:
+            sorted = flights.sorted { $0.number > $1.number }
+        case .recent:
+            let activity = FlightActivity.shared
+            let now = Date()
+            sorted = flights
+                .map { ($0, activity.rank($0, now: now)) }
+                .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.number > $1.0.number }
+                .map(\.0)
+        }
+        let pins = repos[repository]?.pinned ?? []
+        guard !pins.isEmpty else { return sorted }
+        // Pins keep their own order, the one you dragged them into, in
+        // either sort, as T3 Code's pinned block does.
+        let byNumber = Dictionary(sorted.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        let pinSet = Set(pins)
+        return pins.compactMap { byNumber[$0] } + sorted.filter { !pinSet.contains($0.number) }
+    }
+
     /// The flights in the order you put them, with any you have not placed
     /// yet at the front, newest first.
-    func ordered(_ flights: [AssignedIssue], in repository: String) -> [AssignedIssue] {
+    private func freeOrder(_ flights: [AssignedIssue], in repository: String) -> [AssignedIssue] {
         let saved = repos[repository]?.order ?? []
         let byNumber = Dictionary(flights.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
         let placed = saved.compactMap { byNumber[$0] }
@@ -40,6 +96,44 @@ final class FlightBoard {
             .filter { !placedNumbers.contains($0.number) }
             .sorted { $0.number > $1.number }
         return fresh + placed
+    }
+
+    /// A drag in the lane. A pinned card reorders the pins; any other card
+    /// reorders the free list, which only exists in free mode.
+    func reorder(_ lane: [Int], moving number: Int, in repository: String) {
+        var repo = repos[repository] ?? Repo()
+        // The lane is one group, pinned or not; a drag never crosses groups.
+        let pinSet = Set(repo.pinned)
+        if pinSet.contains(number) {
+            let visible = lane.filter { pinSet.contains($0) }
+            let hidden = repo.pinned.filter { !visible.contains($0) }
+            repo.pinned = visible + hidden
+        } else {
+            guard FlightSort.current == .free else { return }
+            repo.order = lane.filter { !pinSet.contains($0) }
+        }
+        repos[repository] = repo
+        save()
+    }
+
+    // MARK: Pins
+
+    func isPinned(_ number: Int, in repository: String) -> Bool {
+        repos[repository]?.pinned.contains(number) ?? false
+    }
+
+    func setPinned(_ pinned: Bool, for number: Int, in repository: String) {
+        var repo = repos[repository] ?? Repo()
+        repo.pinned.removeAll { $0 == number }
+        if pinned {
+            repo.pinned.append(number)
+        } else {
+            // Unpinned, it lands at the top of the rest, right under the line.
+            repo.order.removeAll { $0 == number }
+            repo.order.insert(number, at: 0)
+        }
+        repos[repository] = repo
+        save()
     }
 
     func setOrder(_ numbers: [Int], in repository: String) {
@@ -93,6 +187,33 @@ final class FlightBoard {
         try? data.write(to: file)
         stamp = (try? FileManager.default
             .attributesOfItem(atPath: file.path)[.modificationDate] as? Date) ?? nil
+    }
+}
+
+/// How the open lane is sorted. Set in Settings > Flights.
+enum FlightSort: String, CaseIterable {
+    /// Where you dragged them.
+    case free
+    /// P1 first.
+    case priority
+    /// The flight you last opened or typed into first.
+    case recent
+    /// Newest issue first.
+    case number
+
+    static let key = "runway.flightSort"
+
+    static var current: FlightSort {
+        FlightSort(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .free
+    }
+
+    var label: String {
+        switch self {
+        case .free: "Drag to arrange"
+        case .priority: "By priority (P1 first, then furthest along)"
+        case .recent: "By recency (last touched first)"
+        case .number: "By issue number (newest first)"
+        }
     }
 }
 

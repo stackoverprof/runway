@@ -130,6 +130,56 @@ enum IssueBody {
         }
     }
 
+    /// A checklist in the order it really happened: what is done first, in
+    /// the order written, then what is still to do, and the landing line
+    /// last. Work rarely goes in the order first planned, and a board that
+    /// read LANDED, BOARDING, LANDED, SCHEDULED, LANDED told no story. The
+    /// `runway` CLI numbers and saves steps in this same order, so a number
+    /// on the board is the number an agent ticks.
+    static func inFlightOrder(_ steps: [Step]) -> [Step] {
+        steps.filter { $0.done && !$0.isLanding }
+            + steps.filter { !$0.done && !$0.isLanding }
+            + steps.filter(\.isLanding)
+    }
+
+    /// The log newest first, however it was written. Agents kept adding new
+    /// lines under the old ones, which buried the latest exchange at the
+    /// bottom of the pane. Each line's Slack permalink carries the moment it
+    /// was sent (`p1790226902634849`), so that is the order; a line without
+    /// one takes its day header's date and stays beside its neighbours.
+    static func newestFirst(_ entries: [Entry], now: Date = Date()) -> [Entry] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let year = calendar.component(.year, from: now)
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "d MMM yyyy"
+        func dayDate(_ day: String?) -> Date? {
+            guard let day else { return nil }
+            let bare = day.split(separator: ",").last.map(String.init)?
+                .trimmingCharacters(in: .whitespaces) ?? day
+            guard let date = parser.date(from: "\(bare) \(year)") else { return nil }
+            // "28 Dec" read in January is last year's.
+            if date > now.addingTimeInterval(86_400),
+               let earlier = calendar.date(byAdding: .year, value: -1, to: date) { return earlier }
+            return date
+        }
+        func stamp(_ link: URL?) -> Date? {
+            guard let last = link?.pathComponents.last, last.hasPrefix("p"),
+                  let digits = Double(last.dropFirst()), digits > 1e15 else { return nil }
+            return Date(timeIntervalSince1970: digits / 1_000_000)
+        }
+        let keyed = entries.enumerated().map { index, entry -> (Entry, Date, Int) in
+            let when = stamp(entry.link)
+                ?? dayDate(entry.day).map { $0.addingTimeInterval(43_200) }
+                ?? .distantPast
+            return (entry, when, index)
+        }
+        return keyed
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 < $1.2 }
+            .map(\.0)
+    }
+
     /// The first link in a conversation, which is where that conversation
     /// lives: the thread the issue was raised in.
     static func homeThread(_ name: String, in body: String) -> URL? {

@@ -75,7 +75,7 @@ The screenshot's own surface decides the theme, not the issue's scope tag. A `Ki
 
 ## Phone and tablet shots
 
-Shots from the iOS Simulator or the Android emulator come from the `drive` skill's `shot.sh` (monorepo `.claude/skills/drive/scripts/`): native resolution (about 1200x2600 for a phone) and a clean status bar (9:41, full battery and signal), so a before and an after match. Never use the Maestro MCP `take_screenshot` image as the source; it is a preview, like the Chrome `zoom` capture.
+Shots from the iOS Simulator or the Android emulator come from the `drive` skill's `shot.sh` (monorepo `.claude/skills/drive/scripts/`) when the repo has it, otherwise `xcrun simctl io booted screenshot` / `adb exec-out screencap -p`: native resolution (about 1200x2600 for a phone) and a clean status bar (9:41, full battery and signal), so a before and an after match. Never use the Maestro MCP `take_screenshot` image as the source; it is a preview, like the Chrome `zoom` capture.
 
 - **Phone LEFT, findings RIGHT** (`.phone` in `template.html`). A portrait phone across the full width wastes two thirds of the square.
 - **No device frame, ever.** A full screen goes in `.screen`: the bare screenshot, rounded corners, a hairline and a soft shadow. Erbin dropped frames on 2026-10-21 (#16125): the drawn iPhone rim and drawn Safari bar never looked real, and the frame added nothing the provenance footer does not already say. Never draw a status bar, Dynamic Island, browser bar or bezel.

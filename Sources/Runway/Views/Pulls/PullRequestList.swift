@@ -14,6 +14,9 @@ struct PullRequestList: View {
     let scope: String
     /// How many to show before "show next".
     var pageSize: Int = 20
+    /// The flight (and crew) a branch works for, read off the issue number
+    /// it ends in. Nil when the issue is not on your board.
+    var owner: (String) -> String? = { _ in nil }
 
     @State private var visible: [String: Int] = [:]
     @State private var expanded: Set<Int> = []
@@ -124,6 +127,16 @@ struct PullRequestList: View {
                     }
                 }
                 HStack(spacing: 5) {
+                    if let owner = owner(pullRequest.headRefName) {
+                        Text(verbatim: owner)
+                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                            .tracking(0.4)
+                            .foregroundStyle(Color.white.opacity(0.55))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                            .fixedSize()
+                    }
                     BranchNameText(name: pullRequest.headRefName)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 7, weight: .semibold))

@@ -12,6 +12,8 @@ enum FlightRoster {
 
     static func fly(_ issue: AssignedIssue, ws: Workspace, reveal: Bool = true) {
         if reveal { ws.revealFlight() }
+        FlightActivity.shared.touch(issue)
+        FlightDozer.shared.wake(issue.number)
         guard ws.flightNumber != issue.number else { return }
         ws.flightNumber = issue.number
         // A new flight has its own crews, so whichever one was being read

@@ -3,7 +3,8 @@ import SwiftUI
 /// What a flight does when you are not looking at it, and what it owes
 /// before it lands.
 struct FlightSettings: View {
-    @AppStorage(SettingsKey.seatIdleMinutes) private var seatIdleMinutes = 15
+    @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 30
+    @AppStorage(FlightDozer.otherKey) private var idleOther = 15
     @AppStorage(SettingsKey.seatsKeptAlive) private var seatsKeptAlive = 12
     @AppStorage(SettingsKey.pilotTerminalPadding) private var pilotTerminalPadding = 9
     @AppStorage(SettingsKey.walkthroughRoot) private var walkthroughRoot = ""
@@ -12,18 +13,35 @@ struct FlightSettings: View {
     private var askBeforeLanding = true
     @AppStorage(SeatDirectory.perSeatKey) private var seatDirectories = true
 
+    @AppStorage(FlightSort.key) private var flightSort = FlightSort.free.rawValue
+
     var body: some View {
         Form {
-            Section("Seats") {
-                Stepper(
-                    "Let an idle seat go after \(seatIdleMinutes) minutes",
-                    value: $seatIdleMinutes,
-                    in: 1...240
-                )
+            Section("Flight list") {
+                Picker("Sort flights", selection: $flightSort) {
+                    ForEach(FlightSort.allCases, id: \.rawValue) { sort in
+                        Text(sort.label).tag(sort.rawValue)
+                    }
+                }
                 Text(
-                    "A flight you leave keeps running. Its terminal is let go only "
-                    + "once it has been off screen this long and its agent is idle: "
-                    + "one that is mid-turn, or waiting on you, is never dropped."
+                    "Applies to the flights below the pin line. Recency is the flight "
+                    + "you last opened or typed into (its pilot or any crew), re-sorted "
+                    + "a few seconds after you stop; a new flight stays near the top "
+                    + "for its first 5 minutes. Pinned flights (right-click a card) "
+                    + "always sit on top and are always dragged by hand."
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Seats") {
+                Stepper("Stop a quiet pinned flight after \(idlePinned) minutes", value: $idlePinned, in: 5...480, step: 5)
+                Stepper("Stop any other quiet flight after \(idleOther) minutes", value: $idleOther, in: 5...480, step: 5)
+                Text(
+                    "When a flight's pilot, copilot and every crew have all been idle "
+                    + "this long, and nobody has typed into them, their Claude sessions "
+                    + "are stopped. The flight on screen never is. Opening the flight, or "
+                    + "a pilot raising a crew, starts them again where they left off."
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)

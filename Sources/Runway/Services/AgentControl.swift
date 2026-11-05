@@ -226,6 +226,8 @@ enum AgentControl {
             "RUNWAY_AGENT_GUIDE": "Run runway-help for Runway integration. Focus history: runway-focus-log or $RUNWAY_FOCUS_LOG.",
             "PATH": "\(binPath):\(systemPath)",
         ]
+        let configuredModel = UserDefaults.standard.string(forKey: SettingsKey.agentModel) ?? ""
+        if !configuredModel.isEmpty { env["RUNWAY_MODEL"] = configuredModel }
         let durableFile: URL?
         if quickTerminalSession {
             durableFile = quickProviderSessionFile(
@@ -384,6 +386,11 @@ enum AgentControl {
         try? runwayScript.data(using: .utf8)?.write(to: runwayPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runwayPath.path)
 
+        // gh: the real gh, then the board told what changed (see ghShim).
+        let ghPath = binDir.appendingPathComponent("gh")
+        try? Self.ghShim.data(using: .utf8)?.write(to: ghPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ghPath.path)
+
         // 5. runway-help: one discovery point that works for every coding agent.
         let helpScript = """
         #!/bin/zsh
@@ -502,7 +509,16 @@ enum AgentControl {
         if [ -n "${RUNWAY_ROLE_CARD:-}" ] && [ -f "$RUNWAY_ROLE_CARD" ]; then
           role_args=(--append-system-prompt "$(/bin/cat "$RUNWAY_ROLE_CARD")")
         fi
-        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "${role_args[@]}" "$@"
+        model_args=()
+        if [ -n "${RUNWAY_MODEL:-}" ]; then
+          model_args=(--model "$RUNWAY_MODEL")
+          for arg in "$@"; do
+            case "$arg" in
+              --model|--model=*) model_args=(); break ;;
+            esac
+          done
+        fi
+        "$real" --settings "$RUNWAY_CLAUDE_HOOKS" "${session_args[@]}" "${name_args[@]}" "${role_args[@]}" "${model_args[@]}" "$@"
         exit_code=$?
         [ -n "$RUNWAY_CONTROL" ] && printf '{"state":"idle"}' > "$RUNWAY_CONTROL"
         \(pulseCommand)

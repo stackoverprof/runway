@@ -25,6 +25,7 @@ enum SettingsKey {
     static let cloneSearchDepth = "runway.cloneSearchDepth"
     static let pullsTimeframe = "runway.pullsTimeframe"
     static let taglineEnabled = "runway.taglineEnabled"
+    static let agentModel = "runway.agentModel"
 
     // What v3 added. Each of these was a number buried in the code until it
     // turned out to matter: how long a flight you left keeps running, where
@@ -113,6 +114,7 @@ enum SettingsKey {
             cloneSearchDepth: 6,
             pullsTimeframe: PRTimeframe.monthToDate.rawValue,
             taglineEnabled: true,
+            agentModel: "",
             walkthroughRoot: "",
             walkthroughSlides: 3,
             askBeforeLandingWithoutEvidence: true,

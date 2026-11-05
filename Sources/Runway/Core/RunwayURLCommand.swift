@@ -42,6 +42,19 @@ enum RunwayURLCommand {
 
     @MainActor
     static func handle(_ url: URL) {
+        // `runway` writing to GitHub asks for the board itself to be read
+        // again: an agent's tick shows up now, not at the next timer.
+        if url.scheme?.lowercased() == Self.scheme, url.host?.lowercased() == "refresh" {
+            for context in RunwayWindowRegistry.shared.allContexts {
+                PendingBodies.shared.reload()
+                context.issues.applyPendingBodies()
+                PendingStates.shared.reload()
+                context.issues.applyPendingStates()
+                if let repository = context.issues.repository {
+                    Task { await context.issues.revalidate(repository: repository) }
+                }
+            }
+        }
         guard let tabs = refreshTabs(in: url) else { return }
         for context in RunwayWindowRegistry.shared.allContexts {
             for tab in tabs {

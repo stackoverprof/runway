@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor private struct QuickTerminalTab: Identifiable {
     let root: String
-    let session: GhosttyTerminalSession
+    let session: GhosttyTerminalSession?
 
     nonisolated var id: String { root }
 }
@@ -21,8 +21,8 @@ struct QuickTerminal: View {
     let availableHeight: CGFloat  // full pane height
     let resizePane: (CGFloat) -> Void
 
-    @State private var tabs = Self.makeInitialTabs()
     @State private var selectedRoot = QuickTerminalSession.selectedRoot()
+    @State private var tabs = Self.makeInitialTabs()
     @Bindable private var quickNames = QuickAgentNames.shared
     @State private var dragStartHeight: CGFloat?
     @State private var dragStartPaneWidth: CGFloat?
@@ -47,7 +47,7 @@ struct QuickTerminal: View {
     }
 
     private static func makeInitialTabs() -> [QuickTerminalTab] {
-        QuickTerminalSession.tabRoots().map(makeTab(root:))
+        QuickTerminalSession.tabRoots().map { QuickTerminalTab(root: $0, session: nil) }
     }
 
     static func startupConfig(root: String) -> TerminalConfig {
@@ -101,7 +101,14 @@ struct QuickTerminal: View {
         tabs.first { $0.root == selectedRoot } ?? tabs[0]
     }
 
-    private var session: GhosttyTerminalSession { activeTab.session }
+    private var session: GhosttyTerminalSession? { activeTab.session }
+
+    private func ensureSession(for root: String) {
+        guard let index = tabs.firstIndex(where: { $0.root == root }), tabs[index].session == nil else { return }
+        let tab = Self.makeTab(root: root)
+        tabs[index] = tab
+        applyRunwayTheme(to: tab.session!, boxID: QuickTerminalSession.boxID(root: root))
+    }
 
     private func startNewSession(in root: String) {
         guard let index = tabs.firstIndex(where: { $0.root == root }) else { return }
@@ -111,7 +118,7 @@ struct QuickTerminal: View {
         tabs[index] = tab
         QuickTerminalSession.selectTab(freshRoot)
         selectedRoot = freshRoot
-        applyRunwayTheme(to: tab.session)
+        applyRunwayTheme(to: tab.session!, boxID: QuickTerminalSession.boxID(root: freshRoot))
     }
 
     private func addTab() {
@@ -119,7 +126,7 @@ struct QuickTerminal: View {
         let tab = Self.makeTab(root: root)
         tabs.append(tab)
         selectedRoot = root
-        applyRunwayTheme(to: tab.session)
+        applyRunwayTheme(to: tab.session!, boxID: QuickTerminalSession.boxID(root: root))
     }
 
     private func closeTab(_ root: String) {
@@ -199,7 +206,7 @@ struct QuickTerminal: View {
 
     /// Point keyboard shortcuts at the selected tab's still-mounted terminal.
     private func bindSession(to tab: QuickTerminalTab) {
-        let session = tab.session
+        guard let session = tab.session else { return }
         ws.focusQuick = { session.view?.window?.makeFirstResponder(session.view) }
         ws.quickHasKeyboard = {
             guard let view = session.view, let window = view.window else {
@@ -210,14 +217,15 @@ struct QuickTerminal: View {
     }
 
     private func focusActiveTab() {
-        let tab = activeTab
+        ensureSession(for: selectedRoot)
+        guard let tab = tabs.first(where: { $0.root == selectedRoot }), let session = tab.session else { return }
         bindSession(to: tab)
         focusTask?.cancel()
         focusTask = Task { @MainActor in
             for _ in 0..<20 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard !Task.isCancelled, ws.quickVisible, selectedRoot == tab.root else { return }
-                if let view = tab.session.view, let window = view.window,
+                if let view = session.view, let window = view.window,
                    window.makeFirstResponder(view) { return }
             }
         }
@@ -244,14 +252,16 @@ struct QuickTerminal: View {
     }
 
     private var isFocused: Bool {
-        if let view = session.view, let window = view.window {
+        if let session, let view = session.view, let window = view.window {
             return window.firstResponder == view
         }
         return false
     }
 
+    @ViewBuilder
     private func terminalSurface(for tab: QuickTerminalTab) -> some View {
-        GhosttyTerminalRepresentable(session: tab.session, configuration: .default)
+        if let session = tab.session {
+        GhosttyTerminalRepresentable(session: session, configuration: .default)
             .id(tab.root)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 5)
@@ -260,15 +270,15 @@ struct QuickTerminal: View {
             .allowsHitTesting(tab.root == selectedRoot)
             .accessibilityHidden(tab.root != selectedRoot)
             .onAppear {
-                applyRunwayTheme(to: tab.session)
+                applyRunwayTheme(to: session, boxID: QuickTerminalSession.boxID(root: tab.root))
                 if tab.root == selectedRoot { bindSession(to: tab) }
                 Task { @MainActor in
                     for _ in 0..<100 {
-                        if let view = tab.session.view {
+                        if let view = session.view {
                             for delay in [0.05, 0.15, 0.35, 0.75, 1.5, 3.0] {
                                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                                 if view.window != nil {
-                                    forceTerminalLayoutUpdate(for: tab.session)
+                                    forceTerminalLayoutUpdate(for: session)
                                 }
                             }
                             break
@@ -278,14 +288,19 @@ struct QuickTerminal: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in
-                forceTerminalLayoutUpdate(for: tab.session)
+                forceTerminalLayoutUpdate(for: session)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
-                forceTerminalLayoutUpdate(for: tab.session)
+                forceTerminalLayoutUpdate(for: session)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { _ in
-                forceTerminalLayoutUpdate(for: tab.session)
+                forceTerminalLayoutUpdate(for: session)
             }
+        } else {
+            Color.black
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(tab.root == selectedRoot ? 1 : 0)
+        }
     }
 
     var body: some View {
@@ -364,7 +379,7 @@ struct QuickTerminal: View {
         }
         .shadow(color: .black.opacity(ws.quickVisible ? 0.55 : 0.25), radius: ws.quickVisible ? 18 : 6, y: ws.quickVisible ? 8 : 2)
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
-            guard ws.quickVisible else { return false }
+            guard ws.quickVisible, let session else { return false }
             handleDropProviders(providers, session: session)
             return true
         }
@@ -392,12 +407,23 @@ struct QuickTerminal: View {
                 focusActiveTab()
             }
         }
-        .onChange(of: selectedRoot) { _, _ in focusActiveTab() }
+        .onChange(of: selectedRoot) { _, root in
+            ensureSession(for: root)
+            focusActiveTab()
+        }
         .onChange(of: ws.quickTabRequest) { _, request in
             guard let request else { return }
             handleShortcut(request.action)
         }
-        .onAppear { focusActiveTab() }
+        .onAppear {
+            // Let the visible pilot and its two terminal surfaces settle first.
+            // Other saved ATC tabs are only started when the user selects them.
+            Task { @MainActor in
+                await waitForVisiblePilot()
+                ensureSession(for: selectedRoot)
+                focusActiveTab()
+            }
+        }
         .onChange(of: ws.focusedID) { _, _ in
             if !isHovered {
                 triggerAutoHide()
@@ -442,6 +468,24 @@ struct QuickTerminal: View {
                     shimmerOffset = -0.8
                 }
             }
+        }
+    }
+
+    private func waitForVisiblePilot() async {
+        guard let flight = ws.flightNumber else {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            return
+        }
+        let repository = GitHubFeed.shared.repo
+        let pilotID = FlightCrewSessions.boxID(rank: .pilot, repository: repository, issue: flight)
+        for _ in 0..<60 {
+            if let pilot = TerminalSessionPool.shared.mountedSession(pilotID),
+               let view = pilot.view,
+               view.bounds.width > 0, view.bounds.height > 0, view.window != nil {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
     }
 

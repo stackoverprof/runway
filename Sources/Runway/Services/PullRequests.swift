@@ -316,6 +316,7 @@ struct PullRequestDeveloper: Identifiable {
                 fetched: fetched + fetchedOpen,
                 fullRefresh: needsFullRefresh
             )
+            applyPending(settling: true)
             developerCache.removeAll()
             Self.discoverPeople(in: pullRequests)
             hasSnapshot = true
@@ -334,6 +335,32 @@ struct PullRequestDeveloper: Identifiable {
         if loadTaskRepository == repository {
             loadTask = nil
             loadTaskRepository = nil
+        }
+    }
+
+    /// Lay what a seat just did to a PR over the list (see ``PendingPulls``).
+    /// After a real fetch, one GitHub has caught up with is let go.
+    func applyPending(settling: Bool = false) {
+        guard let repository = loadedRepository else { return }
+        let pending = PendingPulls.shared.pulls(in: repository)
+        guard !pending.isEmpty else { return }
+        var next = pullRequests
+        var changed = false
+        for pull in pending {
+            if let index = next.firstIndex(where: { $0.number == pull.number }) {
+                if next[index].updatedAt >= pull.updatedAt {
+                    if settling { PendingPulls.shared.settle(repository, pull.number) }
+                    continue
+                }
+                next[index] = pull
+            } else {
+                next.insert(pull, at: 0)
+            }
+            changed = true
+        }
+        if changed {
+            pullRequests = next
+            developerCache.removeAll()
         }
     }
 

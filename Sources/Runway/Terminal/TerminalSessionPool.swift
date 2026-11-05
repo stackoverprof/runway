@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GhosttyKit
 
@@ -19,7 +20,7 @@ final class TerminalSessionPool {
 
     /// How long a seat keeps running after you leave it, from Settings.
     static var buffer: TimeInterval {
-        let minutes = UserDefaults.standard.integer(forKey: SettingsKey.seatIdleMinutes)
+        let minutes = UserDefaults.standard.integer(forKey: FlightDozer.otherKey)
         return TimeInterval(max(1, minutes == 0 ? 15 : minutes) * 60)
     }
 
@@ -88,7 +89,23 @@ final class TerminalSessionPool {
 
     var liveCount: Int { seats.count }
 
+    /// The on-screen seat whose terminal holds this view, if any.
+    func seat(holding view: NSView) -> UUID? {
+        for (id, seat) in seats where seat.mounted {
+            guard let terminal = seat.session.view else { continue }
+            if view === terminal || view.isDescendant(of: terminal) { return id }
+        }
+        return nil
+    }
+
     func isLive(_ boxID: UUID) -> Bool { seats[boxID] != nil }
+
+    func anySession(_ boxID: UUID) -> GhosttyTerminalSession? { seats[boxID]?.session }
+
+    func mountedSession(_ boxID: UUID) -> GhosttyTerminalSession? {
+        guard let seat = seats[boxID], seat.mounted else { return nil }
+        return seat.session
+    }
 
     /// Whether this seat's agent is mid-turn or waiting on an answer. Read
     /// from the control file its hooks write, the same one the header dot uses.
@@ -104,7 +121,7 @@ final class TerminalSessionPool {
     /// A seat the sweep may let go: off screen, and its agent has nothing in
     /// hand.
     private func isReleasable(_ id: UUID, _ seat: Parked) -> Bool {
-        !seat.mounted && !Self.isBusy(id)
+        !seat.mounted && !Self.isBusy(id) && !Hangar.shared.wanted.contains(id)
     }
 
     /// Drop what has been off screen past the buffer, then trim the oldest

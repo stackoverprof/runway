@@ -89,6 +89,15 @@ struct AssignedIssueCard: View {
                     onSetClosed(!issue.isClosed)
                 }
             }
+            if !issue.isClosed, issue.parent == nil, !boardKey.isEmpty {
+                Divider()
+                let pinned = board.isPinned(issue.number, in: boardKey)
+                Button(pinned ? "Unpin" : "Pin to top") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        board.setPinned(!pinned, for: issue.number, in: boardKey)
+                    }
+                }
+            }
             Divider()
             Menu("Priority") {
                 ForEach(FlightPriority.all, id: \.self) { level in
@@ -99,6 +108,36 @@ struct AssignedIssueCard: View {
                 Divider()
                 Button("None") { board.setPriority(nil, for: issue.number, in: boardKey) }
             }
+        }
+    }
+
+    /// The pin after the class. Always shown on a pinned flight, and on
+    /// hover for the rest; a click pins or unpins.
+    @ViewBuilder
+    private var pinToggle: some View {
+        let pinnable = !boardKey.isEmpty && !issue.isClosed && issue.parent == nil
+        let pinned = pinnable && board.isPinned(issue.number, in: boardKey)
+        if pinnable && (pinned || hovering) {
+            Text(verbatim: "·")
+                .font(.system(size: 8.5))
+                .foregroundStyle(Paper.faint)
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    board.setPinned(!pinned, for: issue.number, in: boardKey)
+                }
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 8))
+                    .rotationEffect(.degrees(45))
+                    .foregroundStyle(pinned ? Paper.muted : Paper.faint)
+                    // Laid out at the glyph's own size, so the gaps either
+                    // side of the dot match; the click area reaches past it.
+                    .padding(4)
+                    .contentShape(Rectangle())
+                    .padding(-4)
+            }
+            .buttonStyle(.plain)
+            .help(pinned ? "Unpin" : "Pin to top")
         }
     }
 
@@ -154,6 +193,7 @@ struct AssignedIssueCard: View {
                     .font(.system(size: 8.5))
                     .foregroundStyle(Paper.faint)
                 priorityBadge
+                pinToggle
                 if let parent = issue.parent {
                     Text(verbatim: "·")
                         .font(.system(size: 8.5))

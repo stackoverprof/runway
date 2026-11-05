@@ -73,15 +73,23 @@ enum RunwayTerminalSessions {
     }
 
     private static var sessions: [WeakSession] = []
+    private static var boxIDs: [ObjectIdentifier: UUID] = [:]
 
-    static func register(_ session: GhosttyTerminalSession) {
+    static func register(_ session: GhosttyTerminalSession, boxID: UUID? = nil) {
         sessions.removeAll { $0.value == nil || $0.value === session }
         sessions.append(WeakSession(value: session))
+        if let boxID { boxIDs[ObjectIdentifier(session)] = boxID }
     }
 
     static func live() -> [GhosttyTerminalSession] {
         sessions.removeAll { $0.value == nil }
+        let liveIDs = Set(sessions.compactMap { $0.value.map(ObjectIdentifier.init) })
+        boxIDs = boxIDs.filter { liveIDs.contains($0.key) }
         return sessions.compactMap(\.value)
+    }
+
+    static func boxID(for session: GhosttyTerminalSession) -> UUID? {
+        boxIDs[ObjectIdentifier(session)]
     }
 }
 
@@ -123,10 +131,12 @@ struct TerminalSurfaceView: View {
     }
 
     var body: some View {
-        PooledTerminal(session: session)
+        PooledTerminal(session: session, isVisible: isVisible) {
+            Task { @MainActor in workspace.setFocus(boxID) }
+        }
             .onAppear {
                 TerminalSessionPool.shared.mounted(boxID)
-                applyRunwayTheme(to: session)
+                applyRunwayTheme(to: session, boxID: boxID)
                 registerForFocus()
                 showOrHide()
             }
@@ -139,8 +149,13 @@ struct TerminalSurfaceView: View {
             // glyphs. Without a shape the drop only lands where SwiftUI
             // thinks content is, which is why a drop near an edge did
             // nothing.
+            //
+            // Over the terminal itself the drop is AppKit's, taken by the
+            // container view (see `DropContainer`). This one only covers the
+            // padding around it, and only on the seat you can see: a hidden
+            // seat stacked on top used to swallow drops meant for the pilot.
             .contentShape(Rectangle())
-            .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            .onDrop(of: isVisible ? [.fileURL, .image] : [], isTargeted: nil) { providers in
                 handleDropProviders(providers, session: session) {
                     Task { @MainActor in
                         workspace.setFocus(boxID)
@@ -167,6 +182,11 @@ struct TerminalSurfaceView: View {
             for _ in 0..<40 {
                 if let view = session.view {
                     if view.isHidden != !isVisible { view.isHidden = !isVisible }
+                    // Its box too, so a hidden seat stacked over the visible
+                    // one is skipped when AppKit looks for a drop target.
+                    if let box = view.superview as? DropContainer, box.isHidden != !isVisible {
+                        box.isHidden = !isVisible
+                    }
                     if isVisible { forceTerminalLayoutUpdate(for: session) }
                     return
                 }
@@ -236,10 +256,10 @@ struct TerminalSurfaceView: View {
 
 /// Push Runway's themed config onto a session's surface. The surface may not
 /// exist on the first call, so retry once shortly after.
-@MainActor func applyRunwayTheme(to session: GhosttyTerminalSession) {
+@MainActor func applyRunwayTheme(to session: GhosttyTerminalSession, boxID: UUID? = nil) {
     // Every session passes through here, so this is where they become reachable
     // for a later font change.
-    RunwayTerminalSessions.register(session)
+    RunwayTerminalSessions.register(session, boxID: boxID)
     guard let cfg = RunwayTerminalHost.themedConfig else { return }
     session.updateConfig(cfg)
     forceTerminalLayoutUpdate(for: session)
@@ -303,7 +323,11 @@ enum DroppedImageFile {
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 if let url = url, FileManager.default.fileExists(atPath: url.path) {
-                    typeDroppedPath(url.path, session: session, onComplete: onComplete)
+                    typeDroppedPath(
+                        keptPath(for: url),
+                        session: session,
+                        onComplete: onComplete
+                    )
                 } else {
                     // Fall back to image loading if URL was not locally on disk (like a floating screenshot promise)
                     loadAsImage(safeProvider, session: session, onComplete: onComplete)
@@ -313,6 +337,38 @@ enum DroppedImageFile {
             loadAsImage(safeProvider, session: session, onComplete: onComplete)
         }
     }
+}
+
+/// A dropped file that lives somewhere temporary is copied into Runway's own
+/// drops folder first, and that copy's path is what gets typed.
+///
+/// The screenshot thumbnail in the corner of the screen hands over a file in
+/// a scratch folder macOS deletes as soon as the thumbnail goes away. The path
+/// went into Claude's prompt fine, but if the prompt was sent a few seconds
+/// later the file was already gone and the image never arrived, which is why
+/// a drop only failed sometimes. A file from Finder is left where it is.
+private func keptPath(for url: URL) -> String {
+    guard isTemporary(url) else { return url.path }
+    let destination = AgentControl.dropsDir.appendingPathComponent(
+        DroppedImageFile.name(
+            suggested: url.lastPathComponent,
+            typeIdentifier: UTType(filenameExtension: url.pathExtension)?.identifier,
+            timestamp: Int(Date().timeIntervalSince1970)
+        )
+    )
+    return adoptDroppedFile(at: url, to: destination)?.path ?? url.path
+}
+
+/// Inside a folder the system clears on its own: the per-user temporary
+/// folder, where the screenshot thumbnail keeps its file.
+private func isTemporary(_ url: URL) -> Bool {
+    let path = url.resolvingSymlinksInPath().path
+    let temporary = URL(fileURLWithPath: NSTemporaryDirectory())
+        .resolvingSymlinksInPath().path
+    return path.hasPrefix(temporary)
+        || path.contains("/TemporaryItems/")
+        || path.hasPrefix("/private/var/folders/")
+        || path.hasPrefix("/var/folders/")
 }
 
 private func typeDroppedPath(
@@ -350,7 +406,7 @@ private func loadAsImage(
         // The URL is only valid for the duration of this callback, so decide and
         // copy here rather than hopping to the main queue with it.
         if let url, FileManager.default.fileExists(atPath: url.path) {
-            if isInPlace {
+            if isInPlace, !isTemporary(url) {
                 typeDroppedPath(url.path, session: session, onComplete: onComplete)
                 return
             }
@@ -440,9 +496,19 @@ private func uniqueDropDestination(_ url: URL) -> URL {
 @MainActor
 private struct PooledTerminal: NSViewRepresentable {
     let session: GhosttyTerminalSession
+    /// Hidden boxes are never drop targets. Set here, on every update,
+    /// rather than later from a task: the task looked the box up through the
+    /// terminal's superview, and a terminal still parked in the hangar had
+    /// none, so the box of a flight you had left stayed un-hidden, stacked
+    /// over the pilot on screen, and took (or refused) its drops.
+    var isVisible: Bool = true
+    var onDrop: @Sendable () -> Void = {}
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+        let container = DropContainer()
+        container.session = session
+        container.onDrop = onDrop
+        container.isHidden = !isVisible
         container.wantsLayer = true
         container.layer?.backgroundColor = RunwayTerminal.bodyNSColor.cgColor
         attach(to: container)
@@ -450,6 +516,11 @@ private struct PooledTerminal: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
+        if let container = container as? DropContainer {
+            container.session = session
+            container.onDrop = onDrop
+        }
+        if container.isHidden != !isVisible { container.isHidden = !isVisible }
         attach(to: container)
     }
 
@@ -469,3 +540,129 @@ private struct PooledTerminal: NSViewRepresentable {
         ])
     }
 }
+
+
+/// The box a terminal sits in, and the thing that takes a file or image
+/// dropped on it.
+///
+/// A drop used to be SwiftUI's `onDrop` on the terminal. In v3 the terminal
+/// is an AppKit view moved between containers, several seats are stacked
+/// with only one visible, and SwiftUI's drop routing over that was a coin
+/// toss: the drop went to a hidden seat or nowhere. AppKit hands a drag to
+/// the deepest view under the pointer that registered for it, and the
+/// terminal view itself registers nothing, so this container is always the
+/// one that gets it, for exactly the terminal under the pointer.
+///
+/// It reads the pasteboard the way v2 handled every case: a real file (typed
+/// as its path, copied out first if it lives in a folder macOS clears), a
+/// file promise (the screenshot thumbnail in the corner, written into
+/// Runway's drops folder), and bare image pixels (saved as a PNG there).
+@MainActor
+final class DropContainer: NSView {
+    weak var session: GhosttyTerminalSession?
+    var onDrop: @Sendable () -> Void = {}
+
+    private static let imageTypes: [NSPasteboard.PasteboardType] = [
+        .png, .tiff, NSPasteboard.PasteboardType("public.jpeg"),
+        NSPasteboard.PasteboardType("public.heic"),
+    ]
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerForDraggedTypes(
+            [.fileURL]
+                + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+                + Self.imageTypes
+        )
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Live only while it is shown and still holds its terminal: a box whose
+    /// terminal has moved to another box is an empty shell.
+    private var takesDrops: Bool {
+        guard !isHiddenOrHasHiddenAncestor, let terminal = session?.view else { return false }
+        return terminal.superview === self && !terminal.isHidden
+    }
+
+    /// AppKit asks the deepest registered view under the pointer and stops
+    /// there, even when it refuses. A dead box hands the hit test on, so
+    /// the drag reaches the box that is really on screen.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        takesDrops ? super.hitTest(point) : nil
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        takesDrops ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        takesDrops ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let session, takesDrops else { return false }
+        let pasteboard = sender.draggingPasteboard
+        let done = onDrop
+
+        // A real file on disk.
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty {
+            let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+            if !existing.isEmpty {
+                for url in existing {
+                    typeDroppedPath(keptPath(for: url), session: session, onComplete: done)
+                }
+                return true
+            }
+        }
+
+        // A promise to write the file, as the screenshot thumbnail makes.
+        if let promises = pasteboard.readObjects(
+            forClasses: [NSFilePromiseReceiver.self],
+            options: nil
+        ) as? [NSFilePromiseReceiver], !promises.isEmpty {
+            let folder = AgentControl.dropsDir
+            for promise in promises {
+                promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: .main) { url, error in
+                    guard error == nil else {
+                        NSLog("Runway: a dropped file promise failed: \(error!.localizedDescription)")
+                        return
+                    }
+                    MainActor.assumeIsolated {
+                        AgentControl.pruneDrops()
+                        typeDroppedPath(url.path, session: session, onComplete: done)
+                    }
+                }
+            }
+            return true
+        }
+
+        // Bare pixels, from a browser or an app with no file behind them.
+        if let image = NSImage(pasteboard: pasteboard),
+           let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            let target = uniqueDropDestination(
+                AgentControl.dropsDir.appendingPathComponent(
+                    DroppedImageFile.name(
+                        suggested: nil,
+                        typeIdentifier: UTType.png.identifier,
+                        timestamp: Int(Date().timeIntervalSince1970)
+                    )
+                )
+            )
+            do {
+                try png.write(to: target)
+                AgentControl.pruneDrops()
+                typeDroppedPath(target.path, session: session, onComplete: done)
+                return true
+            } catch {
+                NSLog("Runway: failed to write a dropped image: \(error.localizedDescription)")
+            }
+        }
+        return false
+    }
+}
+

@@ -134,6 +134,22 @@ final class WindowDragNSView: NSView {
         workspace.repositoryFeed = githubFeed
         workspace.startAgentWatch()
         githubFeed.startPolling()
+        // Seats raised from a terminal start here, whether or not their
+        // flight is on screen.
+        Task { @MainActor [weak self, issues] in
+            while !Task.isCancelled {
+                Hangar.shared.sync(issues: issues)
+                FlightDozer.shared.sync(issues: issues, onScreen: self?.workspace.flightNumber)
+                // And what an agent just wrote into an issue, ahead of GitHub.
+                PendingBodies.shared.reload()
+                issues.applyPendingBodies()
+                PendingStates.shared.reload()
+                issues.applyPendingStates()
+                PendingPulls.shared.reload()
+                PullRequests.shared.applyPending()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
     }
 
     func stop() {

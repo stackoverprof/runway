@@ -4,24 +4,23 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Same flavor switch as build-app.sh: RUNWAY_FLAVOR=3 builds, installs and
-# relaunches "Runway 3.app" and leaves the Runway you work in alone.
-FLAVOR="${RUNWAY_FLAVOR:-}"
-APP_NAME="Runway${FLAVOR:+ $FLAVOR}"
-EXEC_NAME="Runway${FLAVOR}"
-APP="/Applications/$APP_NAME.app"
+APP_NAME="Runway"
+EXEC_NAME="Runway"
+APP="/Applications/Runway.app"
 
 # pgrep and pkill do not see a Runway that was launched outside this shell's
 # session: pkill then leaves the old app running, `open` just activates it
 # instead of starting the new build, and pgrep reports a launch failure on a
 # perfectly good build. ps does see it, so every check here goes through ps.
 running() {
-  ps -Ao pid=,comm= | awk -v needle="$APP_NAME.app/Contents/MacOS/$EXEC_NAME" \
+  # The installed bundle may still contain a legacy Runway3 executable from
+  # an earlier side-by-side install. Match any process launched from this app.
+  ps -Ao pid=,comm= | awk -v needle="$APP/Contents/MacOS/" \
     'index($0, needle) { print $1 }'
 }
 
 echo "▸ building…"
-if ! RUNWAY_FLAVOR="$FLAVOR" ./build-app.sh debug 2>&1 | tail -5; then
+if ! ./build-app.sh debug 2>&1 | tail -5; then
   echo "✗ build failed"
   exit 1
 fi
@@ -34,6 +33,10 @@ done
 for pid in $(running); do kill -9 "$pid" 2>/dev/null || true; done
 sleep 0.5
 
+# Replace the bundle instead of merging it. A previous side-by-side install
+# left a stale Runway3 executable in Runway.app, which LaunchServices could
+# continue to launch even after the new Runway binary was copied in.
+python3 -c 'import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "$APP"
 ditto "dist/$APP_NAME.app" "$APP"
 open "$APP"
 sleep 2

@@ -28,13 +28,16 @@ A fourth shot needs a reason. Say what it is in the manifest row.
 ## Where it goes
 
 ```
-~/Developer/walkthrough/.work/captures/<YYYY-MM-DD>/
+$RUNWAY_WALKTHROUGH_OUT/.work/captures/<YYYY-MM-DD>/
   <issue>-<slug>-<moment>.png      e.g. 13271-empty-extras-before.png
   manifest.md
 ```
 
-The `.work/` parent is deliberate: `~/Developer/walkthrough/` itself stays nothing but
-issue folders, because Erbin drags slides out of it into Slack.
+The `.work/` parent is deliberate: `$RUNWAY_WALKTHROUGH_OUT/` itself stays nothing but
+issue folders, and an issue folder holds **only rendered 2184x2184 slides** (and named
+GIFs), because Erbin drags slides out of it into Slack and Runway shows that folder as
+the issue's walkthrough. A raw screenshot saved there shows up as a slide. Never write
+a capture into `$RUNWAY_WALKTHROUGH_OUT/<issue>/`; only `render.py` writes there.
 
 `<moment>` is `before`, `after`, or a short word for a surprise (`gap`,
 `overcharge`). `<issue>` is digits only, or `unfiled` when nothing is filed yet.
@@ -42,10 +45,12 @@ issue folders, because Erbin drags slides out of it into Slack.
 ## Mobile captures
 
 On the iOS Simulator or the Android emulator, take evidence with the `drive`
-skill's `shot.sh`, never with the Maestro MCP screenshot:
+skill's `shot.sh` when the repo has it, never with the Maestro MCP screenshot.
+Without it, `xcrun simctl io booted screenshot <file>` or
+`adb exec-out screencap -p > <file>` at native resolution:
 
 ```bash
-<monorepo>/.claude/skills/drive/scripts/shot.sh android ~/Developer/walkthrough/.work/captures/<date>/<issue>-<slug>-before.png
+<monorepo>/.claude/skills/drive/scripts/shot.sh android $RUNWAY_WALKTHROUGH_OUT/.work/captures/<date>/<issue>-<slug>-before.png
 ```
 
 It writes native resolution with a fixed 9:41 status bar, so the before and
@@ -56,7 +61,7 @@ the after only differ where the app does. Note the device in the manifest row
 
 When the request names a step as a GIF (`/walkthrough (gif the payment step)`), record that step **while doing it**, the same way the before shot is taken while looking at it. Everything else stays a screenshot. Never record unasked.
 
-- Use `~/.claude/skills/walkthrough/gif/recorder.mjs` (usage in its header): a real Chrome window off-screen, streaming every frame the page paints (about 20 a second) to `.work/captures/<date>/<issue>-<slug>-<moment>/frames/` plus `frames.json`. Not the Chrome extension's `gif_creator`: it keeps one frame per action and stamps click circles and a watermark on top.
+- Use `$RUNWAY_WALKTHROUGH/gif/recorder.mjs` (usage in its header): a real Chrome window off-screen, streaming every frame the page paints (about 20 a second) to `.work/captures/<date>/<issue>-<slug>-<moment>/frames/` plus `frames.json`. Not the Chrome extension's `gif_creator`: it keeps one frame per action and stamps click circles and a watermark on top.
 - Drive the step from a short script in the session scratchpad: get the page to just before the step, `start()`, do the step with pauses (`waitForTimeout` 1 to 2 s on each state the reader must see), `stop()`.
 - Headless Chrome is answered with a Cloudflare 403 on the brand sites, which is why the recorder uses real Chrome. Never fake the user agent to get around a bot rule.
 - One manifest row for the recording, with the folder as `file` and the states it passes through in `shows` ("3.390 → 3.890 → 3.390 kr as Tígrisrækjur is ticked then unticked").
