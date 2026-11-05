@@ -141,7 +141,12 @@ final class WindowDragNSView: NSView {
         Task { @MainActor [weak self, issues] in
             while !Task.isCancelled {
                 Hangar.shared.sync(issues: issues)
-                FlightDozer.shared.sync(issues: issues, onScreen: self?.workspace.flightNumber)
+                FlightDozer.shared.sync(
+                    issues: issues,
+                    onScreen: self?.workspace.flightNumber,
+                    reading: self?.workspace.readingCrew,
+                    focused: self?.workspace.focusedID
+                )
                 // And what an agent just wrote into an issue, ahead of GitHub.
                 PendingBodies.shared.reload()
                 issues.applyPendingBodies()

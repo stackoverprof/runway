@@ -3,8 +3,10 @@ import SwiftUI
 /// What a flight does when you are not looking at it, and what it owes
 /// before it lands.
 struct FlightSettings: View {
-    @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 30
-    @AppStorage(FlightDozer.otherKey) private var idleOther = 15
+    @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 15
+    @AppStorage(FlightDozer.otherKey) private var idleOther = 5
+    @AppStorage(FlightDozer.crewPinnedKey) private var crewPinned = 10
+    @AppStorage(FlightDozer.crewOtherKey) private var crewOther = 3
     @AppStorage(SettingsKey.walkthroughRoot) private var walkthroughRoot = ""
     @AppStorage(SettingsKey.walkthroughSlides) private var walkthroughSlides = 3
     @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence)
@@ -40,6 +42,17 @@ struct FlightSettings: View {
                     + "this long, and nobody has typed into them, their Claude sessions "
                     + "are stopped. The flight on screen never is. Opening the flight, or "
                     + "a pilot raising a crew, starts them again where they left off."
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+                MinutesField(label: "Stand down a quiet crew of a pinned flight after", minutes: $crewPinned)
+                MinutesField(label: "Stand down a quiet crew of any other flight after", minutes: $crewOther)
+                Text(
+                    "One crew at a time, even in the flight on screen, while the rest "
+                    + "carry on. Never the crew you are reading or typing into, and never "
+                    + "one with a command still running (a watcher, a build). Its play "
+                    + "button brings it back where it left off."
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)

@@ -319,6 +319,34 @@ final class ResourceMonitor {
         return (label, false)
     }
 
+    /// Seats (by control id) whose Claude has a shell running under it: a
+    /// command it left going in the background, a watcher, a dev server.
+    /// That is Claude's own "1 shell still running", seen from outside.
+    nonisolated static func seatsWithShells() -> Set<String> {
+        let all = allProcesses()
+        var children: [pid_t: [pid_t]] = [:]
+        for proc in all.values { children[proc.ppid, default: []].append(proc.pid) }
+        var tree: [pid_t] = []
+        var queue = [getpid()]
+        while let pid = queue.popLast() {
+            tree.append(pid)
+            queue.append(contentsOf: children[pid] ?? [])
+        }
+        var found: Set<String> = []
+        for pid in tree {
+            guard let proc = all[pid] else { continue }
+            let hasShell = (children[pid] ?? []).contains { child in
+                all[child].map { shells.contains($0.name) } ?? false
+            }
+            guard hasShell else { continue }
+            let launch = arguments(of: pid)
+            guard case (.claude, _) = describe(proc, launch: launch),
+                  let control = launch.env["RUNWAY_CONTROL"] else { continue }
+            found.insert(URL(fileURLWithPath: control).deletingPathExtension().lastPathComponent)
+        }
+        return found
+    }
+
     /// Ask these processes to quit, and make them a few seconds later if
     /// they have not.
     nonisolated static func quit(_ pids: [Int32]) {

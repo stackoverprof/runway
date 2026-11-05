@@ -5,8 +5,8 @@ import Observation
 /// Stops a flight's Claude sessions once the whole flight has gone quiet.
 ///
 /// A flight dozes when its pilot, copilot and every crew have all been idle
-/// for the flight's limit (Settings > Flights): 30 minutes for a pinned
-/// flight, 15 for the rest by default. Typing into any of its seats counts as
+/// for the flight's limit (Settings > Flights): 15 minutes for a pinned
+/// flight, 5 for the rest by default. Typing into any of its seats counts as
 /// activity too. The flight on screen never dozes.
 ///
 /// Dozing stands the flight down on both decks, so the hangar does not start
@@ -20,6 +20,8 @@ final class FlightDozer {
 
     static let pinnedKey = "runway.idleStopPinnedMinutes"
     static let otherKey = "runway.idleStopMinutes"
+    static let crewPinnedKey = "runway.crewIdlePinnedMinutes"
+    static let crewOtherKey = "runway.crewIdleMinutes"
 
     /// Flights let go, so the middle pane stops holding their pilots mounted.
     /// Cleared when you open the flight again.
@@ -31,7 +33,7 @@ final class FlightDozer {
     static func limit(pinned: Bool) -> TimeInterval {
         let key = pinned ? pinnedKey : otherKey
         let set = UserDefaults.standard.integer(forKey: key)
-        let minutes = set > 0 ? set : (pinned ? 30 : 15)
+        let minutes = set > 0 ? set : (pinned ? 15 : 5)
         return TimeInterval(minutes * 60)
     }
 
@@ -48,16 +50,30 @@ final class FlightDozer {
         return AgentState(control: state) == .running
     }
 
+    /// How long a single crew may sit quiet before it is stood down on its
+    /// own, while the rest of its flight carries on.
+    static func crewLimit(pinned: Bool) -> TimeInterval {
+        let key = pinned ? crewPinnedKey : crewOtherKey
+        let set = UserDefaults.standard.integer(forKey: key)
+        let minutes = set > 0 ? set : (pinned ? 10 : 3)
+        return TimeInterval(minutes * 60)
+    }
+
     func wake(_ number: Int) {
         if dozing.contains(number) { dozing.remove(number) }
     }
 
     /// Called every second from the window loop; does its work every 20.
-    func sync(issues: AssignedIssues, onScreen: Int?) {
+    func sync(issues: AssignedIssues, onScreen: Int?, reading: Int? = nil, focused: UUID? = nil) {
         let now = Date()
         guard now.timeIntervalSince(lastCheck) >= 20, let board = issues.repository else { return }
         lastCheck = now
         let pool = TerminalSessionPool.shared
+        // Crews with a shell still going (a watcher, a build, a dev server)
+        // are working even between turns: stopping them would kill it.
+        // Read once, and only when some crew is up at all.
+        var shellsChecked = false
+        var withShells: Set<String> = []
 
         for flight in issues.issues where flight.parent == nil && !flight.isClosed {
             var seats: [(id: UUID, crew: IssueLeg?)] = [.pilot, .copilot].map { rank in
@@ -67,7 +83,7 @@ final class FlightDozer {
                 let repository = leg.repository ?? board
                 seats.append((FlightCrewSessions.boxID(rank: .crew, repository: repository, issue: leg.number), leg))
             }
-            let live = seats.filter { pool.isLive($0.id) }
+            var live = seats.filter { pool.isLive($0.id) }
             guard !live.isEmpty else { continue }
 
             // First sighting, or busy now: the clock starts from here.
@@ -82,8 +98,34 @@ final class FlightDozer {
                 quietSince = max(quietSince, touched)
             }
 
-            guard flight.number != onScreen else { continue }
             let pinned = FlightBoard.shared.isPinned(flight.number, in: board)
+
+            // Each crew on its own clock, the flight on screen included: one
+            // crew still working no longer keeps an idle one up beside it.
+            // The crew you are reading, or typing into, never stops.
+            var stillLive = live
+            for seat in live {
+                guard let leg = seat.crew else { continue }
+                if flight.number == onScreen, leg.number == reading { continue }
+                if seat.id == focused { continue }
+                let quiet = now.timeIntervalSince(lastBusy[seat.id] ?? now)
+                guard quiet > Self.crewLimit(pinned: pinned) else { continue }
+                if !shellsChecked {
+                    withShells = ResourceMonitor.seatsWithShells()
+                    shellsChecked = true
+                }
+                if withShells.contains(seat.id.uuidString) { continue }
+                CrewDeck.shared.standDown(leg.repository ?? board, leg.number, title: leg.title)
+                Hangar.shared.evict(seat.id)
+                pool.release(seat.id)
+                lastBusy.removeValue(forKey: seat.id)
+                stillLive.removeAll { $0.id == seat.id }
+                NSLog("Runway: crew #\(leg.number) idle, stood down")
+            }
+            live = stillLive
+            guard !live.isEmpty else { continue }
+
+            guard flight.number != onScreen else { continue }
             guard now.timeIntervalSince(quietSince) > Self.limit(pinned: pinned) else { continue }
 
             stopSeats(of: flight, board: board, live: live)
