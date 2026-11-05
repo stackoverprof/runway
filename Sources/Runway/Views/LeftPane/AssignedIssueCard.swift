@@ -14,6 +14,8 @@ struct AssignedIssueCard: View {
     var isFlying = false
     /// Open or close the issue from the card. Absent means no state menu.
     var onSetClosed: ((Bool) -> Void)?
+    /// A seat of this flight (pilot, copilot or a crew) is waiting on you.
+    var needsYou = false
     @State private var hovering = false
     /// Lit while the pointer is on the class, so it reads as something you
     /// can click rather than a label.
@@ -31,6 +33,16 @@ struct AssignedIssueCard: View {
         .background(
             ZStack {
                 RunwayCard.fill(hovering: hovering, selected: isFlying)
+                // The flight you have open wears its status colour, faintly,
+                // like the pane it opened. A shade of grey alone was too
+                // close to its neighbours to spot.
+                if isFlying {
+                    LinearGradient(
+                        colors: [status.color.opacity(0.09), status.color.opacity(0.035)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
                 // A little daylight behind the flaps and no further. The
                 // tiles are the darkest thing on the card, so the paper
                 // right behind them is where the contrast has to come
@@ -67,11 +79,34 @@ struct AssignedIssueCard: View {
         // read as a bead on a string.
         .overlay(
             ticket
-                .stroke(RunwayCard.border(hovering: hovering, selected: isFlying), lineWidth: 2)
+                .stroke(
+                    isFlying ? status.color.opacity(hovering ? 0.34 : 0.24) : RunwayCard.border(hovering: hovering),
+                    lineWidth: 2
+                )
                 .clipShape(ticket, style: FillStyle(eoFill: true))
                 .clipShape(RoundedRectangle(cornerRadius: RunwayCard.radius))
         )
         .overlay(alignment: .leading) { perforation }
+        // Amber, like the seat dot, on the card's top-left corner: someone
+        // on this flight has stopped to ask you something.
+        .overlay(alignment: .topLeading) {
+            if needsYou {
+                Circle()
+                    .fill(Board.amber)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: Board.amber.opacity(0.6), radius: 3)
+                    // Centred on the rounded corner's edge, half on the card
+                    // and half off it: the arc's midpoint sits r(1 - 1/√2)
+                    // in from each side.
+                    .offset(
+                        x: RunwayCard.radius * (1 - 1 / 2.squareRoot()) - 3.5,
+                        y: RunwayCard.radius * (1 - 1 / 2.squareRoot()) - 3.5
+                    )
+                    .help("Waiting on you")
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: needsYou)
         .contentShape(Rectangle())
         // No lift on hover. The paper already goes a shade lighter, and a
         // card that also jumps a point makes a list twitch as the pointer
@@ -341,7 +376,6 @@ struct AssignedIssueCard: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onHover { classHovering = $0 }
-        .pointerCursor()
         .help("Set this flight's class")
         .onTapGesture {
             classMenu.show(current: level) { chosen in

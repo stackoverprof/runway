@@ -203,7 +203,7 @@ private struct BoardTap: ViewModifier {
 
     func body(content: Content) -> some View {
         if let action {
-            content.onTapGesture(perform: action).pointerCursor()
+            content.onTapGesture(perform: action)
         } else {
             content
         }
@@ -228,7 +228,6 @@ struct BoardMore: View {
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
-            .pointerCursor()
     }
 }
 
@@ -256,7 +255,6 @@ struct BoardAction: View {
             .contentShape(RoundedRectangle(cornerRadius: 4))
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
-            .pointerCursor()
     }
 }
 
@@ -361,7 +359,6 @@ struct SeatButton: View {
         .contentShape(RoundedRectangle(cornerRadius: 3.5))
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
-        .pointerCursor()
     }
 }
 
@@ -452,7 +449,6 @@ struct SectionTab: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
-        .pointerCursor()
     }
 }
 
@@ -487,7 +483,6 @@ struct ChannelChip: View {
         .contentShape(RoundedRectangle(cornerRadius: 5))
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
-        .pointerCursor()
         .help("Open \(name)")
     }
 }

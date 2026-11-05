@@ -8,12 +8,12 @@ import GhosttyKit
 /// session dies with its view: the agent was killed and started again the
 /// moment you came back. The pool holds a seat's session by its box id, so
 /// leaving a flight only parks it. A session is let go once it has been off
-/// screen for `buffer`, and the pool never parks more than `capacity` of them.
+/// screen for `buffer`. There is no count cap: the flight dozer stops quiet
+/// flights on its own clock, which is what keeps the pool small.
 ///
 /// Only an idle seat is ever let go. An agent that is still working, or that
 /// has stopped to ask you something, keeps its terminal however long it sits
-/// off screen: killing it would throw away the work or the question. That
-/// makes `capacity` a soft cap, which is the right way round.
+/// off screen: killing it would throw away the work or the question.
 @MainActor
 final class TerminalSessionPool {
     static let shared = TerminalSessionPool()
@@ -22,12 +22,6 @@ final class TerminalSessionPool {
     static var buffer: TimeInterval {
         let minutes = UserDefaults.standard.integer(forKey: FlightDozer.otherKey)
         return TimeInterval(max(1, minutes == 0 ? 15 : minutes) * 60)
-    }
-
-    /// How many parked seats to hold at once, oldest let go first.
-    static var capacity: Int {
-        let kept = UserDefaults.standard.integer(forKey: SettingsKey.seatsKeptAlive)
-        return max(2, kept == 0 ? 12 : kept)
     }
 
     private struct Parked {
@@ -124,17 +118,10 @@ final class TerminalSessionPool {
         !seat.mounted && !Self.isBusy(id) && !Hangar.shared.wanted.contains(id)
     }
 
-    /// Drop what has been off screen past the buffer, then trim the oldest
-    /// idle seats until the pool fits.
+    /// Drop what has been off screen past the buffer.
     func sweep(now: Date = Date()) {
         for (id, seat) in seats where isReleasable(id, seat) {
             if now.timeIntervalSince(seat.leftAt) > Self.buffer { release(id) }
-        }
-        var idle = seats.filter { isReleasable($0.key, $0.value) }
-        while seats.count > Self.capacity,
-              let oldest = idle.min(by: { $0.value.leftAt < $1.value.leftAt }) {
-            release(oldest.key)
-            idle.removeValue(forKey: oldest.key)
         }
     }
 }

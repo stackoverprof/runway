@@ -168,7 +168,6 @@ struct KeyRecorderRow: View {
                 .buttonStyle(.borderless)
                 .help("Reset to default")
                 .disabled(!bindings.isCustom(action))
-                .pointerCursor()
         }
     }
 }
@@ -186,7 +185,6 @@ struct ChordRecorderButton: View {
             .buttonStyle(.bordered)
             .frame(minWidth: 96)
             .monospacedDigit()
-            .pointerCursor()
             .onDisappear(perform: stop)
     }
 

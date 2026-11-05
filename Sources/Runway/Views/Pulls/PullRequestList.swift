@@ -17,6 +17,8 @@ struct PullRequestList: View {
     /// The flight (and crew) a branch works for, read off the issue number
     /// it ends in. Nil when the issue is not on your board.
     var owner: (String) -> String? = { _ in nil }
+    /// Clicking the owner badge: opens that flight.
+    var onOwner: (String) -> Void = { _ in }
 
     @State private var visible: [String: Int] = [:]
     @State private var expanded: Set<Int> = []
@@ -95,17 +97,16 @@ struct PullRequestList: View {
                         .contentShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
-                    .pointerCursor()
                 }
             }
         }
     }
 
     func row(_ pullRequest: RepositoryPullRequest, color: Color) -> some View {
-        Button {
-            NSWorkspace.shared.open(pullRequest.url)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
+        // A tap on the row, not a Button: a button nested in a Button's
+        // label gets neither its own hover nor its own click on macOS, so
+        // the owner badge showed an arrow and opened the PR instead.
+        VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(verbatim: GitHubNumber.reference(pullRequest.number))
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
@@ -128,14 +129,7 @@ struct PullRequestList: View {
                 }
                 HStack(spacing: 5) {
                     if let owner = owner(pullRequest.headRefName) {
-                        Text(verbatim: owner)
-                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                            .tracking(0.4)
-                            .foregroundStyle(Color.white.opacity(0.55))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                            .fixedSize()
+                        OwnerBadge(name: owner) { onOwner(pullRequest.headRefName) }
                     }
                     BranchNameText(name: pullRequest.headRefName)
                     Image(systemName: "arrow.right")
@@ -151,9 +145,7 @@ struct PullRequestList: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.025)))
             .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
+            .onTapGesture { NSWorkspace.shared.open(pullRequest.url) }
         .contextMenu {
             Button("Copy PR link") {
                 NSPasteboard.general.clearContents()
@@ -182,7 +174,6 @@ struct PullRequestList: View {
                 }
             }
             .buttonStyle(.plain)
-            .pointerCursor()
             .help(isOpen ? "Collapse the stack" : "Show all \(stack.count) PRs in the stack")
 
             if isOpen {
@@ -326,5 +317,29 @@ struct BranchNameText: View {
             }
         }
         .lineLimit(1)
+    }
+}
+
+/// The flight a PR works for, as a grey tag. Click it to open that flight.
+private struct OwnerBadge: View {
+    let name: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(verbatim: name)
+                .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                .tracking(0.4)
+                .foregroundStyle(Color.white.opacity(hovering ? 0.8 : 0.55))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.white.opacity(hovering ? 0.14 : 0.08)))
+                .fixedSize()
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Open this flight")
     }
 }

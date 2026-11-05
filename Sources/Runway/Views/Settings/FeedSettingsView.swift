@@ -23,27 +23,21 @@ struct FeedSettings: View {
                     Text("1 minute").tag(60)
                     Text("2 minutes").tag(120)
                 }
-                .pointerCursor()
                 Stepper("Active within: \(idleMinutes) min", value: $idleMinutes, in: 5...120, step: 5)
-                    .pointerCursor()
                 Stepper("On fire threshold: \(fireThreshold) events", value: $fireThreshold, in: 2...20)
-                    .pointerCursor()
                 Picker("Show people active in the last", selection: $officeHours) {
                     Text("3 hours").tag(3)
                     Text("6 hours").tag(6)
                     Text("12 hours").tag(12)
                     Text("24 hours").tag(24)
                 }
-                .pointerCursor()
                 Toggle("Hide bot accounts", isOn: $hideBots)
-                    .pointerCursor()
 
                 Text("Feeds, Runway, and Pulls share this clock, and all three refresh when the window becomes active. Polling pauses while Runway is inactive.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 Toggle("Rotate the tagline on refresh", isOn: $taglineEnabled)
-                    .pointerCursor()
                 Text("The line under the header retypes itself when the feed refreshes, so a refresh that found nothing still shows. Turn it off for a still header.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -55,7 +49,6 @@ struct FeedSettings: View {
                         Text(timeframe.rawValue).tag(timeframe.rawValue)
                     }
                 }
-                .pointerCursor()
                 Text("The timeframe the Pulls tab starts on every launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -69,10 +62,8 @@ struct FeedSettings: View {
                         prompt: Text("Home folder")
                     )
                     Button("Choose\u{2026}") { chooseCloneRoot() }
-                        .pointerCursor()
                 }
                 Stepper("Search depth: \(cloneSearchDepth)", value: $cloneSearchDepth, in: 1...12)
-                    .pointerCursor()
 
                 if let cloneRootWarning {
                     Text(cloneRootWarning)
@@ -82,7 +73,6 @@ struct FeedSettings: View {
 
                 if !cloneSearchRoot.isEmpty {
                     Button("Restore Default", role: .destructive) { cloneSearchRoot = "" }
-                        .pointerCursor()
                 }
 
                 Text("Where the repository picker looks for cloned GitHub repositories, and how many folders deep it descends. A narrower root scans faster and keeps stray checkouts out of the list.")

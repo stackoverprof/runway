@@ -87,14 +87,25 @@ struct RightPane: View {
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .pointerCursor()
         .help(showLanded ? "Fold the landed crews away" : "Show every crew that has landed")
     }
 
+    /// The pane's padding above and below the crews.
+    private static let paneInsets: CGFloat = 16 + 7
+
     var body: some View {
         // The cards take their own height, measured rather than guessed, and
-        // the crews that are up divide every point that is left.
-        CrewAccordion(spacing: CrewAccordion.gap, minimumBox: CrewAccordion.minimumBox) {
+        // the crews that are up divide every point that is left. When even
+        // that cannot fit (forty landed crews unfolded), the pane stops
+        // being an accordion and scrolls: the layout grows past the window
+        // only then, so a pane that fits never moves.
+        GeometryReader { geo in
+        ScrollView(.vertical) {
+        CrewAccordion(
+            spacing: CrewAccordion.gap,
+            minimumBox: CrewAccordion.minimumBox,
+            viewport: max(0, geo.size.height - Self.paneInsets)
+        ) {
             ForEach(flying) { crew in
                 if isUp(crew) {
                     activeBox(crew)
@@ -126,6 +137,10 @@ struct RightPane: View {
         .padding(.horizontal, 7)
         .padding(.bottom, 7)
         .padding(.top, 16)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollIndicators(.automatic)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
         .contentShape(Rectangle())
@@ -283,7 +298,6 @@ struct RightPane: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .pointerCursor()
             .help("Bring this landed crew back up")
             .onHover { hoveringLanded = $0 ? crew.number : nil }
 
@@ -354,7 +368,6 @@ struct RightPane: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 9))
         .onTapGesture { bringUp(crew) }
-        .pointerCursor()
         .contextMenu { crewMenu(crew) }
     }
 
@@ -379,7 +392,6 @@ struct RightPane: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .pointerCursor()
         .help(help)
     }
 
@@ -477,6 +489,9 @@ struct RightPane: View {
             .padding(.horizontal, 11)
             .frame(height: 28)
             .background(RunwayTerminal.headerBar)
+            // The header picks the crew; the terminal below keeps its own
+            // text cursor.
+            .contentShape(Rectangle())
             .contextMenu { crewMenu(crew) }
 
             crewTerminal(crew)
@@ -574,7 +589,6 @@ struct RightPane: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .pointerCursor()
         .help(up ? "Pause this crew" : "Bring this crew up")
     }
 
@@ -606,13 +620,28 @@ struct CrewAccordion: Layout {
 
     let spacing: CGFloat
     let minimumBox: CGFloat
+    /// The height on screen. The layout is exactly this tall unless the
+    /// cards and the smallest boxes need more, and then it is that tall and
+    /// the scroll view around it takes over.
+    var viewport: CGFloat = 0
 
     func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
         cache: inout ()
     ) -> CGSize {
-        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+        let width = proposal.width ?? 0
+        let shares = subviews.map { $0[CrewShareKey.self] }
+        let cards = subviews.indices.reduce(CGFloat(0)) { total, index in
+            guard shares[index] == 0 else { return total }
+            return total + subviews[index]
+                .sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        }
+        let gaps = spacing * CGFloat(max(0, subviews.count - 1))
+        let boxes = minimumBox * CGFloat(shares.filter { $0 > 0 }.count)
+        let needed = cards + gaps + boxes
+        let height = max(viewport > 0 ? viewport : (proposal.height ?? 0), needed)
+        return CGSize(width: width, height: height)
     }
 
     func placeSubviews(

@@ -8,7 +8,6 @@ struct TerminalSettings: View {
     @AppStorage(SettingsKey.quickTerminalDirectory) private var quickTerminalDirectory = ""
     @AppStorage(SettingsKey.quickAutoHide) private var quickAutoHide = true
     @AppStorage(SettingsKey.quickAutoHideSeconds) private var quickAutoHideSeconds = 3
-        @AppStorage(SettingsKey.dropRetentionDays) private var dropRetentionDays = 7
     @State private var customFontFamily = ""
     @State private var usingCustomFont = false
 
@@ -22,7 +21,6 @@ struct TerminalSettings: View {
                     Divider()
                     Text("Custom\u{2026}").tag(Self.customFontTag)
                 }
-                .pointerCursor()
 
                 if usingCustomFont {
                     TextField("Font family", text: $customFontFamily)
@@ -37,7 +35,6 @@ struct TerminalSettings: View {
                 }
 
                 Stepper("Size: \(terminalFontSize)pt", value: $terminalFontSize, in: TerminalFont.sizeRange)
-                    .pointerCursor()
 
                 terminalFontPreview
 
@@ -48,7 +45,6 @@ struct TerminalSettings: View {
                         terminalFontSize = TerminalFont.defaultSize
                         usingCustomFont = false
                     }
-                    .pointerCursor()
                 }
 
                 Text("Applies to every open terminal straight away. Your own Ghostty config is never modified.")
@@ -64,7 +60,6 @@ struct TerminalSettings: View {
                         prompt: Text("Last used directory")
                     )
                     Button("Choose\u{2026}") { chooseQuickDirectory() }
-                        .pointerCursor()
                 }
 
                 if let quickDirectoryWarning {
@@ -77,7 +72,6 @@ struct TerminalSettings: View {
                     Button("Restore Default", role: .destructive) {
                         quickTerminalDirectory = ""
                     }
-                    .pointerCursor()
                 }
 
                 Text("The quick terminal (\u{2318}\u{2325}Q) opens here every time its shell starts. Leave it empty to reopen wherever the last shell was left. A leading tilde is expanded.")
@@ -85,33 +79,17 @@ struct TerminalSettings: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Hide it when it loses focus", isOn: $quickAutoHide)
-                    .pointerCursor()
                 Stepper(
                     "Hide after: \(quickAutoHideSeconds)s",
                     value: $quickAutoHideSeconds,
                     in: 1...60
                 )
                 .disabled(!quickAutoHide)
-                .pointerCursor()
                 Text("Pinning it (the pin in its header) keeps it open whatever this says.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-
-            Section("Dropped images") {
-                Stepper(
-                    dropRetentionDays == 0
-                        ? "Keep them"
-                        : "Delete after: \(dropRetentionDays) day\(dropRetentionDays == 1 ? "" : "s")",
-                    value: $dropRetentionDays,
-                    in: 0...90
-                )
-                .pointerCursor()
-                Text("An image dragged out of a web page has no file on disk, so Runway writes it into its own folder to hand the path to an agent. Your ~/Downloads is never touched. Zero days keeps them for good.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
         // Rewrite the theme file and push it to every open terminal, so the new

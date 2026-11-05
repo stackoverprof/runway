@@ -14,8 +14,23 @@ struct PaletteItem: Identifiable {
     var chord: String?
     let run: @MainActor () -> Void
 
-    /// Everything a search looks at.
-    var haystack: String { "\(title) \(detail) \(group)".lowercased() }
+    /// Everything a search looks at, lowercased once rather than on every
+    /// keystroke.
+    let haystack: String
+
+    init(
+        id: String, icon: String, title: String, detail: String, group: String,
+        chord: String? = nil, also: String = "", run: @escaping @MainActor () -> Void
+    ) {
+        self.id = id
+        self.icon = icon
+        self.title = title
+        self.detail = detail
+        self.group = group
+        self.chord = chord
+        self.run = run
+        haystack = "\(title) \(detail) \(group) \(also)".lowercased()
+    }
 }
 
 /// ⌘K: reach anything by name.
@@ -32,8 +47,16 @@ struct CommandPalette: View {
     @FocusState private var typing: Bool
     @AppStorage("runway.showLandedCrews") private var showLanded = false
 
-    private var results: [PaletteItem] {
-        let all = flights + crews + commands
+    /// Every item, built once when the palette opens. It used to be built on
+    /// every read of the results, and the list read the results once per row
+    /// (to see whether a row starts a new group), so one keystroke rebuilt
+    /// every flight, open and landed, parsing each one's checklist, hundreds
+    /// of times over. That was the lag.
+    @State private var all: [PaletteItem] = []
+    /// What the query lets through, worked out once per keystroke.
+    @State private var results: [PaletteItem] = []
+
+    private func filtered() -> [PaletteItem] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return all }
         let words = needle.split(separator: " ").map(String.init)
@@ -49,6 +72,7 @@ struct CommandPalette: View {
         let lanes = ws.runwayIssueTab == .open
             ? [(issues.open, "Flight"), (issues.closed, "Landed flight")]
             : [(issues.closed, "Landed flight"), (issues.open, "Flight")]
+        let pulls = pullsByFlight()
         return lanes.flatMap { lane, group in
             lane.enumerated().map { index, flight in
                 PaletteItem(
@@ -57,13 +81,35 @@ struct CommandPalette: View {
                     title: flight.title,
                     detail: detail(for: flight),
                     group: group,
-                    chord: group == "Flight" && index < 9 ? "⌘\(index + 1)" : nil
+                    chord: group == "Flight" && index < 9 ? "⌘\(index + 1)" : nil,
+                    // Its PRs, so typing a PR number (with or without the #)
+                    // finds the flight it belongs to.
+                    also: (pulls[flight.number] ?? []).map { "#\($0) pr\($0)" }.joined(separator: " ")
                 ) {
                     if flight.isClosed { ws.runwayIssueTab = .closed }
                     FlightRoster.fly(flight, ws: ws)
                 }
             }
         }
+    }
+
+    /// Every PR on the board, filed under the flight it works for: the issue
+    /// its branch ends in, or that issue's flight when it is a crew.
+    private func pullsByFlight() -> [Int: [Int]] {
+        var found: [Int: [Int]] = [:]
+        for pull in PullRequests.shared.pullRequests {
+            guard let number = BranchIssue.number(in: pull.headRefName) else { continue }
+            let flight: Int
+            if let issue = issues.issue(number) {
+                flight = issue.parent ?? number
+            } else if let owner = issues.issues.first(where: { $0.legs.contains { $0.number == number } }) {
+                flight = owner.number
+            } else {
+                continue
+            }
+            found[flight, default: []].append(pull.number)
+        }
+        return found
     }
 
     /// The same figure the card and the route bar print, which is the
@@ -178,8 +224,15 @@ struct CommandPalette: View {
         }
         .environment(\.colorScheme, .dark)
         .transition(.opacity)
-        .onAppear { typing = true }
-        .onChange(of: query) { picked = 0 }
+        .onAppear {
+            all = flights + crews + commands
+            results = all
+            typing = true
+        }
+        .onChange(of: query) {
+            results = filtered()
+            picked = 0
+        }
     }
 
     private var card: some View {
@@ -188,7 +241,7 @@ struct CommandPalette: View {
             if !results.isEmpty {
                 Divider().overlay(Color.white.opacity(0.08))
                 list
-            } else {
+            } else if !all.isEmpty {
                 Text("Nothing matches")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.white.opacity(0.3))
@@ -278,7 +331,6 @@ struct CommandPalette: View {
         .padding(.vertical, 6)
         .background(chosen ? Color.white.opacity(0.09) : .clear)
         .contentShape(Rectangle())
-        .pointerCursor()
     }
 
     private func move(_ delta: Int) {

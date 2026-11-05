@@ -16,19 +16,28 @@ struct LeftPane: View {
     /// "DASHBOARD" for a branch of that flight or any of its crews, as for the
     /// pilot's own, from the issue number the branch ends in.
     private func branchOwner(_ branch: String) -> String? {
+        branchFlight(branch)?.title.uppercased()
+    }
+
+    /// The flight a branch works for: the issue it ends in, or that issue's
+    /// flight when it is a crew.
+    private func branchFlight(_ branch: String) -> AssignedIssue? {
         guard let number = BranchIssue.number(in: branch) else { return nil }
         let issues = assignedIssues.issues
-        func name(_ issue: AssignedIssue) -> String { issue.title.uppercased() }
         if let issue = issues.first(where: { $0.number == number }) {
             if let parent = issue.parent, let flight = issues.first(where: { $0.number == parent }) {
-                return name(flight)
+                return flight
             }
-            return name(issue)
+            return issue
         }
-        if let flight = issues.first(where: { $0.legs.contains { $0.number == number } }) {
-            return name(flight)
-        }
-        return nil
+        return issues.first(where: { $0.legs.contains { $0.number == number } })
+    }
+
+    /// Clicking a PR's owner badge opens that flight in the other panes.
+    private func flyBranchOwner(_ branch: String) {
+        guard let flight = branchFlight(branch) else { return }
+        if flight.isClosed { ws.runwayIssueTab = .closed }
+        withAnimation(.easeInOut(duration: 0.18)) { FlightRoster.fly(flight, ws: ws, reveal: false) }
     }
     @State private var showRepoPicker = false
     @State private var showAllPresence = false
@@ -38,6 +47,8 @@ struct LeftPane: View {
     @State private var feedScrollAnchor = RunwayScrollAnchor()
     @State private var pullScrollAnchor = RunwayScrollAnchor()
     /// there is expected, so it does not rebuild that lane's scroll view.
+    @State private var issueSearchVisible = false
+    @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
     @State private var feedSearchQuery = ""
     @State private var prSearchVisible = false
@@ -146,6 +157,9 @@ struct LeftPane: View {
             focusedSearchTab = nil
             refreshSource(for: tab, minimumAge: 15)
         }
+        .onChange(of: ws.flightNumber) { previous, number in
+            markSeen([previous, number])
+        }
         .onChange(of: ws.findRequestID) { _, _ in
             toggleSearch(for: ws.selectedTab)
         }
@@ -158,6 +172,9 @@ struct LeftPane: View {
         }
         .task(id: emptySearchIsOpen(for: .pullRequests)) {
             await closeSearchAfterIdle(for: .pullRequests)
+        }
+        .task(id: emptySearchIsOpen(for: .runway)) {
+            await closeSearchAfterIdle(for: .runway)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Black, like the other two panes: the cards are the only surface,
@@ -281,7 +298,6 @@ struct LeftPane: View {
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .pointerCursor()
         .popover(isPresented: $showRepoPicker, arrowEdge: .bottom) {
             RepoPicker(repos: repoChoices, current: feed.localPath(for: feed.repo)) { picked in
                 feed.selectCheckout(picked.path, of: picked.repository)
@@ -354,7 +370,6 @@ struct LeftPane: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
                 .padding(.top, 2)
             }
         }
@@ -460,10 +475,18 @@ struct LeftPane: View {
     /// The issues assigned to you, Open or Closed.
     private var runwayTab: some View {
         VStack(alignment: .leading, spacing: 0) {
-            runwayIssueTabs
+            // ⌘F opens a search under the tabs, as in v2: it narrows both
+            // lanes to the flights whose number or title match.
+            VStack(spacing: 8) {
+                runwayIssueTabs
+                if issueSearchVisible {
+                    searchField(placeholder: "Search flights", text: $issueSearchQuery, tab: .runway)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
 
             if assignedIssues.loading && !assignedIssues.hasSnapshot {
                 ProgressView()
@@ -474,7 +497,7 @@ struct LeftPane: View {
             } else {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
-                        issueList(assignedIssues.open, lane: .open)
+                        issueList(filteredOpenIssues, lane: .open)
                             .onChange(of: assignedIssues.open.first?.number, initial: true) {
                                 // Next turn, not this one: choosing a flight
                                 // writes to the workspace, and writing to
@@ -483,7 +506,7 @@ struct LeftPane: View {
                                 Task { @MainActor in flyTheFirstFlight() }
                             }
                             .frame(width: geo.size.width)
-                        issueList(assignedIssues.closed, lane: .closed)
+                        issueList(filteredClosedIssues, lane: .closed)
                             .frame(width: geo.size.width)
                     }
                     .offset(x: ws.runwayIssueTab == .open ? 0 : -geo.size.width)
@@ -497,6 +520,30 @@ struct LeftPane: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: issueSearchQuery) { _, _ in followSearchToMatches() }
+    }
+
+    private var filteredOpenIssues: [AssignedIssue] { filteredIssues(assignedIssues.open) }
+    private var filteredClosedIssues: [AssignedIssue] { filteredIssues(assignedIssues.closed) }
+
+    private func filteredIssues(_ issues: [AssignedIssue]) -> [AssignedIssue] {
+        let query = issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard issueSearchVisible, !query.isEmpty else { return issues }
+        return issues.filter {
+            AssignedIssue.matchesSearchQuery(query, issue: $0, repositoryName: issueRepositoryName)
+        }
+    }
+
+    /// When nothing matches in the lane on screen but the other lane has a
+    /// match, slide over to it, the way v2 did.
+    private func followSearchToMatches() {
+        guard issueSearchVisible else { return }
+        let here = ws.runwayIssueTab == .open ? filteredOpenIssues : filteredClosedIssues
+        let there = ws.runwayIssueTab == .open ? filteredClosedIssues : filteredOpenIssues
+        guard here.isEmpty, !there.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            ws.runwayIssueTab = ws.runwayIssueTab == .open ? .closed : .open
+        }
     }
 
     private var runwayIssueTabs: some View {
@@ -507,7 +554,7 @@ struct LeftPane: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text(tab.rawValue)
-                        Text(verbatim: "\(tab == .open ? assignedIssues.open.count : assignedIssues.closed.count)")
+                        Text(verbatim: "\(tab == .open ? filteredOpenIssues.count : filteredClosedIssues.count)")
                             .foregroundStyle(Color.white.opacity(0.35))
                     }
                     .font(.system(size: 10.5, weight: ws.runwayIssueTab == tab ? .semibold : .medium))
@@ -526,7 +573,6 @@ struct LeftPane: View {
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
             }
         }
         .frame(maxWidth: .infinity)
@@ -555,6 +601,36 @@ struct LeftPane: View {
         .accessibilityLabel("End of pinned flights")
     }
 
+    /// Whether the pilot, the copilot or any open crew of this flight is
+    /// stopped on a question for you.
+    /// Not for the flight on screen, and not for a question you already saw
+    /// by opening the flight.
+    private func needsYou(_ flight: AssignedIssue) -> Bool {
+        guard !flight.isClosed, ws.flightNumber != flight.number else { return false }
+        return seats(of: flight).contains {
+            ws.agentStates[$0] == .needsAction && !ws.seenAsks.contains($0)
+        }
+    }
+
+    private func seats(of flight: AssignedIssue) -> [UUID] {
+        guard let board = assignedIssues.repository else { return [] }
+        var seats = [AgentRank.pilot, .copilot].map {
+            FlightCrewSessions.boxID(rank: $0, repository: board, issue: flight.number)
+        }
+        for leg in flight.legs where !leg.isClosed {
+            seats.append(FlightCrewSessions.boxID(rank: .crew, repository: leg.repository ?? board, issue: leg.number))
+        }
+        return seats
+    }
+
+    /// Opening a flight, and leaving it, counts as having seen what its
+    /// seats were asking.
+    private func markSeen(_ numbers: [Int?]) {
+        for number in numbers.compactMap({ $0 }) {
+            if let flight = assignedIssues.issue(number) { ws.markSeen(seats(of: flight)) }
+        }
+    }
+
     private func issueCard(
         _ issue: AssignedIssue,
         lane: RunwayIssueTab,
@@ -567,7 +643,8 @@ struct LeftPane: View {
             isFlying: ws.flightNumber == issue.number,
             onSetClosed: { closed in
                 Task { await assignedIssues.setClosed(closed, issue: issue.number) }
-            }
+            },
+            needsYou: needsYou(issue)
         )
         .opacity(flightDrag.issue == issue.number ? 0 : 1)
         // No fade. The card in the list appears the moment the floating one
@@ -653,6 +730,10 @@ struct LeftPane: View {
                 flightDrag.reportSpace(frame, lane: lane.rawValue)
             }
             .padding(.horizontal, 16)
+            // Room above the first card for its waiting-on-you dot, which
+            // sits half off the card's corner and was cut by the list's top
+            // edge. Taken back from the gap under the tabs.
+            .padding(.top, 4)
             .padding(.bottom, 16)
             .scrollAnchor(lane == .open ? openIssueScrollAnchor : closedIssueScrollAnchor)
         }
@@ -841,7 +922,6 @@ struct LeftPane: View {
                         .contentShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
             }
         }
         .padding(2)
@@ -927,7 +1007,6 @@ struct LeftPane: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .pointerCursor()
 
             if expanded {
                 Rectangle()
@@ -938,7 +1017,8 @@ struct LeftPane: View {
                 PullRequestList(
                     pullRequests: developer.pullRequests,
                     scope: developer.login.lowercased(),
-                    owner: branchOwner
+                    owner: branchOwner,
+                    onOwner: flyBranchOwner
                 )
                 .padding(11)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -984,7 +1064,9 @@ struct LeftPane: View {
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
             case .runway:
-                return
+                issueSearchVisible.toggle()
+                willShow = issueSearchVisible
+                if !willShow { issueSearchQuery = "" }
             case .feeds:
                 feedSearchVisible.toggle()
                 willShow = feedSearchVisible
@@ -1008,7 +1090,8 @@ struct LeftPane: View {
     private func emptySearchIsOpen(for tab: FeedTab) -> Bool {
         switch tab {
         case .runway:
-            return false
+            return issueSearchVisible
+                && issueSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .feeds:
             return feedSearchVisible
                 && feedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1038,7 +1121,8 @@ struct LeftPane: View {
         withAnimation(.easeInOut(duration: 0.16)) {
             switch tab {
             case .runway:
-                return
+                issueSearchVisible = false
+                issueSearchQuery = ""
             case .feeds:
                 feedSearchVisible = false
                 feedSearchQuery = ""
@@ -1262,7 +1346,6 @@ struct LeftPane: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .pointerCursor()
     }
 
     private func placeholderCard(icon: String, title: String, subtitle: String) -> some View {
@@ -1310,7 +1393,6 @@ struct LeftPane: View {
                         .contentShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
             }
         }
         .fixedSize(horizontal: true, vertical: false)

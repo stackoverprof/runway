@@ -73,17 +73,41 @@ final class FlightDozer {
             let pinned = FlightBoard.shared.isPinned(flight.number, in: board)
             guard now.timeIntervalSince(quietSince) > Self.limit(pinned: pinned) else { continue }
 
-            PilotDeck.shared.standDown(board, flight.number, title: flight.title)
-            for seat in live {
-                if let leg = seat.crew {
-                    CrewDeck.shared.standDown(leg.repository ?? board, leg.number, title: leg.title)
-                }
-                Hangar.shared.evict(seat.id)
-                pool.release(seat.id)
-                lastBusy.removeValue(forKey: seat.id)
-            }
-            dozing.insert(flight.number)
+            stopSeats(of: flight, board: board, live: live)
             NSLog("Runway: flight #\(flight.number) idle, its \(live.count) session(s) stopped")
         }
+    }
+
+    /// Stop a flight now, by hand (Settings > Monitor), exactly as going
+    /// quiet would: stood down on both decks, sessions let go, conversations
+    /// kept. Opening the flight brings its pilot back.
+    func stopNow(_ flight: AssignedIssue, board: String) {
+        let pool = TerminalSessionPool.shared
+        var seats: [(id: UUID, crew: IssueLeg?)] = [.pilot, .copilot].map { rank in
+            (FlightCrewSessions.boxID(rank: rank, repository: board, issue: flight.number), nil)
+        }
+        for leg in flight.legs {
+            seats.append((FlightCrewSessions.boxID(rank: .crew, repository: leg.repository ?? board, issue: leg.number), leg))
+        }
+        stopSeats(of: flight, board: board, live: seats.filter { pool.isLive($0.id) })
+        // And what those seats started that would outlive them: a server
+        // left running, a loop, a watcher. Shared things (the emulator, a
+        // simulator, adb) stay up for the other flights.
+        ResourceMonitor.cleanUp(seats: Set(seats.map(\.id.uuidString)))
+        NSLog("Runway: flight #\(flight.number) stopped by hand")
+    }
+
+    private func stopSeats(of flight: AssignedIssue, board: String, live: [(id: UUID, crew: IssueLeg?)]) {
+        let pool = TerminalSessionPool.shared
+        PilotDeck.shared.standDown(board, flight.number, title: flight.title)
+        for seat in live {
+            if let leg = seat.crew {
+                CrewDeck.shared.standDown(leg.repository ?? board, leg.number, title: leg.title)
+            }
+            Hangar.shared.evict(seat.id)
+            pool.release(seat.id)
+            lastBusy.removeValue(forKey: seat.id)
+        }
+        dozing.insert(flight.number)
     }
 }

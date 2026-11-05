@@ -39,7 +39,6 @@ struct RunwaySearchField: View {
                         .foregroundStyle(Color.white.opacity(0.28))
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
                 .help("Clear search")
             }
         }

@@ -60,7 +60,6 @@ struct RepoPicker: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .pointerCursor()
                             .id(r.path)
                         }
                         if filtered.isEmpty {

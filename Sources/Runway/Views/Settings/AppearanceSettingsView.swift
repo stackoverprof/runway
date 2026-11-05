@@ -19,7 +19,6 @@ struct AppearanceSettings: View {
                     Text("Image").tag("image")
                 }
                 .pickerStyle(.segmented)
-                .pointerCursor()
 
                 if brandHeaderStyle == "text" {
                     TextField("Title", text: $brandTitle)
@@ -28,14 +27,12 @@ struct AppearanceSettings: View {
                         Button(brandLogoFilename.isEmpty ? "Choose Logo…" : "Change Logo…") {
                             chooseLogo()
                         }
-                        .pointerCursor()
                         if !brandLogoFilename.isEmpty {
                             Button("Remove Logo", role: .destructive) {
                                 BrandingManager.removeLogo(named: brandLogoFilename)
                                 brandLogoFilename = ""
                                 brandingError = nil
                             }
-                            .pointerCursor()
                         }
                     }
                 }
@@ -55,7 +52,6 @@ struct AppearanceSettings: View {
                         brandHeaderStyle = "text"
                         brandingError = nil
                     }
-                    .pointerCursor()
                 }
 
                 Text("Replaces the Activity title in the left pane with custom text or any image format macOS can open, including SVG, PNG, and JPEG.")

@@ -80,7 +80,6 @@ struct PeopleSettings: View {
                 ? Color.accentColor.opacity(0.16)
                 : Color.clear
         )
-        .pointerCursor()
     }
 
     private func editProfilePanel(for login: String, profile: PersonProfile) -> some View {
@@ -105,7 +104,6 @@ struct PeopleSettings: View {
                         }
                     }
                     .font(.system(size: 11))
-                    .pointerCursor()
                     if profile.imageData != nil {
                         Button("Remove Image", role: .destructive) {
                             var updated = profile
@@ -113,7 +111,6 @@ struct PeopleSettings: View {
                             updateProfile(updated)
                         }
                         .font(.system(size: 11))
-                        .pointerCursor()
                     }
                 }
             }
@@ -155,7 +152,6 @@ struct PeopleSettings: View {
                     profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         && profile.fullNameOverride == nil
                 )
-                .pointerCursor()
             }
         }
         .padding()

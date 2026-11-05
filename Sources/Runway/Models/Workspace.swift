@@ -141,6 +141,15 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
     var quickTabStates: [String: AgentState] = [:]
     /// What every agent Runway started is doing, by its seat.
     var agentStates: [UUID: AgentState] = [:]
+    /// Seats whose question you have already seen, by opening their flight.
+    /// A seat drops out of here once it stops waiting, so its next question
+    /// lights the card's dot again.
+    private(set) var seenAsks: Set<UUID> = []
+
+    func markSeen(_ seats: [UUID]) {
+        let waiting = seats.filter { agentStates[$0] == .needsAction && !seenAsks.contains($0) }
+        if !waiting.isEmpty { seenAsks.formUnion(waiting) }
+    }
     private(set) var quickTabRequest: QuickTerminalTabRequest?
     /// Set by the panel so the rest of the app can hand it the keyboard.
     @ObservationIgnored var focusQuick: (() -> Void)?
@@ -154,8 +163,16 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         quickVisible && quickHasKeyboard?() == true
     }
 
+    /// Bumped whenever a terminal takes the keyboard. `focusedID` is kept
+    /// out of observation so a focus change does not re-render every view
+    /// that reads it, which also meant nothing could watch it: the ATC
+    /// panel's auto-hide waited on it and never fired. This is the one
+    /// observed signal, read only by the panel.
+    private(set) var focusChangeID = 0
+
     func setFocus(_ id: UUID?) {
         focusedID = id
+        focusChangeID &+= 1
     }
 
     func toggleQuick() {
@@ -364,6 +381,8 @@ enum PRTimeframe: String, CaseIterable, Identifiable {
         }
         noteSeatWork(states)
         if states != agentStates { agentStates = states }
+        let stillWaiting = seenAsks.filter { states[$0] == .needsAction }
+        if stillWaiting != seenAsks { seenAsks = stillWaiting }
     }
 
     /// When each seat started working, so the moment it goes quiet can say

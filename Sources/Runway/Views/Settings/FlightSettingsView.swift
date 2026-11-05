@@ -5,8 +5,6 @@ import SwiftUI
 struct FlightSettings: View {
     @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 30
     @AppStorage(FlightDozer.otherKey) private var idleOther = 15
-    @AppStorage(SettingsKey.seatsKeptAlive) private var seatsKeptAlive = 12
-    @AppStorage(SettingsKey.pilotTerminalPadding) private var pilotTerminalPadding = 9
     @AppStorage(SettingsKey.walkthroughRoot) private var walkthroughRoot = ""
     @AppStorage(SettingsKey.walkthroughSlides) private var walkthroughSlides = 3
     @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence)
@@ -35,8 +33,8 @@ struct FlightSettings: View {
             }
 
             Section("Seats") {
-                Stepper("Stop a quiet pinned flight after \(idlePinned) minutes", value: $idlePinned, in: 5...480, step: 5)
-                Stepper("Stop any other quiet flight after \(idleOther) minutes", value: $idleOther, in: 5...480, step: 5)
+                MinutesField(label: "Stop a quiet pinned flight after", minutes: $idlePinned)
+                MinutesField(label: "Stop any other quiet flight after", minutes: $idleOther)
                 Text(
                     "When a flight's pilot, copilot and every crew have all been idle "
                     + "this long, and nobody has typed into them, their Claude sessions "
@@ -45,20 +43,6 @@ struct FlightSettings: View {
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-
-                Stepper("Keep at most \(seatsKeptAlive) seats alive", value: $seatsKeptAlive, in: 2...40)
-                Text("A soft cap. A busy agent is kept even when the pool is over it.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                Stepper(
-                    "Pilot terminal padding: \(pilotTerminalPadding)pt",
-                    value: $pilotTerminalPadding,
-                    in: 0...24
-                )
-                Text("Room around the pilot's and copilot's terminals. Crews and the ATC panel keep their own tighter fit.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
             }
 
             Section("Evidence") {
@@ -106,5 +90,37 @@ struct FlightSettings: View {
         panel.prompt = "Use folder"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         walkthroughRoot = url.path
+    }
+}
+
+/// A number of minutes you can type straight in, with the stepper beside it
+/// for nudging by five.
+private struct MinutesField: View {
+    let label: String
+    @Binding var minutes: Int
+    private static let range = 1...480
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+            Spacer()
+            TextField("", value: clamped, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 52)
+                .labelsHidden()
+            Text("minutes")
+                .foregroundStyle(.secondary)
+            Stepper("", value: clamped, in: Self.range, step: 5)
+                .labelsHidden()
+        }
+    }
+
+    /// Whatever is typed, held inside the range.
+    private var clamped: Binding<Int> {
+        Binding(
+            get: { minutes },
+            set: { minutes = min(max($0, Self.range.lowerBound), Self.range.upperBound) }
+        )
     }
 }

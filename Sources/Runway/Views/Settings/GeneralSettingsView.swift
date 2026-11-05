@@ -10,42 +10,24 @@ struct GeneralSettings: View {
     @State private var cacheCleared = false
     @State private var restartingSessions = false
     @State private var restartMessage: String?
-    @State private var fullscreenMessage: String?
 
     var body: some View {
         Form {
             Section("Startup") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
-                    .pointerCursor()
                     .onChange(of: launchAtLogin) { _, on in
                         try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
                     }
                 Toggle("Confirm before quitting", isOn: $confirmQuit)
-                    .pointerCursor()
             }
 
             Section("Agents") {
-                Button("Set idle sessions to fullscreen") {
-                    let result = AgentSessionRestarter.setAllIdleSessionsToFullscreen()
-                    fullscreenMessage = "Sent to \(result.sent); skipped \(result.busy) busy, \(result.promptOccupied) with prompt text, \(result.untracked) untracked."
-                }
-                .pointerCursor()
-                if let fullscreenMessage {
-                    Text(fullscreenMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Only idle Claude sessions with an empty prompt receive `/tui fullscreen`.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
                 Picker("Claude model", selection: $agentModel) {
                     Text("Claude default").tag("")
                     Text("Sonnet").tag("sonnet")
                     Text("Opus").tag("opus")
                     Text("Haiku").tag("haiku")
                 }
-                .pointerCursor()
 
                 Button(restartButtonTitle) {
                     restartingSessions = true
@@ -57,7 +39,6 @@ struct GeneralSettings: View {
                     }
                 }
                 .disabled(restartingSessions)
-                .pointerCursor()
                 if restartingSessions {
                     Text("Stopping and resuming the open Claude sessions…")
                         .font(.caption)
@@ -78,7 +59,6 @@ struct GeneralSettings: View {
                         GitHubFeed.clearCache()
                         cacheCleared = true
                     }
-                    .pointerCursor()
                     if cacheCleared {
                         Text("Cleared").font(.caption).foregroundStyle(.secondary)
                     }

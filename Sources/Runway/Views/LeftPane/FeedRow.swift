@@ -88,7 +88,6 @@ struct FeedRow: View {
             .onHover { h in
                 hovering = h
             }
-            .pointerCursor(link != nil)
             .onTapGesture { if let link { NSWorkspace.shared.open(link) } }
             .padding(.bottom, 10)
         }

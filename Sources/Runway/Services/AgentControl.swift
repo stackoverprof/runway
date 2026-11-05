@@ -78,10 +78,8 @@ enum AgentControl {
     }
 
     /// Dropped images are scratch: an agent reads one right after the drop and
-    /// never again. The retention window is a setting, and can be turned off
-    /// entirely, in which case nothing is pruned.
-    static func pruneDrops(olderThan age: TimeInterval? = SettingsKey.dropRetention()) {
-        guard let age else { return }
+    /// never again. They are kept a week, then pruned.
+    static func pruneDrops(olderThan age: TimeInterval = 7 * 86_400) {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dropsDir,
             includingPropertiesForKeys: [.contentModificationDateKey]

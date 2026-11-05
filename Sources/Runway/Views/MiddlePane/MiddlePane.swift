@@ -11,10 +11,16 @@ struct MiddlePane: View {
     @State private var pullRequests = PullRequests.shared
     /// The step copied a moment ago, so its card can flash.
     @State private var copiedStep: String?
-    @AppStorage(SettingsKey.pilotTerminalPadding) private var pilotPadding = 9
+    /// Room around the pilot's and copilot's terminals. Crews and the ATC
+    /// panel keep their own tighter fit.
+    private let pilotPadding = 9
     /// Whether the pointer is on the close button, which is the only time it
     /// shows its colour.
     @State private var crewTab: PilotSeat = .pilot
+    /// Flights whose copilot you have clicked. A copilot's Claude session
+    /// starts only then: it is rarely used, and starting one beside every
+    /// pilot doubled the sessions for nothing.
+    @State private var copilotsCalled: Set<Int> = []
     /// How much of the pane the terminal takes, as a fraction. Remembered,
     /// because where you set the split is a preference, not a session.
     @AppStorage(SettingsKey.terminalShare) private var storedShare = 0.52
@@ -104,6 +110,12 @@ struct MiddlePane: View {
             await pullRequests.revalidate(repository: repository, minimumAge: 60)
         }
         .onChange(of: ws.flightNumber) { previous, number in
+            // Landing on a flight whose copilot was never called shows its
+            // pilot, so switching flights never starts a copilot by itself.
+            if crewTab == .copilot, let number, let repository = issues.repository,
+               !seatsToMount(number, repository: repository).contains(.copilot) {
+                crewTab = .pilot
+            }
             keepMounted(number)
             noteLeft(previous)
             noteOpened(number)
@@ -182,9 +194,13 @@ struct MiddlePane: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 8)
                 Text(flightStatus.label)
-                    .font(.mono(8.5))
-                    .tracking(1.6)
+                    .font(.mono(8, .semibold))
+                    .tracking(1.4)
                     .foregroundStyle(statusInk)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(statusInk.opacity(0.14)))
+                    .overlay(Capsule().stroke(statusInk.opacity(0.28), lineWidth: 1))
                     .fixedSize()
             }
 
@@ -256,7 +272,7 @@ struct MiddlePane: View {
     }
 
     /// The flight as a route: one segment a transit, filling teal as each
-    /// lands, a ring at the gate, and the count at the end.
+    /// lands, with how far along it is as a percentage at the end.
     ///
     /// A step of the checklist is a transit, everywhere it is named: not a
     /// leg, not a stop, not a mile. One word for one thing.
@@ -289,16 +305,15 @@ struct MiddlePane: View {
                 if flown >= steps.count { plane }
             }
 
-            Circle()
-                .strokeBorder(landed ? trail : Board.faint, lineWidth: 1.5)
-                .background(Circle().fill(landed ? trail : Color.clear))
-                .frame(width: 7, height: 7)
-
-            Text(verbatim: steps.isEmpty ? "NO TRANSITS" : "\(flown)/\(steps.count) TRANSITS")
-                .font(.mono(8))
-                .tracking(1.4)
-                .foregroundStyle(Board.dim)
-                .fixedSize()
+            // How far along, as a plain share of the transits flown. Just
+            // the number: the route beside it says what it counts.
+            if !steps.isEmpty {
+                Text(verbatim: "\(Int((Double(flown) / Double(steps.count) * 100).rounded()))%")
+                    .font(.mono(8.5))
+                    .tracking(1)
+                    .foregroundStyle(Board.dim)
+                    .fixedSize()
+            }
         }
     }
 
@@ -317,6 +332,9 @@ struct MiddlePane: View {
                     active: crewTab == seat,
                     dot: seatColour(seat)
                 ) {
+                    if seat == .copilot, let number = ws.flightNumber {
+                        copilotsCalled.insert(number)
+                    }
                     withAnimation(.easeInOut(duration: 0.15)) { crewTab = seat }
                 }
             }
@@ -380,7 +398,7 @@ struct MiddlePane: View {
                 ForEach(mounted, id: \.self) { number in
                     if let seen = issues.issue(number) {
                         let showing = number == ws.flightNumber
-                        ForEach(PilotSeat.allCases) { seat in
+                        ForEach(seatsToMount(number, repository: repository)) { seat in
                             seatTerminal(
                                 seat,
                                 flight: seen,
@@ -415,6 +433,14 @@ struct MiddlePane: View {
                 .padding(.horizontal, 12)
         }
         }
+    }
+
+    /// The pilot always; the copilot once you have clicked it on this
+    /// flight, or when its session is already running from before.
+    private func seatsToMount(_ number: Int, repository: String) -> [PilotSeat] {
+        let copilot = FlightCrewSessions.boxID(rank: .copilot, repository: repository, issue: number)
+        let called = copilotsCalled.contains(number) || TerminalSessionPool.shared.isLive(copilot)
+        return called ? PilotSeat.allCases : [.pilot]
     }
 
     /// When the flight on screen was opened, so leaving it can say how long
@@ -1144,7 +1170,6 @@ struct MiddlePane: View {
                                     NSWorkspace.shared.open(crew.url)
                                 }
                             }
-                            .pointerCursor()
                         Spacer(minLength: 8)
                         BoardAction(title: "Open folder") {
                             NSWorkspace.shared.open(set.slides[0].deletingLastPathComponent())
@@ -1170,7 +1195,6 @@ struct MiddlePane: View {
                             }
                             .contentShape(Rectangle())
                             .onTapGesture { NSWorkspace.shared.open(slide) }
-                            .pointerCursor()
                             .help(slide.lastPathComponent)
                         }
                     }
@@ -1243,7 +1267,6 @@ struct MiddlePane: View {
                             .onTapGesture {
                                 if let link = entry.link { NSWorkspace.shared.open(link) }
                             }
-                            .pointerCursor()
                         MarkdownText(text: entry.said, tint: Board.teal)
                             .font(.mono(9.5))
                             .foregroundStyle(Board.text)

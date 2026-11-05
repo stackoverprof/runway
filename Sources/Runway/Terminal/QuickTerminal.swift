@@ -337,7 +337,6 @@ struct QuickTerminal: View {
                     .shadow(color: Color(red: 0.45, green: 0.82, blue: 0.78).opacity(0.8), radius: 6)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .pointerCursor()
                     .onTapGesture {
                         ws.quickVisible = true
                     }
@@ -424,7 +423,7 @@ struct QuickTerminal: View {
                 focusActiveTab()
             }
         }
-        .onChange(of: ws.focusedID) { _, _ in
+        .onChange(of: ws.focusChangeID) { _, _ in
             if !isHovered {
                 triggerAutoHide()
             }
@@ -523,7 +522,6 @@ struct QuickTerminal: View {
                                     .contentShape(RoundedRectangle(cornerRadius: 5))
                             }
                             .buttonStyle(.plain)
-                            .pointerCursor()
                             .help("Controller \(index + 1)")
                         }
                     }
@@ -542,7 +540,6 @@ struct QuickTerminal: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
                 .help("New controller")
             }
 
@@ -556,7 +553,6 @@ struct QuickTerminal: View {
                         .foregroundStyle(ws.quickPinned ? Color(red: 0.45, green: 0.82, blue: 0.78) : Color.white.opacity(0.4))
                 }
                 .buttonStyle(.plain)
-                .pointerCursor()
                 .help(ws.quickPinned ? "Unpin to auto-hide" : "Pin to stay open")
             }
         }
@@ -689,12 +685,26 @@ struct QuickTerminal: View {
         let delay = SettingsKey.quickAutoHideDelay()
         hideTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            guard !isHovered else { return }
-            guard !isFocused else { return }
-            guard !ws.quickPinned else { return }
-            
-            ws.quickVisible = false
+            // Still holding the keyboard: keep checking, and hide once it
+            // has let go for the full delay. Leaving the panel with the
+            // pointer while it was focused used to give up here for good,
+            // so clicking anywhere that is not a terminal never hid it.
+            var unfocusedSince: Date?
+            while !Task.isCancelled, ws.quickVisible {
+                guard !isHovered, !ws.quickPinned else { return }
+                if isFocused {
+                    unfocusedSince = nil
+                } else {
+                    let since = unfocusedSince ?? Date().addingTimeInterval(-delay)
+                    unfocusedSince = since
+                    if Date().timeIntervalSince(since) >= delay { break }
+                }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+            guard !Task.isCancelled, ws.quickVisible else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                ws.quickVisible = false
+            }
         }
     }
 }

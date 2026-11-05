@@ -16,7 +16,6 @@ enum SettingsKey {
     static let quickTerminalDirectory = "runway.quickTerminalDirectory"
     static let quickAutoHide = "runway.quickAutoHide"
     static let quickAutoHideSeconds = "runway.quickAutoHideSeconds"
-    static let dropRetentionDays = "runway.dropRetentionDays"
     static let personProfiles = "runway.personProfiles"
     static let brandHeaderStyle = "runway.brandHeaderStyle"
     static let brandTitle = "runway.brandTitle"
@@ -34,8 +33,6 @@ enum SettingsKey {
     static let walkthroughSlides = "runway.walkthroughSlides"
     static let askBeforeLandingWithoutEvidence = "runway.askBeforeLandingWithoutEvidence"
     static let seatIdleMinutes = "runway.seatIdleMinutes"
-    static let seatsKeptAlive = "runway.seatsKeptAlive"
-    static let pilotTerminalPadding = "runway.pilotTerminalPadding"
     /// How much of the pilot pane the terminal takes, as a fraction. Set by
     /// dragging the handle, remembered across launches.
     static let terminalShare = "runway.terminalShare"
@@ -60,15 +57,6 @@ enum SettingsKey {
         defaults.object(forKey: quickAutoHide) == nil
             ? true
             : defaults.bool(forKey: quickAutoHide)
-    }
-
-    /// How long a dropped image is kept before Runway prunes it. Zero days
-    /// means keep them.
-    static func dropRetention(in defaults: UserDefaults = .standard) -> TimeInterval? {
-        guard defaults.object(forKey: dropRetentionDays) != nil else { return 7 * 86_400 }
-        let days = defaults.integer(forKey: dropRetentionDays)
-        guard days > 0 else { return nil }
-        return TimeInterval(min(days, 365)) * 86_400
     }
 
     // Readers for the settings that shape behaviour elsewhere. Each takes the
@@ -105,7 +93,6 @@ enum SettingsKey {
             quickTerminalDirectory: "",
             quickAutoHide: true,
             quickAutoHideSeconds: 3,
-            dropRetentionDays: 7,
             personProfiles: [],
             brandHeaderStyle: "text",
             brandTitle: "Runway",
@@ -119,8 +106,6 @@ enum SettingsKey {
             walkthroughSlides: 3,
             askBeforeLandingWithoutEvidence: true,
             seatIdleMinutes: 15,
-            seatsKeptAlive: 12,
-            pilotTerminalPadding: 9,
         ])
 
     }
@@ -150,7 +135,9 @@ struct SettingsView: View {
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
             PeopleSettings()
                 .tabItem { Label("People", systemImage: "person.2.fill") }
+            MonitorSettings()
+                .tabItem { Label("Monitor", systemImage: "gauge.with.dots.needle.33percent") }
         }
-        .frame(width: 540, height: 500)
+        .frame(width: 600, height: 520)
     }
 }
