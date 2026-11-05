@@ -335,8 +335,8 @@ struct FlapTile: View {
 }
 
 /// One seat in the pilot/copilot switch: a dot, a word, and a pill when it
-/// is the one you are reading. No outer box, so the pair sits on the
-/// terminal rather than in a control.
+/// is the one you are reading. The pair sits in a solid box, like the left
+/// pane's tab switch.
 struct SeatButton: View {
     let title: String
     let active: Bool
@@ -345,20 +345,20 @@ struct SeatButton: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 7) {
-            Circle().fill(dot).frame(width: 6, height: 6)
+        HStack(spacing: 5) {
+            Circle().fill(dot).frame(width: 4.5, height: 4.5)
             Text(title.uppercased())
-                .font(.mono(8.5, active ? .semibold : .regular))
-                .tracking(1.5)
+                .font(.mono(7, active ? .semibold : .regular))
+                .tracking(1.2)
         }
         .foregroundStyle(active ? Board.ink : (hovering ? Board.muted : Board.dim))
-        .padding(.horizontal, 11)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(active ? Color(red: 0.090, green: 0.094, blue: 0.102) : .clear)
+            RoundedRectangle(cornerRadius: 3.5)
+                .fill(active ? Color(white: 0.17) : .clear)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 3.5))
         .onHover { hovering = $0 }
         .onTapGesture(perform: action)
         .pointerCursor()

@@ -304,11 +304,13 @@ struct MiddlePane: View {
 
     // MARK: Pilot and copilot
 
-    /// Pilot or copilot, as two plain options rather than a boxed control.
-    /// A dot before each says what that seat is doing; the one you are
-    /// reading wears a pill.
+    /// Pilot or copilot. A dot before each says what that seat is doing;
+    /// the one you are reading wears a pill.
     private var seatStrip: some View {
-        HStack(spacing: 4) {
+        // Contained like the left pane's Runway / Feeds / Pulls switch, in
+        // solid colours so the terminal never shows through, and no fade
+        // behind it.
+        HStack(spacing: 0) {
             ForEach(PilotSeat.allCases) { seat in
                 SeatButton(
                     title: seat.rawValue,
@@ -319,35 +321,11 @@ struct MiddlePane: View {
                 }
             }
         }
-        .padding(.leading, 190)
-        .padding(.trailing, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 20)
-        // A patch of black around the buttons, not a band across the top: it
-        // fades away downwards and leftwards into whatever the agent printed.
-        .background(
-            LinearGradient(
-                colors: [Color.black, Color.black, Color.black.opacity(0)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .mask(
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0),
-                        Color.black.opacity(0.55),
-                        Color.black,
-                        Color.black,
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            // The fade takes no clicks and no drops of its own: it covers a
-            // wide strip of the terminal, and a file dropped on that strip
-            // has to reach the terminal underneath.
-            .allowsHitTesting(false)
-        )
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color(white: 0.075)))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(white: 0.14), lineWidth: 1))
+        // The same gap above as to the right.
+        .padding([.top, .trailing], 8)
     }
 
     @ViewBuilder
@@ -606,22 +584,20 @@ struct MiddlePane: View {
     @ViewBuilder
     private var sectionBody: some View {
         BoardBox {
+          VStack(spacing: 0) {
+            // The transit board's column heads sit above the scroll view,
+            // not pinned inside it. Pinned in a lazy stack they were laid
+            // over the first row instead of above it whenever the stack
+            // came up with a stale offset, and 01 went missing under them
+            // again and again. Outside the scroll view nothing can slide
+            // under them.
+            if ws.flightSection == .issue,
+               !IssueBody.steps("Progress", in: flight?.body ?? "").isEmpty {
+                BoardColumns(names: ["No", "Transit", "Status"], widths: [34, nil, 92])
+            }
             ScrollViewReader { scroll in
-                ScrollView {
-                    // Lazy only for its pinned headers: the transit board's
-                    // column heads stick to the top while its rows scroll
-                    // under them, and leave with the last row, so Remarks
-                    // scrolls up clear of them.
-                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        // An anchor at the very top, so switching face starts
-                        // you at the top of the new one rather than halfway
-                        // down it. Outside the spaced stack, or its spacing
-                        // becomes a gap above the first board.
-                        // One point tall, not zero: a zero-height view is
-                        // sometimes skipped by scrollTo, which left the pane
-                        // where the last flight had it, first row under the
-                        // column heads.
-                        Color.clear.frame(height: 1).id(Self.paneTop).padding(.bottom, -1)
+            ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
                         if ws.flightSection == .issue {
                             issueSection
                         } else {
@@ -646,11 +622,16 @@ struct MiddlePane: View {
                 // column heads; scrolling back to a top marker did not
                 // reliably undo it.
                 .id("\(ws.flightNumber ?? 0)/\(ws.flightSection)")
-                // Open at the transit in play, not at the landed ones above
-                // it: on opening a flight, and whenever the work moves on.
+                // Open at the transit in play, not the landed ones above it:
+                // on opening a flight, and whenever the work moves on. The
+                // column heads sit outside the scroll view now, so a row
+                // scrolled to the top lands right under them, never behind.
                 .onAppear { scrollToBoarding(scroll) }
+                .onChange(of: ws.flightNumber) { scrollToBoarding(scroll) }
+                .onChange(of: ws.flightSection) { scrollToBoarding(scroll) }
                 .onChange(of: firstOpenTransit) { scrollToBoarding(scroll) }
             }
+          }
             // What runs off the bottom fades into the floor rather than
             // being cut off at the strip's edge.
             .mask(
@@ -671,11 +652,6 @@ struct MiddlePane: View {
         .padding(.bottom, 12)
     }
 
-    private static let paneTop = "flight.pane.top"
-
-    /// How tall the pinned column heads are: 7pt type plus 6pt above and below.
-    private static let columnHeadHeight: CGFloat = 23
-
     private static func transitAnchor(_ index: Int) -> String { "flight.transit.\(index)" }
 
     /// The first transit not yet landed, which is where the board opens.
@@ -685,16 +661,15 @@ struct MiddlePane: View {
     }
 
     private func scrollToBoarding(_ scroll: ScrollViewProxy) {
-        guard ws.flightSection == .issue else { return }
-        // After this pass, once the rows for the new flight exist.
-        DispatchQueue.main.async {
-            // The first row needs no scroll: the board already starts there,
-            // and its anchor sits above the content, which scrolled the
-            // board the wrong way.
-            if let first = firstOpenTransit, first > 0 {
-                scroll.scrollTo(Self.transitAnchor(first), anchor: .top)
-            }
-        }
+        guard ws.flightSection == .issue, let first = firstOpenTransit, first > 0 else { return }
+        // After this pass, once the rows for the new flight exist, and
+        // again a beat later: on a switch of pilot the fresh scroll view is
+        // still laying out at the first pass, and a scroll sent then lands
+        // nowhere, leaving the board at its landed rows.
+        let anchor = Self.transitAnchor(first)
+        DispatchQueue.main.async { scroll.scrollTo(anchor, anchor: .top) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { scroll.scrollTo(anchor, anchor: .top) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scroll.scrollTo(anchor, anchor: .top) }
     }
 
     /// The transits as a departures board: a number, the transit, and where
@@ -707,7 +682,7 @@ struct MiddlePane: View {
         let boarding = boardingTransits(steps)
         let cleared = acceptance.filter(\.done).count
         return Group {
-            Section {
+            Group {
             if steps.isEmpty {
                 boardNote("The pilot has not written a checklist for this flight yet.")
             } else {
@@ -718,17 +693,7 @@ struct MiddlePane: View {
                             .opacity(copiedStep == step.text ? 0.45 : 1)
                             .animation(.easeOut(duration: 0.12), value: copiedStep)
                     }
-                    // The scroll target sits a header's height above the row,
-                    // so scrolling to a transit puts it just under the column
-                    // heads, not behind them. Moved with an alignment guide:
-                    // a negative padding left the id on a wrapper still at the
-                    // row's top, which is why the row kept landing underneath.
-                    .background(alignment: .top) {
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.transitAnchor(index))
-                            .alignmentGuide(.top) { $0[.top] + Self.columnHeadHeight }
-                    }
+                    .id(Self.transitAnchor(index))
                     .contextMenu {
                         Button("Copy transit") { copyStep(step, number: index + 1) }
                         if step.needs != nil {
@@ -741,9 +706,6 @@ struct MiddlePane: View {
                     .help("Copy this step")
                 }
             }
-            } header: {
-                BoardColumns(names: ["No", "Transit", "Status"], widths: [34, nil, 92])
-                    .background(.ultraThickMaterial)
             }
 
             // Remarks is part of the same board, under a rule, the way a
