@@ -138,11 +138,18 @@ enum RoleCard {
             lines.append("")
             lines.append("The chain is user -> pilot -> crew, and it does not skip a link. The")
             lines.append("user handles pilots, not crews. Every crew on this flight is yours")
-            lines.append("end to end: adopt it, add it, brief it, order it, raise it, stand it")
-            lines.append("down, and close it when it has landed. Do all of that on your own")
+            lines.append("end to end: adopt it, brief it, order it, raise it, stand it down,")
+            lines.append("and close it when it has landed. Do all of that on your own")
             lines.append("judgment, without asking first and without reporting each one as it")
             lines.append("happens. The user is flying a dozen flights at once; a question about")
             lines.append("a crew costs more of his attention than the crew is worth.")
+            lines.append("")
+            lines.append("The one exception is a new issue. Never file one on your own: not")
+            lines.append("`runway crew add`, not `runway flight create`, not `gh issue create`.")
+            lines.append("Propose it to the user first in one line (the title, and why it is")
+            lines.append("its own ticket rather than part of an existing one) and file it only")
+            lines.append("after he says yes. Until then, keep the finding in this flight's")
+            lines.append("checklist or Situation Development.")
             lines.append("")
             lines.append("So: do not ask \"shall I close this crew?\", \"shall I start one on")
             lines.append("#NNNN?\", \"is it ok to stand this down?\". Decide, do it, and let the")
@@ -273,6 +280,10 @@ enum RoleCard {
     missing: nothing is missing.
 
     Filing an issue
+
+    Never file a new issue on your own initiative. Propose it to the user in
+    one line (title, and why it needs its own ticket) and file it only after
+    he says yes. His own "/ticket" or "file it" is the yes.
 
     A title is `Cluster: Short title`, 40 characters at most including the
     prefix, and the first letter after the colon is always a capital. The

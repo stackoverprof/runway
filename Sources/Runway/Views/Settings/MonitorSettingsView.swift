@@ -13,6 +13,7 @@ struct MonitorSettings: View {
     @State private var stopping: Int?
     /// The leftover waiting on a yes before it is quit.
     @State private var quitting: ResourceMonitor.Leftover?
+    @State private var stoppingATC: String?
 
     private var snapshot: ResourceMonitor.Snapshot { monitor.snapshot }
 
@@ -121,7 +122,14 @@ struct MonitorSettings: View {
                         DisclosureGroup {
                             processRows(seat)
                         } label: {
-                            figuresRow(seat.rank == .atc ? "ATC panel" : seat.name, seat.usage, strong: true)
+                            HStack(spacing: 8) {
+                                figuresRow(seat.rank == .atc ? "ATC panel" : seat.name, seat.usage, strong: true)
+                                if seat.rank == .atc {
+                                    Button("Stop") { stoppingATC = seat.id }
+                                        .controlSize(.small)
+                                        .help("Close this controller's session; its tab resumes the conversation")
+                                }
+                            }
                         }
                     }
                 }
@@ -143,6 +151,22 @@ struct MonitorSettings: View {
             Button("Cancel", role: .cancel) { stopping = nil }
         } message: {
             Text("Its pilot, copilot and crews stop now, even mid-turn, along with anything they left running (servers, loops), except shared ones like the emulator. Their conversations are kept: opening the flight brings the pilot back where it left off.")
+        }
+        .confirmationDialog(
+            "Stop this ATC?",
+            isPresented: Binding(get: { stoppingATC != nil }, set: { if !$0 { stoppingATC = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Stop ATC", role: .destructive) {
+                if let id = stoppingATC {
+                    NotificationCenter.default.post(name: QuickTerminal.stopNotification, object: id)
+                    ResourceMonitor.cleanUp(seats: [id])
+                }
+                stoppingATC = nil
+            }
+            Button("Cancel", role: .cancel) { stoppingATC = nil }
+        } message: {
+            Text("Its session stops now, even mid-turn, along with anything it left running. The conversation is kept: selecting its tab brings it back where it left off.")
         }
         .confirmationDialog(
             "Quit \(quitting?.label ?? "it")?",

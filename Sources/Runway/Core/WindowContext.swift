@@ -134,6 +134,8 @@ final class WindowDragNSView: NSView {
         workspace.repositoryFeed = githubFeed
         workspace.startAgentWatch()
         githubFeed.startPolling()
+        // The pinned pilots come up behind the one on screen, one by one.
+        PilotWarmup.shared.runOnce(issues: issues, ws: workspace)
         // Seats raised from a terminal start here, whether or not their
         // flight is on screen.
         Task { @MainActor [weak self, issues] in

@@ -266,13 +266,23 @@ struct AssignedIssueCard: View {
     /// off, and nothing is left to read as a bead.
     private var perforation: some View {
         GeometryReader { geo in
+            // Whole dashes only, centred between the bites: the run starts
+            // and ends on a dash the same distance from each notch, so the
+            // line never stops on a stub of a dash at one end only.
+            let dash: CGFloat = 3, gap: CGFloat = 3
+            let clear = Self.notch + 4
+            let room = max(0, geo.size.height - clear * 2)
+            let count = max(1, Int(((room + gap) / (dash + gap)).rounded(.down)))
+            let run = CGFloat(count) * (dash + gap) - gap
+            let top = (clear + (room - run) / 2).rounded()
+            let x = (geo.size.width - Self.stubWidth).rounded()
             Path { path in
-                let x = geo.size.width - Self.stubWidth
-                let clear = Self.notch + 4
-                path.move(to: CGPoint(x: x, y: clear))
-                path.addLine(to: CGPoint(x: x, y: geo.size.height - clear))
+                for i in 0..<count {
+                    let y = top + CGFloat(i) * (dash + gap)
+                    path.addRect(CGRect(x: x - 0.5, y: y, width: 1, height: dash))
+                }
             }
-            .stroke(Paper.line.opacity(0.9), style: StrokeStyle(lineWidth: 1, dash: [2.5, 3]))
+            .fill(Paper.line.opacity(0.9))
         }
         .allowsHitTesting(false)
     }

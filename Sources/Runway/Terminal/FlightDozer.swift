@@ -35,6 +35,19 @@ final class FlightDozer {
         return TimeInterval(minutes * 60)
     }
 
+    /// Only a seat mid-turn holds its flight awake. One waiting on you has
+    /// finished its turn and sits on its question; counting that as busy
+    /// kept almost every flight up forever, since nearly every seat ends a
+    /// turn waiting. The amber dot stays: the seat's control file keeps its
+    /// state after the session goes.
+    static func isWorking(_ id: UUID) -> Bool {
+        let file = AgentControl.controlDir.appendingPathComponent("\(id.uuidString).json")
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let state = json["state"] as? String else { return false }
+        return AgentState(control: state) == .running
+    }
+
     func wake(_ number: Int) {
         if dozing.contains(number) { dozing.remove(number) }
     }
@@ -60,7 +73,7 @@ final class FlightDozer {
             // First sighting, or busy now: the clock starts from here.
             var quietSince = Date.distantPast
             for seat in live {
-                if lastBusy[seat.id] == nil || TerminalSessionPool.isBusy(seat.id) {
+                if lastBusy[seat.id] == nil || Self.isWorking(seat.id) {
                     lastBusy[seat.id] = now
                 }
                 quietSince = max(quietSince, lastBusy[seat.id] ?? now)

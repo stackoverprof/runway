@@ -27,6 +27,10 @@ struct QuickTerminal: View {
     @State private var dragStartHeight: CGFloat?
     @State private var dragStartPaneWidth: CGFloat?
     @State private var isHovered = false
+    /// Controllers whose question you have already seen, by having their tab
+    /// open on screen. Dropped once a controller stops waiting, so its next
+    /// question lights the dot again.
+    @State private var seenAsks: Set<String> = []
     @State private var hideTask: Task<Void, Never>? = nil
     @State private var allowExpandOnHover = true
     @State private var isPulsing = false
@@ -108,6 +112,42 @@ struct QuickTerminal: View {
         let tab = Self.makeTab(root: root)
         tabs[index] = tab
         applyRunwayTheme(to: tab.session!, boxID: QuickTerminalSession.boxID(root: root))
+    }
+
+    /// Once the panel is open on its controller, the other saved controllers
+    /// start too, one at a time behind it, so switching tabs never waits on
+    /// a cold start. Only on opening the panel, never on launch.
+    @State private var startingOthers = false
+    /// Controllers stopped from Settings > Monitor. Opening the panel does
+    /// not bring them back behind your back; selecting their tab does.
+    @State private var stoppedRoots: Set<String> = []
+
+    static let stopNotification = Notification.Name("RunwayStopATC")
+
+    /// Let one controller's session go: the terminal and its Claude close,
+    /// the conversation is kept, and its tab resumes it when selected.
+    private func stopTab(boxID: String) {
+        guard let index = tabs.firstIndex(where: {
+            QuickTerminalSession.boxID(root: $0.root).uuidString == boxID
+        }) else { return }
+        let root = tabs[index].root
+        stoppedRoots.insert(root)
+        tabs[index] = QuickTerminalTab(root: root, session: nil)
+    }
+
+    private func startRemainingTabs() {
+        guard !startingOthers, tabs.contains(where: { $0.session == nil }) else { return }
+        startingOthers = true
+        Task { @MainActor in
+            // Let the one you are looking at settle first.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            for root in tabs.map(\.root) where root != selectedRoot && !stoppedRoots.contains(root) {
+                guard tabs.first(where: { $0.root == root })?.session == nil else { continue }
+                ensureSession(for: root)
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+            startingOthers = false
+        }
     }
 
     private func startNewSession(in root: String) {
@@ -192,6 +232,20 @@ struct QuickTerminal: View {
             guard !Task.isCancelled else { return }
             isHeaderRevealedByShortcut = false
         }
+    }
+
+    /// A controller stopped on a question you have not seen yet.
+    private func waitingOnYou(_ root: String) -> Bool {
+        guard ws.quickTabStates[root] == .needsAction, !seenAsks.contains(root) else { return false }
+        return !(ws.quickVisible && root == selectedRoot)
+    }
+
+    /// Looking at a controller's tab counts as seeing its question; a
+    /// controller that stopped waiting is forgotten.
+    private func noteSeenAsks() {
+        var next = seenAsks.filter { ws.quickTabStates[$0] == .needsAction }
+        if ws.quickVisible, ws.quickTabStates[selectedRoot] == .needsAction { next.insert(selectedRoot) }
+        if next != seenAsks { seenAsks = next }
     }
 
     private func selectTab(_ root: String) {
@@ -362,6 +416,15 @@ struct QuickTerminal: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(ws.quickVisible ? Color.white.opacity(0.12) : Color.white.opacity(0.15), lineWidth: 1)
         )
+        // The same amber dot a flight card wears, on the closed panel's
+        // corner (outside the clip, half on and half off the edge): a
+        // controller is waiting on you.
+        .overlay(alignment: .topLeading) {
+            if !ws.quickVisible, tabs.contains(where: { waitingOnYou($0.root) }) {
+                let inset = 12 * (1 - 1 / 2.squareRoot()) - 3.5
+                NeedsYouDot().offset(x: inset, y: inset)
+            }
+        }
         // Invisible drag strip on the top edge to resize when visible.
         .overlay(alignment: .top) {
             if ws.quickVisible { resizeHandle }
@@ -403,10 +466,17 @@ struct QuickTerminal: View {
                     TerminalRegistry.shared.focusTerminal(ws.focusedID)
                 }
             } else {
+                stoppedRoots.remove(selectedRoot)
+                ensureSession(for: selectedRoot)
                 focusActiveTab()
+                startRemainingTabs()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Self.stopNotification)) { note in
+            if let boxID = note.object as? String { stopTab(boxID: boxID) }
+        }
         .onChange(of: selectedRoot) { _, root in
+            stoppedRoots.remove(root)
             ensureSession(for: root)
             focusActiveTab()
         }
@@ -428,6 +498,9 @@ struct QuickTerminal: View {
                 triggerAutoHide()
             }
         }
+        .onChange(of: ws.quickTabStates) { _, _ in noteSeenAsks() }
+        .onChange(of: ws.quickVisible) { _, _ in noteSeenAsks() }
+        .onChange(of: selectedRoot) { _, _ in noteSeenAsks() }
         .onChange(of: ws.quickState) { old, new in
             if new == .needsAction {
                 pulseTask?.cancel()
@@ -502,7 +575,9 @@ struct QuickTerminal: View {
                 .truncationMode(.middle)
             Spacer(minLength: 8)
 
-            if tabs.count > 1 && headerControlsVisible {
+            // The tab numbers also come out by themselves while another
+            // controller is waiting, so its dot is seen without a hover.
+            if tabs.count > 1 && (headerControlsVisible || tabs.contains(where: { waitingOnYou($0.root) })) {
                 ScrollView(.horizontal) {
                     HStack(spacing: 3) {
                         ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
@@ -521,6 +596,15 @@ struct QuickTerminal: View {
                                         RoundedRectangle(cornerRadius: 5)
                                             .fill(tab.root == selectedRoot ? RunwayTerminal.body : .clear)
                                     )
+                                    // Tucked against the digit's shoulder, inside
+                                    // the tab, where the strip cannot clip it.
+                                    .overlay(alignment: .topTrailing) {
+                                        if waitingOnYou(tab.root) {
+                                            NeedsYouDot(size: 4.5)
+                                                .padding(.top, 3)
+                                                .padding(.trailing, 2.5)
+                                        }
+                                    }
                                     .contentShape(RoundedRectangle(cornerRadius: 5))
                             }
                             .buttonStyle(.plain)
@@ -714,4 +798,18 @@ struct QuickTerminal: View {
 private struct TitleWatch: Hashable {
     let root: String
     let visible: Bool
+}
+
+/// The amber "waiting on you" dot, as the flight cards wear it.
+struct NeedsYouDot: View {
+    var size: CGFloat = 7
+
+    var body: some View {
+        Circle()
+            .fill(Board.amber)
+            .frame(width: size, height: size)
+            .shadow(color: Board.amber.opacity(0.6), radius: 3)
+            .help("Waiting on you")
+            .allowsHitTesting(false)
+    }
 }

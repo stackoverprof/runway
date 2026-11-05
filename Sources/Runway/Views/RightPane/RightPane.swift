@@ -499,6 +499,16 @@ struct RightPane: View {
                 // runs into the box's edge.
                 .padding(.horizontal, 8)
                 .padding(.bottom, 6)
+                // Only a click into the terminal itself reads this crew
+                // larger. A click on the header (copying the title or the
+                // number) leaves the pane as it is, rather than shifting it
+                // under the pointer.
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        withAnimation(.easeInOut(duration: 0.2)) { ws.readingCrew = crew.number }
+                    }
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -508,16 +518,6 @@ struct RightPane: View {
                     Color.white.opacity(isReading ? 0.18 : 0.1),
                     lineWidth: 1
                 )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 9))
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) { ws.readingCrew = crew.number }
-        }
-        .simultaneousGesture(
-            // A click into the terminal itself is still a click on this crew.
-            TapGesture().onEnded {
-                withAnimation(.easeInOut(duration: 0.2)) { ws.readingCrew = crew.number }
-            }
         )
     }
 
