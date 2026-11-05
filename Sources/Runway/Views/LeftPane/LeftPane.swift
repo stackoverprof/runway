@@ -48,6 +48,10 @@ struct LeftPane: View {
     @State private var pullScrollAnchor = RunwayScrollAnchor()
     /// there is expected, so it does not rebuild that lane's scroll view.
     @State private var issueSearchVisible = false
+    /// When the flight on screen was opened, so a flight only passed over
+    /// on the way to another does not count as read.
+    @State private var flightOpenedAt: Date?
+    private static let seenAfter: TimeInterval = 1.5
     @State private var issueSearchQuery = ""
     @State private var feedSearchVisible = false
     @State private var feedSearchQuery = ""
@@ -158,7 +162,18 @@ struct LeftPane: View {
             refreshSource(for: tab, minimumAge: 15)
         }
         .onChange(of: ws.flightNumber) { previous, number in
-            markSeen([previous, number])
+            // Only a flight you stopped on counts as seen. Passing over one
+            // with ⌘⌥↓ on the way to another left its dot cleared without
+            // you ever reading it.
+            if let since = flightOpenedAt, Date().timeIntervalSince(since) >= Self.seenAfter {
+                markSeen([previous])
+            }
+            flightOpenedAt = Date()
+            guard let number else { return }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(Self.seenAfter * 1_000_000_000))
+                if ws.flightNumber == number { markSeen([number]) }
+            }
         }
         .onChange(of: ws.findRequestID) { _, _ in
             toggleSearch(for: ws.selectedTab)
@@ -589,15 +604,12 @@ struct LeftPane: View {
     }
 
     /// The line between the pinned flights and the rest.
+    /// The pin line as a strip of hazard tape: grey and void in turn, on the
+    /// slant, so the end of the pinned flights reads at a glance.
     private var pinDivider: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "pin.fill")
-                .font(.system(size: 8))
-                .rotationEffect(.degrees(45))
-            Rectangle().frame(height: 1)
-        }
-        .foregroundStyle(Color.white.opacity(0.14))
-        .padding(.vertical, -4)
+        HazardTape()
+            .frame(height: 5)
+            .padding(.vertical, -2)
         .accessibilityLabel("End of pinned flights")
     }
 
@@ -1569,5 +1581,29 @@ enum PRStackItem: Identifiable {
             items.append(chain.count > 1 ? .stack(chain.reversed()) : .single(root))
         }
         return items
+    }
+}
+
+/// Diagonal stripes, grey and void, like barrier tape.
+private struct HazardTape: View {
+    var stripe: CGFloat = 6
+    var colour = Color.white.opacity(0.09)
+
+    var body: some View {
+        Canvas { context, size in
+            let h = size.height
+            var x: CGFloat = -h
+            var path = Path()
+            while x < size.width + h {
+                path.move(to: CGPoint(x: x, y: h))
+                path.addLine(to: CGPoint(x: x + h, y: 0))
+                path.addLine(to: CGPoint(x: x + h + stripe, y: 0))
+                path.addLine(to: CGPoint(x: x + stripe, y: h))
+                path.closeSubpath()
+                x += stripe * 2
+            }
+            context.fill(path, with: .color(colour))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 1))
     }
 }

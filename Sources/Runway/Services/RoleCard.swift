@@ -60,7 +60,7 @@ enum RoleCard {
             lines.append("")
             lines.append("  runway list                      the flights in this repository")
             lines.append("  runway show <issue>              one flight and how its crews stand")
-            lines.append("  runway flight create --title \"<cluster>\" --body \"...\"")
+            lines.append("  runway flight create --title \"<cluster>\" --body \"...\" --priority <1-5>")
             lines.append("  runway crew add --title \"<title>\" --flight <issue>")
             lines.append("  runway crew adopt <issue> --flight <issue>")
             lines.append("  runway crew up|down <issue>      open or close a crew's terminal")
@@ -123,6 +123,18 @@ enum RoleCard {
             lines.append("  runway progress needs <n> \"<what it waits on>\"")
             lines.append("A crew that is up is a Claude session named after its issue, such as")
             lines.append("`monorepo-16790`. Brief it and read its answer by messaging that name.")
+            lines.append("")
+            lines.append("A crew that is up costs the user's Mac about 400 MB, idle or not.")
+            lines.append("Keep up only the crews that have something to do right now, and run")
+            lines.append("`runway crew down` on a crew the moment it has nothing it can move")
+            lines.append("on its own: it is waiting on a person, a date, a freeze, a review, a")
+            lines.append("deploy or another crew, or it has said \"standing by\" or \"on hold\".")
+            lines.append("Write what it waits on into its transit first (`runway progress")
+            lines.append("needs`), so nothing is forgotten, then stand it down. Do not keep a")
+            lines.append("crew up to receive a message later: its session and conversation are")
+            lines.append("kept, and `runway crew up` brings it back where it left off when the")
+            lines.append("wait is over. Check this every time a crew reports, not only when")
+            lines.append("asked; the user should never have to ask whether a crew is idle.")
             lines.append("")
             lines.append("The chain is user -> pilot -> crew, and it does not skip a link. The")
             lines.append("user handles pilots, not crews. Every crew on this flight is yours")
@@ -289,7 +301,12 @@ enum RoleCard {
 
     Work that belongs under an existing flight is a crew of it, not a new
     flight: `runway crew add --title "..." --body "..." --flight <issue>`.
-    Only its own cluster gets `runway flight create`. The repository is
+    Only its own cluster gets `runway flight create`, and always with its
+    class, `--priority 1` to `5`: P1 pushing now (near deadline, someone is
+    waiting), P2 soon (deadline approaching, the day-to-day work), P3 on the
+    side (no clear deadline, but important), P4 background (no deadline, nice
+    to have), P5 long haul (can sit, but not be forgotten). Pick it from the
+    deadline and who is waiting; say which in one line. The repository is
     monorepo unless the subject says otherwise (upsell-hr, pizzan-app,
     upsell-website). Both verbs assign the issue to Erbin for you.
 

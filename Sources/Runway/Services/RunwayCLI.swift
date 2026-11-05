@@ -208,11 +208,35 @@ extension AgentControl {
             show_state(repo, parent_number, addLegs=[leg_of(repo, child_number, title)])
 
 
+        def set_priority(repo, number, level):
+            board = read_board()
+            entry = board.get(repo, {})
+            priority = entry.get("priority", {})
+            priority[str(number)] = int(level)
+            entry["priority"] = priority
+            board[repo] = entry
+            write_board(board)
+            note("priority_set", issue=int(number), repository=repo, priority=int(level))
+
+
         def cmd_flight_create(args):
             repo = repo_of(args)
+            # A flight is never filed without its class: one created with no
+            # priority sat at the bottom of a priority-sorted board, unseen.
+            level = str(args.priority or "").lower().lstrip("p")
+            if level not in ("1", "2", "3", "4", "5"):
+                sys.exit(
+                    "runway: a new flight needs --priority 1 to 5:\\n"
+                    "  P1 pushing now: near deadline, someone is waiting. ASAP.\\n"
+                    "  P2 soon: deadline approaching. The day-to-day work.\\n"
+                    "  P3 on the side: no clear deadline, but important.\\n"
+                    "  P4 background: no deadline, not important. Nice to have.\\n"
+                    "  P5 long haul: can sit, but not be forgotten."
+                )
             number, url = create_issue(repo, args.title, args.body)
+            set_priority(repo, number, level)
             note("flight_created", issue=number, title=args.title, repository=repo)
-            print("Flight #%d: %s" % (number, url))
+            print("Flight #%d (P%s): %s" % (number, level, url))
             for title in args.crew or []:
                 crew_number, crew_url = create_issue(repo, title, "")
                 adopt(repo, number, crew_number, title)
@@ -1048,6 +1072,10 @@ extension AgentControl {
             create = flight_verbs.add_parser("create", help="a new issue, with crews under it")
             create.add_argument("--title", required=True)
             create.add_argument("--body", default="")
+            create.add_argument(
+                "--priority", default="",
+                help="its class, 1 to 5 (P1 pushing now, P2 soon, P3 on the side, P4 background, P5 long haul)"
+            )
             create.add_argument("--crew", action="append", help="a crew to create; repeatable")
             create.add_argument("--adopt", action="append", help="an existing issue to take as a crew; repeatable")
             create.set_defaults(run=cmd_flight_create)
