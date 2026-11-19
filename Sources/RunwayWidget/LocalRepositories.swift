@@ -1,0 +1,221 @@
+import Foundation
+
+struct LocalRepository: Equatable, Sendable {
+    let nameWithOwner: String
+    let path: String
+}
+
+/// A clone is known by its folder, the way the user named it on disk
+/// (`monorepo`, `monosentry`), not by its GitHub owner. A worktree container
+/// keeps its main checkout in `<clone>/main`; the clone is the container.
+enum CloneName {
+    static func root(ofCheckout path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        guard url.lastPathComponent.lowercased() == "main" else { return url.path }
+        let container = url.deletingLastPathComponent()
+        // A container is not itself a checkout; a repository with a real
+        // `main` folder inside it is.
+        let containerIsCheckout = FileManager.default.fileExists(
+            atPath: container.appendingPathComponent(".git").path
+        )
+        return containerIsCheckout ? url.path : container.path
+    }
+
+    static func name(ofCheckout path: String) -> String {
+        URL(fileURLWithPath: root(ofCheckout: path)).lastPathComponent
+    }
+
+    /// The session name of the agent a Focus terminal starts for an issue.
+    static func agentName(clone: String, issueNumber: Int) -> String {
+        "\(clone)-\(issueNumber)"
+    }
+}
+
+enum LocalRepositoryDirectory {
+    /// Scan where the user pointed Runway, as deep as they allowed. Defaults to
+    /// the home directory at depth 6, which is what it always did.
+    static func discoverOnDevice() -> [LocalRepository] {
+        let search = SettingsKey.cloneSearch()
+        return discover(in: search.root, maximumDepth: search.depth)
+    }
+
+    static func discover(
+        in rootPath: String,
+        maximumDepth: Int? = nil
+    ) -> [LocalRepository] {
+        let root = (rootPath as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: root) else { return [] }
+        let checkouts = checkoutPaths(
+            in: URL(fileURLWithPath: root, isDirectory: true),
+            maximumDepth: maximumDepth
+        )
+
+        // One row per repository. A second copy of the same remote
+        // (~/Developer/monosentry beside ~/Developer/monorepo/main) is the
+        // same board, the same issues and the same pull requests, so
+        // listing each clone only made the picker longer and the choice
+        // meaningless. The preferred clone stands for them all.
+        var byRepository: [String: [LocalRepository]] = [:]
+        for checkout in checkouts {
+            guard let remote = originURL(in: checkout),
+                  let repository = parseGitHubRepository(from: remote) else { continue }
+            byRepository[repository.lowercased(), default: []]
+                .append(LocalRepository(nameWithOwner: repository, path: checkout))
+        }
+
+        return byRepository.values.compactMap { group -> LocalRepository? in
+            let ordered = group.sorted { isPreferred($0, over: $1) }
+            return ordered.first { isFullClone($0.path) } ?? ordered.first
+        }.sorted {
+            let order = $0.nameWithOwner.localizedCaseInsensitiveCompare($1.nameWithOwner)
+            if order != .orderedSame { return order == .orderedAscending }
+            return isPreferred($0, over: $1)
+        }
+    }
+
+    static func directCheckoutPath(
+        for repository: String,
+        homePath: String = NSHomeDirectory()
+    ) -> String? {
+        guard let repositoryName = repository.split(separator: "/").last else { return nil }
+        let home = URL(fileURLWithPath: homePath, isDirectory: true)
+        var candidates = [home.appendingPathComponent(String(repositoryName), isDirectory: true)]
+        if let homeDirectories = try? FileManager.default.contentsOfDirectory(
+            at: home,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) {
+            candidates += homeDirectories.map {
+                $0.appendingPathComponent(String(repositoryName), isDirectory: true)
+            }
+        }
+
+        let key = repository.lowercased()
+        return candidates.first { candidate in
+            guard FileManager.default.fileExists(
+                atPath: candidate.appendingPathComponent(".git").path
+            ), let remote = originURL(in: candidate.path),
+                  parseGitHubRepository(from: remote)?.lowercased() == key else {
+                return false
+            }
+            return true
+        }?.path
+    }
+
+    private static func checkoutPaths(
+        in root: URL,
+        maximumDepth: Int?
+    ) -> [String] {
+        let fileManager = FileManager.default
+        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        let ignoredDirectories = Set([
+            "node_modules", ".build", "DerivedData", ".cache", "Library",
+            "Applications", "Movies", "Music", "Pictures", ".Trash",
+        ])
+        var pending: [(url: URL, depth: Int)] = [(root, 0)]
+        var checkouts: [String] = []
+
+        while let next = pending.popLast() {
+            let directory = next.url
+            let gitMarker = directory.appendingPathComponent(".git")
+            if fileManager.fileExists(atPath: gitMarker.path) {
+                checkouts.append(directory.path)
+                continue
+            }
+            if let maximumDepth, next.depth >= maximumDepth { continue }
+
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: Array(resourceKeys),
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+
+            for child in children where !ignoredDirectories.contains(child.lastPathComponent) {
+                guard let values = try? child.resourceValues(forKeys: resourceKeys),
+                      values.isDirectory == true,
+                      values.isSymbolicLink != true else { continue }
+                pending.append((child, next.depth + 1))
+            }
+        }
+        return checkouts
+    }
+
+    static func parseGitHubRepository(from remote: String) -> String? {
+        var value = remote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.hasPrefix("git@github.com:") {
+            value.removeFirst("git@github.com:".count)
+        } else if let url = URL(string: value),
+                  url.host?.lowercased() == "github.com" {
+            value = url.path
+        } else {
+            return nil
+        }
+
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if value.lowercased().hasSuffix(".git") { value.removeLast(4) }
+        let components = value.split(separator: "/", omittingEmptySubsequences: true)
+        guard components.count == 2 else { return nil }
+        return "\(components[0])/\(components[1])"
+    }
+
+    private static func originURL(in checkout: String) -> String? {
+        let git = Process()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["-C", checkout, "remote", "get-url", "origin"]
+        let output = Pipe()
+        git.standardOutput = output
+        git.standardError = Pipe()
+        do { try git.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        git.waitUntilExit()
+        guard git.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A full clone has a `.git` directory; a linked worktree has a `.git` file.
+    private static func isFullClone(_ checkout: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let marker = URL(fileURLWithPath: checkout).appendingPathComponent(".git").path
+        return FileManager.default.fileExists(atPath: marker, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    /// The checkout named after its repository wins (`monorepo`, or the
+    /// `monorepo/main` of a worktree container), then the shallowest path.
+    /// Depth alone let a sibling copy like `~/Developer/monosentry` outrank
+    /// `~/Developer/monorepo/main`.
+    private static func isPreferred(_ candidate: LocalRepository, over existing: LocalRepository) -> Bool {
+        let candidateNamed = isNamedAfterRepository(candidate)
+        if candidateNamed != isNamedAfterRepository(existing) { return candidateNamed }
+        let candidateDepth = URL(fileURLWithPath: candidate.path).pathComponents.count
+        let existingDepth = URL(fileURLWithPath: existing.path).pathComponents.count
+        if candidateDepth != existingDepth { return candidateDepth < existingDepth }
+        return candidate.path.localizedCaseInsensitiveCompare(existing.path) == .orderedAscending
+    }
+
+    private static func isNamedAfterRepository(_ checkout: LocalRepository) -> Bool {
+        guard let name = checkout.nameWithOwner.split(separator: "/").last?.lowercased() else {
+            return false
+        }
+        let url = URL(fileURLWithPath: checkout.path)
+        let folder = url.lastPathComponent.lowercased()
+        let parent = url.deletingLastPathComponent().lastPathComponent.lowercased()
+        return folder == name || (folder == "main" && parent == name)
+    }
+}
+
+/// A folder path a user typed or picked, expanded and checked.
+enum FolderPath {
+    static func resolved(_ path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return expanded
+    }
+}

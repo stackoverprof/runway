@@ -27,6 +27,13 @@ let package = Package(
             // installed beside it.
             resources: [.copy("Resources/walkthrough"), .copy("Resources/fonts")]
         ),
+        // A menu bar app with Runway's left pane only: who's around, my open
+        // issues, the repo feed and pull requests. No agents, no terminals.
+        .executableTarget(
+            name: "RunwayWidget",
+            path: "Sources/RunwayWidget",
+            resources: [.copy("Resources/fonts")]
+        ),
         .testTarget(
             name: "RunwayTests",
             dependencies: ["Runway"],
