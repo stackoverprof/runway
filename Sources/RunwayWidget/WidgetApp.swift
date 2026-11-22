@@ -38,6 +38,20 @@ final class WidgetAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var panel: WidgetPanel!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // `RunwayWidget --print-cluster-prs`: print each cluster card's PR
+        // count (ready + draft) and quit, to check it against GitHub.
+        if CommandLine.arguments.contains("--print-cluster-prs") {
+            Task { @MainActor in
+                let issues = AssignedIssues.shared
+                await issues.refresh()
+                for (name, pulls) in issues.clusterPulls.sorted(by: { $0.key < $1.key }) {
+                    let numbers = pulls.map { "#\($0.number)\($0.isDraft ? "d" : "")" }.joined(separator: " ")
+                    print("\(name)\t\(pulls.count)\t\(numbers)")
+                }
+                exit(0)
+            }
+            return
+        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = MenuBarIcon.image
         statusItem.button?.target = self

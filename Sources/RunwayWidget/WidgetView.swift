@@ -96,7 +96,7 @@ struct WidgetView: View {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
                 while !Task.isCancelled {
-                    let urls = issues.issues.flatMap(ownedPulls).filter { !$0.isDraft }.map(\.url)
+                    let urls = issues.clusterPulls.values.flatMap { $0 }.filter { !$0.isDraft }.map(\.url)
                     await PullChecks.shared.refresh(urls)
                     try? await Task.sleep(nanoseconds: 45 * 1_000_000_000)
                 }
@@ -1008,14 +1008,12 @@ private struct ClusterCover: View {
         Array(Set(stack.issues.compactMap(\.priority))).sorted()
     }
 
-    /// Open PRs the cluster's issues own: their branch ends with one of the
-    /// issues' numbers. Only for the repository the Pulls data covers.
     /// One verdict for the cluster's PRs. Drafts sit out: their CI is not
     /// asking for anything yet. Red beats orange beats green.
     private enum CIVerdict { case failing, running, passing, drafts, unknown }
 
     private var ciVerdict: CIVerdict {
-        let ready = stack.issues.flatMap(ownedPulls).filter { !$0.isDraft }
+        let ready = clusterPulls(stack.name).filter { !$0.isDraft }
         if ready.isEmpty { return .drafts }
         let states = ready.map { PullChecks.shared.states[$0.url.absoluteString] }
         if states.contains(where: { $0 == "FAILURE" || $0 == "ERROR" }) { return .failing }
@@ -1044,9 +1042,7 @@ private struct ClusterCover: View {
         }
     }
 
-    private var openPullCount: Int {
-        stack.issues.reduce(0) { $0 + ownedPulls($1).count }
-    }
+    private var openPullCount: Int { clusterPulls(stack.name).count }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1244,46 +1240,16 @@ private struct PullLine: View {
     }
 }
 
-/// Open PRs by the issue number their branch ends with, built once per
-/// change to the PR list instead of on every row and every key press.
-@MainActor
-enum OwnedPullIndex {
-    private static var key: [Int] = []
-    private static var index: [String: [RepositoryPullRequest]] = [:]
-
-    /// `issue` is an issue id, "VISKA-IO/monorepo#14892".
-    static func pulls(for issue: String) -> [RepositoryPullRequest] {
-        let all = PullRequests.shared.pullRequests  // read for observation
-        let stamp = [PullRequests.shared.revision, all.count]
-        if stamp != key {
-            var built: [String: [RepositoryPullRequest]] = [:]
-            var seen = Set<String>()
-            for pr in all where pr.isOpen && seen.insert(pr.id).inserted {
-                if let n = BranchIssue.number(in: pr.headRefName) {
-                    built["\(pr.repository.lowercased())#\(n)", default: []].append(pr)
-                }
-            }
-            index = built.mapValues { $0.sorted { $0.number > $1.number } }
-            key = stamp
-        }
-        return index[issue.lowercased()] ?? []
-    }
-}
-
-/// The open PRs an issue owns: in the Pulls repository, those whose branch
-/// ends with its number; anywhere, mine whose body mentions it.
+/// My open PRs that belong to an issue (see ``AssignedIssues/mentionedPulls``).
 @MainActor
 func ownedPulls(_ issue: AssignedIssue) -> [LinkedPull] {
-    var out: [LinkedPull] = []
-    var seen = Set<String>()
-    for pr in OwnedPullIndex.pulls(for: issue.id) where seen.insert(pr.url.absoluteString).inserted {
-        out.append(LinkedPull(number: pr.number, title: pr.title, url: pr.url,
-                              repository: issue.repository, isDraft: pr.isDraft, branch: pr.headRefName))
-    }
-    for pr in AssignedIssues.shared.mentionedPulls[issue.id] ?? [] where seen.insert(pr.url.absoluteString).inserted {
-        out.append(pr)
-    }
-    return out.sorted { $0.number > $1.number }
+    (AssignedIssues.shared.mentionedPulls[issue.id] ?? []).sorted { $0.number > $1.number }
+}
+
+/// My open PRs in a cluster, closed issues' PRs included.
+@MainActor
+func clusterPulls(_ name: String) -> [LinkedPull] {
+    AssignedIssues.shared.clusterPulls[name] ?? []
 }
 
 extension View {
@@ -1322,7 +1288,7 @@ enum CopyText {
     /// "OneSignal Exit (monorepo, 3 issues, 3 PRs)", a blank line, then one
     /// bullet per issue with its PRs.
     static func cluster(_ stack: WidgetView.ClusterStack) -> String {
-        let prs = stack.issues.reduce(0) { $0 + ownedPulls($1).count }
+        let prs = clusterPulls(stack.name).count
         let repos = Array(Set(stack.issues.map(\.shortRepository))).sorted().joined(separator: " + ")
         let count = stack.issues.count
         let header = "\(stack.name) (\(repos), \(count) issue\(count == 1 ? "" : "s"), \(prs) PR\(prs == 1 ? "" : "s"))"

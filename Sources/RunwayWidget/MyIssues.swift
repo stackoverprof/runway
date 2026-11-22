@@ -28,9 +28,13 @@ struct AssignedIssue: Identifiable, Equatable {
     private(set) var loading = false
     private(set) var didLoad = false
     private(set) var error: String?
-    /// My open PRs anywhere in the org, by the issues their body mentions
-    /// ("Part of #14892", "VISKA-IO/monorepo#14893"), keyed by issue id.
+    /// My open and draft PRs in the org, keyed by the issue each belongs to:
+    /// the issue its body names with "Part of" / "Closes" (and kin), else the
+    /// number its branch ends with. Only PRs I authored.
     private(set) var mentionedPulls: [String: [LinkedPull]] = [:]
+    /// The same PRs by their issue's cluster, closed issues included, so a
+    /// cluster's PR count is my open PRs in it.
+    private(set) var clusterPulls: [String: [LinkedPull]] = [:]
     @ObservationIgnored private var pollTask: Task<Void, Never>?
 
     static let owner = "VISKA-IO"
@@ -66,42 +70,104 @@ struct AssignedIssue: Identifiable, Equatable {
                 updatedAt: issue.updatedAt
             )
         }
-        if let found = await mentions { mentionedPulls = found }
+        if let found = await mentions {
+            mentionedPulls = found
+            clusterPulls = await Self.clusters(of: found, known: issues)
+        }
         error = nil
         didLoad = true
     }
 
+    /// "Part of #14892", "Closes VISKA-IO/monorepo#14893", "Fixes: #1".
     private static let reference = try! NSRegularExpression(
-        pattern: #"(?:([A-Za-z0-9-]+)/([A-Za-z0-9._-]+))?#(\d+)"#)
+        pattern: #"(?i)\b(?:part\s+of|close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:([A-Za-z0-9-]+)/([A-Za-z0-9._-]+))?#(\d+)"#)
+
+    /// The issue ids a PR belongs to: from its body's keywords, else its branch.
+    static func issueIDs(body: String, branch: String, repository: String) -> [String] {
+        var ids: [String] = []
+        let range = NSRange(body.startIndex..., in: body)
+        for match in reference.matches(in: body, range: range) {
+            guard let n = Range(match.range(at: 3), in: body).map({ String(body[$0]) }) else { continue }
+            var repo = repository
+            if let o = Range(match.range(at: 1), in: body), let r = Range(match.range(at: 2), in: body) {
+                repo = "\(body[o])/\(body[r])"
+            }
+            let id = "\(repo)#\(n)"
+            if !ids.contains(id) { ids.append(id) }
+        }
+        if ids.isEmpty, let n = BranchIssue.number(in: branch) { ids.append("\(repository)#\(n)") }
+        return ids
+    }
 
     private static func myPullMentions() async -> [String: [LinkedPull]]? {
-        guard let data = await GH.run([
-            "search", "prs", "--author", "@me", "--state", "open", "--owner", owner,
-            "--limit", "200", "--json", "number,title,url,repository,isDraft,body",
-        ]),
-            let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        let query = """
+        { search(query: "is:pr is:open author:@me org:\(owner)", type: ISSUE, first: 100) { nodes { ... on PullRequest {
+          number title url isDraft body headRefName repository { nameWithOwner } } } } }
+        """
+        guard let data = await GH.run(["api", "graphql", "-f", "query=\(query)"]),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = ((root["data"] as? [String: Any])?["search"] as? [String: Any])?["nodes"] as? [[String: Any]]
         else { return nil }
         var result: [String: [LinkedPull]] = [:]
         for row in rows {
             guard let number = row["number"] as? Int, let title = row["title"] as? String,
                   let link = row["url"] as? String, let url = URL(string: link) else { continue }
             let repository = (row["repository"] as? [String: Any])?["nameWithOwner"] as? String ?? ""
-            let body = row["body"] as? String ?? ""
+            let branch = row["headRefName"] as? String ?? ""
             let pull = LinkedPull(number: number, title: title, url: url, repository: repository,
-                                  isDraft: row["isDraft"] as? Bool ?? false, branch: nil)
-            var ids = Set<String>()
-            let range = NSRange(body.startIndex..., in: body)
-            for match in reference.matches(in: body, range: range) {
-                guard let n = Range(match.range(at: 3), in: body).map({ String(body[$0]) }) else { continue }
-                var repo = repository
-                if let o = Range(match.range(at: 1), in: body), let r = Range(match.range(at: 2), in: body) {
-                    repo = "\(body[o])/\(body[r])"
-                }
-                ids.insert("\(repo)#\(n)")
+                                  isDraft: row["isDraft"] as? Bool ?? false, branch: branch)
+            for id in issueIDs(body: row["body"] as? String ?? "", branch: branch, repository: repository) {
+                result[id, default: []].append(pull)
             }
-            for id in ids { result[id, default: []].append(pull) }
         }
         return result
+    }
+
+    /// The cluster an issue sits in: its title's prefix when a label of that
+    /// name is on it, else its cluster-coloured label.
+    static func cluster(title: String, labels: [[String: Any]]) -> String? {
+        let names = labels.compactMap { $0["name"] as? String }
+        let prefix = title.range(of: ": ").map { String(title[..<$0.lowerBound]) }
+        return prefix.flatMap { names.contains($0) ? $0 : nil }
+            ?? labels.first { ($0["color"] as? String)?.lowercased() == clusterColor }?["name"] as? String
+    }
+
+    /// My PRs by cluster. Issues I'm not listed on (closed, or someone
+    /// else's) are looked up for their labels. A PR counts once per cluster.
+    private static func clusters(of pulls: [String: [LinkedPull]], known: [AssignedIssue]) async -> [String: [LinkedPull]] {
+        var clusterOf: [String: String] = [:]
+        for issue in known {
+            clusterOf[issue.id.lowercased()] = issue.cluster
+                ?? issue.title.components(separatedBy: ":").first?.trimmingCharacters(in: .whitespaces)
+        }
+        let unknown = pulls.keys.filter { clusterOf[$0.lowercased()] == nil }
+        var fields: [String] = []
+        var aliases: [String: String] = [:]
+        for (index, id) in unknown.enumerated() {
+            let parts = id.split(separator: "#")
+            let repo = parts.first?.split(separator: "/") ?? []
+            guard parts.count == 2, repo.count == 2, let n = Int(parts[1]) else { continue }
+            aliases["i\(index)"] = id
+            fields.append("i\(index): repository(owner: \"\(repo[0])\", name: \"\(repo[1])\") { issue(number: \(n)) { title labels(first: 30) { nodes { name color } } } }")
+        }
+        if !fields.isEmpty,
+           let data = await GH.run(["api", "graphql", "-f", "query={\(fields.joined(separator: "\n"))}"]),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let nodes = root["data"] as? [String: Any] {
+            for (alias, value) in nodes {
+                guard let id = aliases[alias],
+                      let issue = (value as? [String: Any])?["issue"] as? [String: Any],
+                      let title = issue["title"] as? String else { continue }
+                let labels = (issue["labels"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+                if let name = cluster(title: title, labels: labels) { clusterOf[id.lowercased()] = name }
+            }
+        }
+        var result: [String: [LinkedPull]] = [:]
+        for (id, list) in pulls {
+            guard let name = clusterOf[id.lowercased()] else { continue }
+            for pull in list where !(result[name] ?? []).contains(pull) { result[name, default: []].append(pull) }
+        }
+        return result.mapValues { $0.sorted { $0.number > $1.number } }
     }
 
     /// P1 first, then P2…P5, then no priority; newest activity first within each.
@@ -136,9 +202,7 @@ struct AssignedIssue: Identifiable, Equatable {
             let names = labels.compactMap { $0["name"] as? String }
             // The mission is the title's prefix ("Pricing: …") when a label of that name is on the issue; older
             // issues fall back to the cluster label colour.
-            let prefix = title.range(of: ": ").map { String(title[..<$0.lowerBound]) }
-            let cluster = prefix.flatMap { names.contains($0) ? $0 : nil }
-                ?? labels.first { ($0["color"] as? String)?.lowercased() == clusterColor }?["name"] as? String
+            let cluster = cluster(title: title, labels: labels)
             // Priority is the issue's one P1–P5 label (the Team Board was retired on 19 Nov 2026).
             let priority = names.first { $0.range(of: "^P[1-5]$", options: .regularExpression) != nil }
             let updated = (row["updatedAt"] as? String).flatMap(iso.date(from:)) ?? .distantPast
@@ -148,15 +212,13 @@ struct AssignedIssue: Identifiable, Equatable {
 
 }
 
-/// An open PR shown under an issue: from the Pulls data (its branch ends
-/// with the issue's number) or from my PRs whose body mentions the issue.
+/// One of my open PRs, shown under the issue it belongs to.
 struct LinkedPull: Identifiable, Equatable, Sendable {
     let number: Int
     let title: String
     let url: URL
     let repository: String
     let isDraft: Bool
-    /// Known for PRs in the Pulls repository; nil for the rest.
     let branch: String?
     var id: String { url.absoluteString }
 }
