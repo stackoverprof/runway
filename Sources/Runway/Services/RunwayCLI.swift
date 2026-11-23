@@ -219,6 +219,73 @@ extension AgentControl {
             note("priority_set", issue=int(number), repository=repo, priority=int(level))
 
 
+        def last_user_words():
+            \"\"\"What the user last typed into this seat, read from Claude's own
+            transcript. Messages from other sessions and tool results are
+            not the user.\"\"\"
+            import glob
+            try:
+                with open(os.environ.get("RUNWAY_SESSION_FILE", "")) as handle:
+                    session = json.load(handle).get("sessionId", "")
+            except Exception:
+                return ""
+            if not session:
+                return ""
+            paths = glob.glob(os.path.expanduser("~/.claude/projects/*/%s.jsonl" % session))
+            if not paths:
+                return ""
+            try:
+                with open(paths[0]) as handle:
+                    lines = handle.readlines()[-400:]
+            except Exception:
+                return ""
+            for line in reversed(lines):
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if entry.get("type") != "user" or entry.get("isMeta"):
+                    continue
+                content = (entry.get("message") or {}).get("content")
+                if isinstance(content, list):
+                    texts = [part.get("text", "") for part in content
+                             if isinstance(part, dict) and part.get("type") == "text"]
+                    if not texts:
+                        continue  # a tool result
+                    content = " ".join(texts)
+                if not isinstance(content, str):
+                    continue
+                if "Message from @" in content[:200] or "<task-notification>" in content:
+                    continue
+                return content
+            return ""
+
+
+        def require_yes(kind, title, where=""):
+            \"\"\"A new issue is filed only with the user's yes. His own /ticket,
+            "file it" or a yes just before counts; otherwise Runway asks him
+            in a dialog, and a no stops the command.\"\"\"
+            import re
+            words = last_user_words().lower()
+            if re.search(r"/ticket|\\b(yes|yep|yeah|ya|iya|ok|okay|sure|go|go ahead|file it|ticket it|do it|lgtm)\\b", words):
+                return
+            who = os.environ.get("RUNWAY_SESSION_NAME") or os.environ.get("RUNWAY_AGENT_NAME") or "An agent"
+            text = '%s wants to file a new %s%s:\\n\\n"%s"' % (who, kind, where, title)
+            script = (
+                'display dialog %s with title "Runway: file a new issue?" '
+                'buttons {"Don\\'t file", "File it"} default button "File it" '
+                'cancel button "Don\\'t file" giving up after 900'
+            ) % json.dumps(text)
+            done = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+            if done.returncode == 0 and "File it" in done.stdout and "gave up:true" not in done.stdout:
+                return
+            sys.exit(
+                "runway: not filed. Erbin did not approve a new issue. Propose it to him "
+                "in one line (title, and why it needs its own ticket) and file it only "
+                "after he says yes."
+            )
+
+
         def cmd_flight_create(args):
             repo = repo_of(args)
             # A flight is never filed without its class: one created with no
@@ -233,6 +300,7 @@ extension AgentControl {
                     "  P4 background: no deadline, not important. Nice to have.\\n"
                     "  P5 long haul: can sit, but not be forgotten."
                 )
+            require_yes("flight", args.title)
             number, url = create_issue(repo, args.title, args.body)
             set_priority(repo, number, level)
             note("flight_created", issue=number, title=args.title, repository=repo)
@@ -252,6 +320,7 @@ extension AgentControl {
             flight = args.flight or FLIGHT
             if not flight:
                 sys.exit("runway: which flight? Pass --flight <number>.")
+            require_yes("crew", args.title, " on flight #%s" % flight)
             number, url = create_issue(repo, args.title, args.body)
             adopt(repo, flight, number, args.title)
             assign_me(repo, flight)
@@ -295,6 +364,10 @@ extension AgentControl {
                 pass
 
 
+        READY = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "ready",
+        )
         DECK = os.path.join(
             os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
             "crew-deck.json",
@@ -319,12 +392,39 @@ extension AgentControl {
             # the agents share one deck file.
             repo = repo_of(args)
             args.issue = resolve_flight(repo, args.issue)
+            number = int(str(args.issue).lstrip("#"))
+            seat = "%s#%s" % (repo, number)
+            ready = os.path.join(READY, "crew-%d" % number)
             seats = read_deck()
-            seats.add("%s#%s" % (repo, args.issue))
-            write_deck(seats)
-            note("crew_up", issue=int(str(args.issue).lstrip("#")), repository=repo)
-            print("Crew #%s is up" % args.issue)
-            nudge()
+            if seat not in seats:
+                # A marker from its last session would read as ready at once.
+                try:
+                    os.remove(ready)
+                except OSError:
+                    pass
+                seats.add(seat)
+                write_deck(seats)
+                note("crew_up", issue=number, repository=repo)
+                nudge()
+            if getattr(args, "no_wait", False):
+                print("Crew #%s is starting" % number)
+                return
+            # Wait for its session to open, so it can be briefed straight
+            # away: the app starts crews one at a time, and a pilot that
+            # guessed with sleep left them sitting unbriefed.
+            import time
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                try:
+                    with open(ready) as handle:
+                        name = handle.read().strip()
+                    time.sleep(2)  # let it finish registering its name
+                    print("Crew #%s is up and ready: message %s now" % (number, name or "it"))
+                    return
+                except OSError:
+                    time.sleep(1)
+            print("Crew #%s is up but its session has not opened after 3 minutes. "
+                  "Run `runway crew up %s` again to keep waiting." % (number, number))
 
 
         def cmd_crew_down(args):
@@ -1091,7 +1191,8 @@ extension AgentControl {
             crew_adopt.add_argument("issue")
             crew_adopt.add_argument("--flight", default="")
             crew_adopt.set_defaults(run=cmd_crew_adopt)
-            crew_up = crew_verbs.add_parser("up", help="bring a crew up: open its terminal")
+            crew_up = crew_verbs.add_parser("up", help="bring a crew up and wait until it can be briefed")
+            crew_up.add_argument("--no-wait", action="store_true", help="return without waiting for its session")
             crew_up.add_argument("issue")
             crew_up.set_defaults(run=cmd_crew_up)
             crew_down = crew_verbs.add_parser("down", help="stand a crew down to its card")

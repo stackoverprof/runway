@@ -546,6 +546,12 @@ enum AgentControl {
     static let issueContextHookScript = #"""
     #!/bin/zsh -f
     [ -t 0 ] || /bin/cat > /dev/null
+    # A crew marks itself ready, so `runway crew up` can return the moment
+    # the session can take a message instead of the pilot sleeping on it.
+    if [ -n "${RUNWAY_CREW:-}" ]; then
+      ready="${0:A:h:h}/ready"
+      /bin/mkdir -p "$ready" && printf '%s' "${RUNWAY_SESSION_NAME:-}" > "$ready/crew-$RUNWAY_CREW"
+    fi
     # A seat with a role card is already briefed as a system prompt, and the
     # card knows whether it is a pilot or a crew. Saying it twice, in the older
     # one-agent-one-issue wording, would only contradict it.
