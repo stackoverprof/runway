@@ -52,12 +52,6 @@ struct FeedRow: View {
                             .font(.system(size: 12.5))
                             .foregroundStyle(Color.white.opacity(0.55))
                         Spacer(minLength: 6)
-                        if !isMergeEvent, let repo = event.repo?.components(separatedBy: "/").last {
-                            Text(repo)
-                                .font(.system(size: 9.5, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.35))
-                                .lineLimit(1)
-                        }
                         Text(time)
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.3))
@@ -124,11 +118,6 @@ struct FeedRow: View {
         return formatter.string(from: date)
     }
 
-    private var isMergeEvent: Bool {
-        if case .prMerged = event.kind { return true }
-        return false
-    }
-
     private var verb: String {
         switch event.kind {
         case let .push(_, count, _):
@@ -184,7 +173,7 @@ struct FeedRow: View {
                 }
             }
         case let .prOpened(number, title, branch):
-            prLine(GitHubNumber.reference(number), title.isEmpty ? branch : title, tint: Self.green)
+            prLine(number, title.isEmpty ? branch : title, tint: Self.green)
         case let .prMerged(number, title, base, branch, adds, dels, commits, duration):
             // Two lines: what merged, then where and how big, all on one row.
             VStack(alignment: .leading, spacing: 8) {
@@ -196,20 +185,7 @@ struct FeedRow: View {
                     .help(title.isEmpty ? "into \(base)" : "\(title) (into \(base))")
                 HStack(spacing: 6) {
                     // Where it landed, as one badge: repository and number.
-                    HStack(spacing: 4) {
-                        if let repoName = event.repo?.components(separatedBy: "/").last {
-                            Text(repoName)
-                                .foregroundStyle(Self.purple.opacity(0.75))
-                        }
-                        Text(verbatim: GitHubNumber.reference(number))
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Self.purple)
-                    }
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Self.purple.opacity(0.14)))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Self.purple.opacity(0.3), lineWidth: 1))
+                    repoBadge(number, tint: Self.purple)
                     if let a = adds, let d = dels {
                         Text(verbatim: "+\(a)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Color(red: 0.4, green: 0.78, blue: 0.45).opacity(0.7))
                         Text(verbatim: "-\(d)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Color(red: 0.95, green: 0.36, blue: 0.32).opacity(0.7))
@@ -227,19 +203,42 @@ struct FeedRow: View {
         case let .branchDeleted(name):
             Chip(name, tint: Self.gray)
         case let .review(number, title, state):
-            prLine("\(GitHubNumber.reference(number)) \(state.lowercased())", title, tint: Self.blue)
+            prLine(number, title, tint: Self.blue, suffix: state.lowercased())
         case let .issueOpened(number, title):
-            prLine(GitHubNumber.reference(number), title, tint: Self.green)
+            prLine(number, title, tint: Self.green)
         case let .issueClosed(number, title):
-            prLine(GitHubNumber.reference(number), title, tint: Self.purple)
+            prLine(number, title, tint: Self.purple)
         }
     }
 
-    private func prLine(_ tag: String, _ title: String, tint: Color) -> some View {
+    private func prLine(_ number: Int, _ title: String, tint: Color, suffix: String? = nil) -> some View {
         HStack(spacing: 7) {
-            Chip(tag, tint: tint)
+            repoBadge(number, tint: tint)
+            if let suffix {
+                Text(suffix).font(.system(size: 11)).foregroundStyle(tint.opacity(0.85))
+            }
             Text(title).font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.55)).lineLimit(1)
         }
+    }
+
+    /// "monorepo #12345": the repository and number as one badge, as on the merged card.
+    private func repoBadge(_ number: Int, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            if let repoName = event.repo?.components(separatedBy: "/").last {
+                Text(repoName)
+                    .foregroundStyle(tint.opacity(0.75))
+            }
+            Text(verbatim: GitHubNumber.reference(number))
+                .fontWeight(.semibold)
+                .foregroundStyle(tint)
+        }
+        .font(.system(size: 9.5, design: .monospaced))
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(tint.opacity(0.3), lineWidth: 1))
     }
 
     private var cardBackgroundColor: Color {

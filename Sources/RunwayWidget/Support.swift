@@ -25,12 +25,14 @@ struct Chip: View {
     init(_ text: String, tint: Color) { self.text = text; self.tint = tint }
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            // Same size as the feed's repo + number badge.
+            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
             .foregroundStyle(tint)
             .lineLimit(1)
-            .padding(.horizontal, 7).padding(.vertical, 2.5)
-            .background(RoundedRectangle(cornerRadius: 5).fill(tint.opacity(0.14)))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(tint.opacity(0.25), lineWidth: 1))
+            .truncationMode(.middle)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(tint.opacity(0.3), lineWidth: 1))
     }
 }
 
