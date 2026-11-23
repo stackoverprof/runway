@@ -116,10 +116,7 @@ struct PullRequestList: View {
                             .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                             .foregroundStyle(Color.white.opacity(0.38))
                     }
-                    Text(pullRequest.title)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.70))
-                        .lineLimit(1)
+                    PullTitleText(title: pullRequest.title)
                     Spacer(minLength: 4)
                     if let timeframe = Self.timeframe(pullRequest) {
                         Text(timeframe)
@@ -230,10 +227,7 @@ struct PullRequestList: View {
                 Text(verbatim: GitHubNumber.reference(top.number))
                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(color.opacity(0.82))
-                Text(top.title)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.70))
-                    .lineLimit(1)
+                PullTitleText(title: top.title)
                 Spacer(minLength: 4)
                 if let timeframe = Self.timeframe(top) {
                     Text(timeframe)
@@ -341,5 +335,31 @@ private struct OwnerBadge: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Open this flight")
+    }
+}
+
+
+/// A pull's title with its bracket tag, like [MERGE AFTER WEEKEND], pulled
+/// out and shown in amber ahead of it, the way the flight's Pulls board
+/// shows it: the tag is an instruction, not part of the name.
+struct PullTitleText: View {
+    let title: String
+
+    var body: some View {
+        let parsed = MiddlePane.tagged(title)
+        HStack(spacing: 6) {
+            if let tag = parsed.tag {
+                Text(tag)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .tracking(0.6)
+                    .foregroundStyle(Board.amber)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            Text(parsed.title)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.70))
+                .lineLimit(1)
+        }
     }
 }
