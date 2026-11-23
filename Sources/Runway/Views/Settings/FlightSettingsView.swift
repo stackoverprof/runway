@@ -3,10 +3,10 @@ import SwiftUI
 /// What a flight does when you are not looking at it, and what it owes
 /// before it lands.
 struct FlightSettings: View {
-    @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 15
-    @AppStorage(FlightDozer.otherKey) private var idleOther = 5
+    @AppStorage(FlightDozer.pinnedKey) private var idlePinned = 20
+    @AppStorage(FlightDozer.otherKey) private var idleOther = 10
     @AppStorage(FlightDozer.crewPinnedKey) private var crewPinned = 10
-    @AppStorage(FlightDozer.crewOtherKey) private var crewOther = 3
+    @AppStorage(FlightDozer.crewOtherKey) private var crewOther = 5
     @AppStorage(SettingsKey.walkthroughRoot) private var walkthroughRoot = ""
     @AppStorage(SettingsKey.walkthroughSlides) private var walkthroughSlides = 3
     @AppStorage(SettingsKey.askBeforeLandingWithoutEvidence)

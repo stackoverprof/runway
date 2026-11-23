@@ -5,8 +5,8 @@ import Observation
 /// Stops a flight's Claude sessions once the whole flight has gone quiet.
 ///
 /// A flight dozes when its pilot, copilot and every crew have all been idle
-/// for the flight's limit (Settings > Flights): 15 minutes for a pinned
-/// flight, 5 for the rest by default. Typing into any of its seats counts as
+/// for the flight's limit (Settings > Flights): 20 minutes for a pinned
+/// flight, 10 for the rest by default. Typing into any of its seats counts as
 /// activity too. The flight on screen never dozes.
 ///
 /// Dozing stands the flight down on both decks, so the hangar does not start
@@ -33,7 +33,7 @@ final class FlightDozer {
     static func limit(pinned: Bool) -> TimeInterval {
         let key = pinned ? pinnedKey : otherKey
         let set = UserDefaults.standard.integer(forKey: key)
-        let minutes = set > 0 ? set : (pinned ? 15 : 5)
+        let minutes = set > 0 ? set : (pinned ? 20 : 10)
         return TimeInterval(minutes * 60)
     }
 
@@ -55,7 +55,7 @@ final class FlightDozer {
     static func crewLimit(pinned: Bool) -> TimeInterval {
         let key = pinned ? crewPinnedKey : crewOtherKey
         let set = UserDefaults.standard.integer(forKey: key)
-        let minutes = set > 0 ? set : (pinned ? 10 : 3)
+        let minutes = set > 0 ? set : (pinned ? 10 : 5)
         return TimeInterval(minutes * 60)
     }
 
