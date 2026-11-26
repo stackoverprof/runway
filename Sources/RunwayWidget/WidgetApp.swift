@@ -77,6 +77,10 @@ final class WidgetAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
         .preferredColorScheme(.dark)
         let host = NSHostingView(rootView: root)
+        // The panel's frame is set by hand (restingFrame). Left at its default, the hosting view also resizes the
+        // window to fit its content while AppKit is laying it out, which can loop and crash the app
+        // ("_postWindowNeedsUpdateConstraints", 25 Nov 2026).
+        host.sizingOptions = []
         host.wantsLayer = true
         host.layer?.backgroundColor = .clear
         panel.contentView = host
